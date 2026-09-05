@@ -38,28 +38,55 @@ export interface UrlPolicyOptions {
   readonly allowPrivate?: boolean
   /** Allow file:// URLs in addition to http(s). Default false. */
   readonly allowFile?: boolean
-  /** Keep blocking cloud-metadata endpoints. Default true (both modes). */
+  /** Master switch: keep blocking cloud-metadata endpoints. Default true (both modes). */
   readonly blockMetadata?: boolean
   /** Extra hostnames/IP literals always blocked (both modes). */
   readonly blockedHostnames?: ReadonlySet<string>
+  /**
+   * Cloud-metadata hostnames always blocked in BOTH modes. When provided this
+   * REPLACES the built-in default list entirely (`[]` = block none of this
+   * family); when omitted the built-in defaults are used. Values are compared
+   * after hostname normalization (lowercase, trailing dot / IPv6 brackets
+   * stripped, IPv4-mapped tails unwrapped).
+   */
+  readonly metadataHostnames?: readonly string[]
+  /**
+   * Same replace-or-default contract as {@link metadataHostnames}, for the
+   * IP-literal family of cloud-metadata endpoints.
+   */
+  readonly metadataIps?: readonly string[]
   /** Public mode: resolve hostnames and reject any non-public answer. Default true. */
   readonly resolveDns?: boolean
 }
 
-/** Cloud-metadata hostnames / IPs kept blocked even in intranet mode (upstream list). */
-export const METADATA_HOSTNAMES: ReadonlySet<string> = new Set([
+/**
+ * Default cloud-metadata hostnames (upstream list) — kept blocked even in
+ * intranet mode. This is only the *initial value*: pass your own
+ * `metadataHostnames` to {@link UrlPolicy} (or `browser-bridge` settings) to
+ * fully replace it, e.g. for non-AWS/GCP/Azure clouds or private deployments.
+ */
+export const DEFAULT_METADATA_HOSTNAMES: readonly string[] = [
   'metadata',
   'metadata.google.internal',
   'instance-data',
   'instance-data.ec2.internal',
   'metadata.azure.internal',
   'metadata.tencentyun.com',
-])
-export const METADATA_IPS: ReadonlySet<string> = new Set([
+]
+/**
+ * Default cloud-metadata IP literals (AWS/GCP/Azure 169.254.169.254, Alibaba
+ * 100.100.100.200, AWS IMDSv2 IPv6). Initial value only — replace via
+ * `metadataIps` for full control.
+ */
+export const DEFAULT_METADATA_IPS: readonly string[] = [
   '169.254.169.254', // AWS / GCP / Azure instance metadata
   '100.100.100.200', // Alibaba Cloud
   'fd00:ec2::254', // AWS IMDSv2 IPv6
-])
+]
+
+/** Back-compat aliases kept for existing consumers (values equal the defaults above). */
+export const METADATA_HOSTNAMES: ReadonlySet<string> = new Set(DEFAULT_METADATA_HOSTNAMES)
+export const METADATA_IPS: ReadonlySet<string> = new Set(DEFAULT_METADATA_IPS)
 
 /** Hostnames blocked before any other check in public mode (upstream default set). */
 const DEFAULT_BLOCKED_HOSTNAMES: ReadonlySet<string> = new Set([
@@ -152,6 +179,11 @@ function isFakeIpAddress(addr: string, family: number): boolean {
   return false
 }
 
+/** Normalize every entry of a configured metadata list for membership checks. */
+function normalizeList(entries: readonly string[] | undefined, fallback: readonly string[]): ReadonlySet<string> {
+  return new Set((entries ?? fallback).map((entry) => normalizeHostname(entry)).filter((host) => host.length > 0))
+}
+
 /**
  * Host-level blocklist usable against ANY request URL (navigation, redirects,
  * subresources). Invalid URLs fail open here — the strict navigation check is
@@ -159,7 +191,12 @@ function isFakeIpAddress(addr: string, family: number): boolean {
  */
 export function blockReasonForUrl(
   raw: string | URL,
-  options: { readonly blockMetadata?: boolean; readonly blockedHostnames?: ReadonlySet<string> } = {},
+  options: {
+    readonly blockMetadata?: boolean
+    readonly blockedHostnames?: ReadonlySet<string>
+    readonly metadataHostnames?: readonly string[]
+    readonly metadataIps?: readonly string[]
+  } = {},
 ): string | null {
   let url: URL
   try {
@@ -170,8 +207,10 @@ export function blockReasonForUrl(
   const host = normalizeHostname(url.hostname)
   const extra = options.blockedHostnames ?? new Set<string>()
   if (extra.has(host)) return `Hostname is blocked by configuration: ${host}`
-  if ((options.blockMetadata ?? true) && (METADATA_HOSTNAMES.has(host) || METADATA_IPS.has(host))) {
-    return `Cloud metadata endpoint is blocked: ${host}`
+  if (options.blockMetadata ?? true) {
+    const hosts = normalizeList(options.metadataHostnames, DEFAULT_METADATA_HOSTNAMES)
+    const ips = normalizeList(options.metadataIps, DEFAULT_METADATA_IPS)
+    if (hosts.has(host) || ips.has(host)) return `Cloud metadata endpoint is blocked: ${host}`
   }
   return null
 }
@@ -184,6 +223,8 @@ export class UrlPolicy {
   private readonly allowFile: boolean
   private readonly blockMetadata: boolean
   private readonly blocked: ReadonlySet<string>
+  private readonly metadataHosts: ReadonlySet<string>
+  private readonly metadataIps: ReadonlySet<string>
   private readonly resolveDns: boolean
 
   constructor(options: UrlPolicyOptions) {
@@ -193,6 +234,8 @@ export class UrlPolicy {
     this.allowFile = options.allowFile ?? false
     this.blockMetadata = options.blockMetadata ?? true
     this.blocked = options.blockedHostnames ?? (options.mode === 'public' ? DEFAULT_BLOCKED_HOSTNAMES : new Set<string>())
+    this.metadataHosts = normalizeList(options.metadataHostnames, DEFAULT_METADATA_HOSTNAMES)
+    this.metadataIps = normalizeList(options.metadataIps, DEFAULT_METADATA_IPS)
     this.resolveDns = options.resolveDns ?? true
   }
 
@@ -226,7 +269,12 @@ export class UrlPolicy {
     if (this.blocked.has(host)) {
       throw new UrlPolicyError('WEB_BLOCKED_URL', `Hostname is blocked: ${host}`)
     }
-    const reason = blockReasonForUrl(url, { blockMetadata: this.blockMetadata, blockedHostnames: this.blocked })
+    const reason = blockReasonForUrl(url, {
+      blockMetadata: this.blockMetadata,
+      blockedHostnames: this.blocked,
+      metadataHostnames: [...this.metadataHosts],
+      metadataIps: [...this.metadataIps],
+    })
     if (reason) throw new UrlPolicyError('WEB_BLOCKED_URL', reason)
     if (this.mode === 'intranet') return url
     if (this.allowPrivate) return url

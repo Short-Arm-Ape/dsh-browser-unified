@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-09-05T04:34:00.914Z",
+  "lastUpdated": "2026-09-05T08:30:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -257,6 +257,85 @@
         {
           "at": "2026-09-05",
           "what": "created (source=user, agent-executed milestone log)"
+        }
+      ]
+    },
+    {
+      "id": "de-009",
+      "title": "插件设置聚合进 GUI 设置对话框（settings.section「浏览器」分区）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "browser-unified-plugin 新增 client 半区：注册 settings.section id=browser-bridge；经 ctx.settingsScope 编辑 browser-bridge 命名空间",
+      "affectedModules": [
+        "plugin/bridge",
+        "plugin/client",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user）：把插件里此前只存在于 schema/profile 配置的设置项（enabled/urlMode/port/token/shotsDir/registryDir + 云元数据端点）聚合到 DSH 设置对话框，新增独立分区「浏览器」页，仿 better-sidebar「侧边卡片」的 settings.section 模式；改动即时生效。",
+      "notes": [
+        "client 半区以 __ModuleLoader__ 格式手写（client/client.js -> lib/client.js），仅 require('react')，无新增构建工具链",
+        "配套把 profile cordis.patch.yml 的 registryDir 修正到新仓库路径（旧 F:\\Work\\DeepSeek_Harness_Workspace 路径已失效）",
+        "2026-09-05 重启 dsh web 后 GUI 验证通过：设置对话框出现「浏览器」分区，字段齐全、编辑持久化、即时生效（含渲染错误边界）"
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户在问答中确认形态=新增独立分区「浏览器」页并直接部署)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied (source=user, agent-executed direct edit; 0.3.0 部署 + dsh web 重启后 GUI 实测通过)"
+        }
+      ]
+    },
+    {
+      "id": "de-010",
+      "title": "云元数据端点拦截列表可配置（整体替换内置默认）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "core/mit src/url-policy.ts（metadataHostnames/metadataIps 选项 + DEFAULT_* 常量）；browser-bridge Config 新字段 blockMetadata/metadataHostnames/metadataIps；reconcile 只重建 UrlPolicy 不重启监听",
+      "affectedModules": [
+        "url-policy"
+      ],
+      "summary": "用户明示（source=user）：内置云元数据列表仅作初始值，用户可整体替换/清空（完全自定义，含警告开关 blockMetadata）；覆盖非 AWS/GCP/Azure 云与私有部署，增加通用性；可在 GUI 分区或 profile YAML 维护。",
+      "notes": [
+        "public 档的 DEFAULT_BLOCKED_HOSTNAMES 安全网保持不变（文档注明）",
+        "GUI 提供 恢复内置默认(unset)/清空(set []) 双操作",
+        "2026-09-05 实测：GUI 添加 mycloud-metadata.internal 后无需重启，nav 即被拦（Cloud metadata endpoint is blocked），移除后恢复默认"
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户在问答中确认粒度=完全自定义列表)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied (source=user, agent-executed direct edit; core 冒烟 + 运行中 GUI 实测通过)"
+        }
+      ]
+    },
+    {
+      "id": "de-011",
+      "title": "仓库 README 重组（参考上游结构）+ 上游功能差距清单",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "README.md 与 packages/*/README.md 重组；docs/gap-analysis.md 差距清单",
+      "affectedModules": [],
+      "summary": "用户明示（source=user）：当前 README 较乱，参考上游项目（xylt369/dsh-browser 等）的结构整理；并梳理上游有哪些功能本插件尚未实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied (source=user, agent-executed direct edit; 根 README 按上游结构重组完成，docs/gap-analysis.md 差距清单落地)"
         }
       ]
     }

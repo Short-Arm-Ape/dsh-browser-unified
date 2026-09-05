@@ -24,7 +24,7 @@ import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools'
 import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-invariants'
 import { BridgeServer, cleanupArtifacts, GuardedBridge, UrlPolicy } from 'browser-unified-core'
-import type { UrlPolicyMode } from 'browser-unified-core'
+import { DEFAULT_METADATA_HOSTNAMES, DEFAULT_METADATA_IPS, type UrlPolicyMode } from 'browser-unified-core'
 import { applyUnifiedTools } from './unified-tools.js'
 
 // Schema shapes below are the same ones the upstream plugin shipped and the
@@ -67,6 +67,24 @@ export interface Config {
 	 */
 	urlMode?: string
 	/**
+	 * Master switch for cloud-metadata endpoint blocking (both modes). Default
+	 * true. Turn off only when you deliberately accept access to
+	 * instance-metadata services (e.g. inside your own VPC sandbox).
+	 */
+	blockMetadata?: boolean
+	/**
+	 * Cloud-metadata HOSTNAMES to always block (both modes). This list FULLY
+	 * replaces the built-in defaults — the defaults are only the initial value
+	 * shown in Settings. `[]` blocks none of this family. Entries are matched
+	 * after hostname normalization (lowercase, trailing dot/brackets stripped).
+	 */
+	metadataHostnames?: string[]
+	/**
+	 * Cloud-metadata IP literals to always block (both modes). Same
+	 * replace-or-default contract as `metadataHostnames`.
+	 */
+	metadataIps?: string[]
+	/**
 	 * Absolute directory containing `design/registry.json` and
 	 * `upstream-baseline.json` for the self-update tools. Empty (default) means
 	 * the copies bundled under the package `registry/` directory.
@@ -80,6 +98,9 @@ export const Config: z<Config> = z.object({
 	token: z.string().default('dsh-local'),
 	shotsDir: z.string().default('dsh-browser-shots'),
 	urlMode: z.string().default('public'),
+	blockMetadata: z.boolean().default(true),
+	metadataHostnames: z.array(z.string()).default([...DEFAULT_METADATA_HOSTNAMES]),
+	metadataIps: z.array(z.string()).default([...DEFAULT_METADATA_IPS]),
 	registryDir: z.string().default(''),
 })
 
@@ -89,7 +110,45 @@ interface ResolvedConfig {
 	token: string
 	shotsDir: string
 	urlMode: UrlPolicyMode
+	blockMetadata: boolean
+	metadataHostnames: string[]
+	metadataIps: string[]
 	registryDir: string
+}
+
+const MAX_METADATA_ENTRIES = 64
+
+/**
+ * Validate the metadata endpoint configuration. Both lists are fully
+ * user-maintained (the built-ins are only their initial value); entries must
+ * survive hostname normalization and contain no URL syntax.
+ */
+function assertMetadataLists(config: { metadataHostnames?: string[]; metadataIps?: string[] }): void {
+	const bad = (kind: 'hostnames' | 'ips', entry: string): never => {
+		throw new Error(`browser-bridge: metadata${kind === 'hostnames' ? 'Hostnames' : 'Ips'} 包含非法条目 "${entry}"（仅允许主机名/IP，去掉协议、路径与空白）`)
+	}
+	for (const [kind, list] of [['hostnames', config.metadataHostnames], ['ips', config.metadataIps]] as const) {
+		if (!Array.isArray(list)) continue
+		if (list.length > MAX_METADATA_ENTRIES) {
+			throw new Error(`browser-bridge: metadata${kind === 'hostnames' ? 'Hostnames' : 'Ips'} 最多 ${MAX_METADATA_ENTRIES} 条`)
+		}
+		for (const raw of list) {
+			if (typeof raw !== 'string') bad(kind, String(raw))
+			const entry = raw.trim()
+			if (entry.length === 0) bad(kind, raw)
+			if (entry.length > 253) bad(kind, raw)
+			if (/[\s/\\@?#\u0000-\u001f\u007f]/.test(entry)) bad(kind, raw)
+		}
+	}
+}
+
+function policyOptionsFor(config: ResolvedConfig): ConstructorParameters<typeof UrlPolicy>[0] {
+	return {
+		mode: config.urlMode,
+		blockMetadata: config.blockMetadata,
+		metadataHostnames: config.metadataHostnames ?? [...DEFAULT_METADATA_HOSTNAMES],
+		metadataIps: config.metadataIps ?? [...DEFAULT_METADATA_IPS],
+	}
 }
 
 const SNAPSHOT_REF_SELECTOR_PATTERN = /^e\d+$/
@@ -104,6 +163,7 @@ class BridgeController {
 	private server: BridgeServer | undefined
 	private guarded: GuardedBridge | undefined
 	private serverKey = ''
+	private policyKey = ''
 	private lastError: string | undefined
 	private chain: Promise<void> = Promise.resolve()
 	private current: ResolvedConfig | undefined
@@ -137,33 +197,49 @@ class BridgeController {
 
 	private async reconcileNow(config: ResolvedConfig): Promise<void> {
 		const shotsDir = path.resolve(config.shotsDir)
-		const key = config.enabled ? `${config.port}|${config.token}|${shotsDir}|${config.urlMode}` : ''
-		if (key === this.serverKey) return
-		const previous = this.server
-		this.server = undefined
-		this.guarded = undefined
-		this.serverKey = ''
-		await previous?.stop()
-		if (!config.enabled) {
-			this.lastError = undefined
-			return
+		// The listener only restarts when transport-affecting values change.
+		const serverKey = config.enabled ? `${config.port}|${config.token}|${shotsDir}` : ''
+		// URL policy is rebuilt in place (no listener restart) when the policy
+		// inputs change, so editing the metadata endpoint lists in Settings
+		// applies live without ever dropping an in-flight browser command.
+		const policyKey = config.enabled
+			? `${config.urlMode}|${config.blockMetadata ? '1' : '0'}|${(config.metadataHostnames ?? []).join('\u0001')}|${(config.metadataIps ?? []).join('\u0001')}`
+			: ''
+		if (serverKey === this.serverKey && policyKey === this.policyKey) return
+		if (serverKey !== this.serverKey) {
+			const previous = this.server
+			this.server = undefined
+			this.guarded = undefined
+			this.serverKey = ''
+			this.policyKey = ''
+			await previous?.stop()
+			if (!config.enabled) {
+				this.lastError = undefined
+				return
+			}
+			const server = new BridgeServer({ port: config.port, token: config.token, shotsDir, log: this.log })
+			try {
+				await server.start()
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+				this.lastError = `桥接启动失败（端口 ${config.port}）: ${message}`
+				this.log(this.lastError!)
+				throw error instanceof Error ? error : new Error(message)
+			}
+			this.server = server
+			this.serverKey = serverKey
 		}
-		const server = new BridgeServer({ port: config.port, token: config.token, shotsDir, log: this.log })
-		try {
-			await server.start()
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error)
-			this.lastError = `桥接启动失败（端口 ${config.port}）: ${message}`
-			this.log(this.lastError!)
-			throw error instanceof Error ? error : new Error(message)
-		}
-		this.server = server
+		if (!config.enabled) return
 		// Unified URL policy in front of every navigation command: public mode
 		// blocks private/loopback/metadata targets before they reach the
 		// extension; intranet mode allows local/LAN but still blocks metadata.
-		this.guarded = new GuardedBridge(server, new UrlPolicy({ mode: config.urlMode }))
-		this.serverKey = key
-		this.lastError = undefined
+		// Rebuild whenever the policy inputs change (mode, master switch, the
+		// user-maintained metadata hostname/IP lists).
+		if (policyKey !== this.policyKey && this.server !== undefined) {
+			this.guarded = new GuardedBridge(this.server, new UrlPolicy(policyOptionsFor(config)))
+			this.policyKey = policyKey
+			this.lastError = undefined
+		}
 	}
 
 	/**
@@ -200,6 +276,7 @@ class BridgeController {
 		this.server = undefined
 		this.guarded = undefined
 		this.serverKey = ''
+		this.policyKey = ''
 		return previous?.stop() ?? Promise.resolve()
 	}
 }
@@ -878,6 +955,7 @@ export function apply(ctx: Context, config: Config): void {
 	if (resolved.urlMode !== 'public' && resolved.urlMode !== 'intranet') {
 		throw new Error(`browser-bridge: invalid urlMode "${String(resolved.urlMode)}" (use public|intranet)`)
 	}
+	assertMetadataLists(resolved)
 	const controller = new BridgeController(line => ctx.logger.info(line))
 
 	let current: () => ResolvedConfig = () => resolved
@@ -899,6 +977,10 @@ export function apply(ctx: Context, config: Config): void {
 					if (value.enabled && (value.token ?? '').trim().length === 0) {
 						throw new Error('browser-bridge: token must be a non-empty string when enabled')
 					}
+					if (value.urlMode !== 'public' && value.urlMode !== 'intranet') {
+						throw new Error(`browser-bridge: invalid urlMode "${String(value.urlMode)}" (use public|intranet)`)
+					}
+					assertMetadataLists(value as unknown as ResolvedConfig)
 				},
 			},
 		)

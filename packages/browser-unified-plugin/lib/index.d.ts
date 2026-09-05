@@ -46,6 +46,24 @@ export interface Config {
      */
     urlMode?: string;
     /**
+     * Master switch for cloud-metadata endpoint blocking (both modes). Default
+     * true. Turn off only when you deliberately accept access to
+     * instance-metadata services (e.g. inside your own VPC sandbox).
+     */
+    blockMetadata?: boolean;
+    /**
+     * Cloud-metadata HOSTNAMES to always block (both modes). This list FULLY
+     * replaces the built-in defaults — the defaults are only the initial value
+     * shown in Settings. `[]` blocks none of this family. Entries are matched
+     * after hostname normalization (lowercase, trailing dot/brackets stripped).
+     */
+    metadataHostnames?: string[];
+    /**
+     * Cloud-metadata IP literals to always block (both modes). Same
+     * replace-or-default contract as `metadataHostnames`.
+     */
+    metadataIps?: string[];
+    /**
      * Absolute directory containing `design/registry.json` and
      * `upstream-baseline.json` for the self-update tools. Empty (default) means
      * the copies bundled under the package `registry/` directory.

@@ -27,20 +27,33 @@ export class UrlPolicyError extends Error {
         this.name = 'UrlPolicyError';
     }
 }
-/** Cloud-metadata hostnames / IPs kept blocked even in intranet mode (upstream list). */
-export const METADATA_HOSTNAMES = new Set([
+/**
+ * Default cloud-metadata hostnames (upstream list) — kept blocked even in
+ * intranet mode. This is only the *initial value*: pass your own
+ * `metadataHostnames` to {@link UrlPolicy} (or `browser-bridge` settings) to
+ * fully replace it, e.g. for non-AWS/GCP/Azure clouds or private deployments.
+ */
+export const DEFAULT_METADATA_HOSTNAMES = [
     'metadata',
     'metadata.google.internal',
     'instance-data',
     'instance-data.ec2.internal',
     'metadata.azure.internal',
     'metadata.tencentyun.com',
-]);
-export const METADATA_IPS = new Set([
+];
+/**
+ * Default cloud-metadata IP literals (AWS/GCP/Azure 169.254.169.254, Alibaba
+ * 100.100.100.200, AWS IMDSv2 IPv6). Initial value only — replace via
+ * `metadataIps` for full control.
+ */
+export const DEFAULT_METADATA_IPS = [
     '169.254.169.254', // AWS / GCP / Azure instance metadata
     '100.100.100.200', // Alibaba Cloud
     'fd00:ec2::254', // AWS IMDSv2 IPv6
-]);
+];
+/** Back-compat aliases kept for existing consumers (values equal the defaults above). */
+export const METADATA_HOSTNAMES = new Set(DEFAULT_METADATA_HOSTNAMES);
+export const METADATA_IPS = new Set(DEFAULT_METADATA_IPS);
 /** Hostnames blocked before any other check in public mode (upstream default set). */
 const DEFAULT_BLOCKED_HOSTNAMES = new Set([
     'localhost',
@@ -151,6 +164,10 @@ function isFakeIpAddress(addr, family) {
     }
     return false;
 }
+/** Normalize every entry of a configured metadata list for membership checks. */
+function normalizeList(entries, fallback) {
+    return new Set((entries ?? fallback).map((entry) => normalizeHostname(entry)).filter((host) => host.length > 0));
+}
 /**
  * Host-level blocklist usable against ANY request URL (navigation, redirects,
  * subresources). Invalid URLs fail open here — the strict navigation check is
@@ -168,8 +185,11 @@ export function blockReasonForUrl(raw, options = {}) {
     const extra = options.blockedHostnames ?? new Set();
     if (extra.has(host))
         return `Hostname is blocked by configuration: ${host}`;
-    if ((options.blockMetadata ?? true) && (METADATA_HOSTNAMES.has(host) || METADATA_IPS.has(host))) {
-        return `Cloud metadata endpoint is blocked: ${host}`;
+    if (options.blockMetadata ?? true) {
+        const hosts = normalizeList(options.metadataHostnames, DEFAULT_METADATA_HOSTNAMES);
+        const ips = normalizeList(options.metadataIps, DEFAULT_METADATA_IPS);
+        if (hosts.has(host) || ips.has(host))
+            return `Cloud metadata endpoint is blocked: ${host}`;
     }
     return null;
 }
@@ -181,6 +201,8 @@ export class UrlPolicy {
     allowFile;
     blockMetadata;
     blocked;
+    metadataHosts;
+    metadataIps;
     resolveDns;
     constructor(options) {
         this.mode = options.mode;
@@ -189,6 +211,8 @@ export class UrlPolicy {
         this.allowFile = options.allowFile ?? false;
         this.blockMetadata = options.blockMetadata ?? true;
         this.blocked = options.blockedHostnames ?? (options.mode === 'public' ? DEFAULT_BLOCKED_HOSTNAMES : new Set());
+        this.metadataHosts = normalizeList(options.metadataHostnames, DEFAULT_METADATA_HOSTNAMES);
+        this.metadataIps = normalizeList(options.metadataIps, DEFAULT_METADATA_IPS);
         this.resolveDns = options.resolveDns ?? true;
     }
     get isIntranet() {
@@ -221,7 +245,12 @@ export class UrlPolicy {
         if (this.blocked.has(host)) {
             throw new UrlPolicyError('WEB_BLOCKED_URL', `Hostname is blocked: ${host}`);
         }
-        const reason = blockReasonForUrl(url, { blockMetadata: this.blockMetadata, blockedHostnames: this.blocked });
+        const reason = blockReasonForUrl(url, {
+            blockMetadata: this.blockMetadata,
+            blockedHostnames: this.blocked,
+            metadataHostnames: [...this.metadataHosts],
+            metadataIps: [...this.metadataIps],
+        });
         if (reason)
             throw new UrlPolicyError('WEB_BLOCKED_URL', reason);
         if (this.mode === 'intranet')

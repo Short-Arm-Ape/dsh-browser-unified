@@ -33,14 +33,40 @@ export interface UrlPolicyOptions {
     readonly allowPrivate?: boolean;
     /** Allow file:// URLs in addition to http(s). Default false. */
     readonly allowFile?: boolean;
-    /** Keep blocking cloud-metadata endpoints. Default true (both modes). */
+    /** Master switch: keep blocking cloud-metadata endpoints. Default true (both modes). */
     readonly blockMetadata?: boolean;
     /** Extra hostnames/IP literals always blocked (both modes). */
     readonly blockedHostnames?: ReadonlySet<string>;
+    /**
+     * Cloud-metadata hostnames always blocked in BOTH modes. When provided this
+     * REPLACES the built-in default list entirely (`[]` = block none of this
+     * family); when omitted the built-in defaults are used. Values are compared
+     * after hostname normalization (lowercase, trailing dot / IPv6 brackets
+     * stripped, IPv4-mapped tails unwrapped).
+     */
+    readonly metadataHostnames?: readonly string[];
+    /**
+     * Same replace-or-default contract as {@link metadataHostnames}, for the
+     * IP-literal family of cloud-metadata endpoints.
+     */
+    readonly metadataIps?: readonly string[];
     /** Public mode: resolve hostnames and reject any non-public answer. Default true. */
     readonly resolveDns?: boolean;
 }
-/** Cloud-metadata hostnames / IPs kept blocked even in intranet mode (upstream list). */
+/**
+ * Default cloud-metadata hostnames (upstream list) — kept blocked even in
+ * intranet mode. This is only the *initial value*: pass your own
+ * `metadataHostnames` to {@link UrlPolicy} (or `browser-bridge` settings) to
+ * fully replace it, e.g. for non-AWS/GCP/Azure clouds or private deployments.
+ */
+export declare const DEFAULT_METADATA_HOSTNAMES: readonly string[];
+/**
+ * Default cloud-metadata IP literals (AWS/GCP/Azure 169.254.169.254, Alibaba
+ * 100.100.100.200, AWS IMDSv2 IPv6). Initial value only — replace via
+ * `metadataIps` for full control.
+ */
+export declare const DEFAULT_METADATA_IPS: readonly string[];
+/** Back-compat aliases kept for existing consumers (values equal the defaults above). */
 export declare const METADATA_HOSTNAMES: ReadonlySet<string>;
 export declare const METADATA_IPS: ReadonlySet<string>;
 /**
@@ -62,6 +88,8 @@ export declare function isPrivateIPv6(addr: string): boolean;
 export declare function blockReasonForUrl(raw: string | URL, options?: {
     readonly blockMetadata?: boolean;
     readonly blockedHostnames?: ReadonlySet<string>;
+    readonly metadataHostnames?: readonly string[];
+    readonly metadataIps?: readonly string[];
 }): string | null;
 /** One policy instance: `mode` selects how strict `assertUsableUrl` is. */
 export declare class UrlPolicy {
@@ -71,6 +99,8 @@ export declare class UrlPolicy {
     private readonly allowFile;
     private readonly blockMetadata;
     private readonly blocked;
+    private readonly metadataHosts;
+    private readonly metadataIps;
     private readonly resolveDns;
     constructor(options: UrlPolicyOptions);
     get isIntranet(): boolean;

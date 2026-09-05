@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -46,6 +46,19 @@ if (!hasTs || !hasPeers) {
 }
 
 run(process.execPath, [tsc, '-p', 'tsconfig.json']) // typecheck + compile to lib/
+
+// The browser client half ships as a hand-assembled module-loader bundle
+// (client/client.js -> lib/client.js). No bundler needed; the source is plain
+// JS in the required loader format (see file header).
+const clientSrc = path.join(pkgDir, 'client', 'client.js')
+const clientOut = path.join(pkgDir, 'lib', 'client.js')
+if (existsSync(clientSrc)) {
+  mkdirSync(path.dirname(clientOut), { recursive: true })
+  copyFileSync(clientSrc, clientOut)
+  console.log('\n[build-pack] copied client/client.js -> lib/client.js')
+} else {
+  console.warn('\n[build-pack] WARNING: client/client.js missing — package will ship without a client half')
+}
 
 if (noPack) {
   console.log('\n[build-pack] compile done (--no-pack)')

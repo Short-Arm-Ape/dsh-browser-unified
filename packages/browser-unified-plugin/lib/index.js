@@ -20,6 +20,7 @@ import path from 'node:path';
 import z from '@deepseek-ai/schemastery';
 import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools';
 import { BridgeServer, cleanupArtifacts, GuardedBridge, UrlPolicy } from 'browser-unified-core';
+import { DEFAULT_METADATA_HOSTNAMES, DEFAULT_METADATA_IPS } from 'browser-unified-core';
 import { applyUnifiedTools } from './unified-tools.js';
 // Schema shapes below are the same ones the upstream plugin shipped and the
 // dsh-tools assert layer validates at runtime; the loose wrapper only widens
@@ -37,8 +38,48 @@ export const Config = z.object({
     token: z.string().default('dsh-local'),
     shotsDir: z.string().default('dsh-browser-shots'),
     urlMode: z.string().default('public'),
+    blockMetadata: z.boolean().default(true),
+    metadataHostnames: z.array(z.string()).default([...DEFAULT_METADATA_HOSTNAMES]),
+    metadataIps: z.array(z.string()).default([...DEFAULT_METADATA_IPS]),
     registryDir: z.string().default(''),
 });
+const MAX_METADATA_ENTRIES = 64;
+/**
+ * Validate the metadata endpoint configuration. Both lists are fully
+ * user-maintained (the built-ins are only their initial value); entries must
+ * survive hostname normalization and contain no URL syntax.
+ */
+function assertMetadataLists(config) {
+    const bad = (kind, entry) => {
+        throw new Error(`browser-bridge: metadata${kind === 'hostnames' ? 'Hostnames' : 'Ips'} 包含非法条目 "${entry}"（仅允许主机名/IP，去掉协议、路径与空白）`);
+    };
+    for (const [kind, list] of [['hostnames', config.metadataHostnames], ['ips', config.metadataIps]]) {
+        if (!Array.isArray(list))
+            continue;
+        if (list.length > MAX_METADATA_ENTRIES) {
+            throw new Error(`browser-bridge: metadata${kind === 'hostnames' ? 'Hostnames' : 'Ips'} 最多 ${MAX_METADATA_ENTRIES} 条`);
+        }
+        for (const raw of list) {
+            if (typeof raw !== 'string')
+                bad(kind, String(raw));
+            const entry = raw.trim();
+            if (entry.length === 0)
+                bad(kind, raw);
+            if (entry.length > 253)
+                bad(kind, raw);
+            if (/[\s/\\@?#\u0000-\u001f\u007f]/.test(entry))
+                bad(kind, raw);
+        }
+    }
+}
+function policyOptionsFor(config) {
+    return {
+        mode: config.urlMode,
+        blockMetadata: config.blockMetadata,
+        metadataHostnames: config.metadataHostnames ?? [...DEFAULT_METADATA_HOSTNAMES],
+        metadataIps: config.metadataIps ?? [...DEFAULT_METADATA_IPS],
+    };
+}
 const SNAPSHOT_REF_SELECTOR_PATTERN = /^e\d+$/;
 const READ_CONTENT_MAX_CHARS = 120_000;
 /**
@@ -51,6 +92,7 @@ class BridgeController {
     server;
     guarded;
     serverKey = '';
+    policyKey = '';
     lastError;
     chain = Promise.resolve();
     current;
@@ -82,35 +124,52 @@ class BridgeController {
     }
     async reconcileNow(config) {
         const shotsDir = path.resolve(config.shotsDir);
-        const key = config.enabled ? `${config.port}|${config.token}|${shotsDir}|${config.urlMode}` : '';
-        if (key === this.serverKey)
+        // The listener only restarts when transport-affecting values change.
+        const serverKey = config.enabled ? `${config.port}|${config.token}|${shotsDir}` : '';
+        // URL policy is rebuilt in place (no listener restart) when the policy
+        // inputs change, so editing the metadata endpoint lists in Settings
+        // applies live without ever dropping an in-flight browser command.
+        const policyKey = config.enabled
+            ? `${config.urlMode}|${config.blockMetadata ? '1' : '0'}|${(config.metadataHostnames ?? []).join('\u0001')}|${(config.metadataIps ?? []).join('\u0001')}`
+            : '';
+        if (serverKey === this.serverKey && policyKey === this.policyKey)
             return;
-        const previous = this.server;
-        this.server = undefined;
-        this.guarded = undefined;
-        this.serverKey = '';
-        await previous?.stop();
-        if (!config.enabled) {
-            this.lastError = undefined;
+        if (serverKey !== this.serverKey) {
+            const previous = this.server;
+            this.server = undefined;
+            this.guarded = undefined;
+            this.serverKey = '';
+            this.policyKey = '';
+            await previous?.stop();
+            if (!config.enabled) {
+                this.lastError = undefined;
+                return;
+            }
+            const server = new BridgeServer({ port: config.port, token: config.token, shotsDir, log: this.log });
+            try {
+                await server.start();
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                this.lastError = `桥接启动失败（端口 ${config.port}）: ${message}`;
+                this.log(this.lastError);
+                throw error instanceof Error ? error : new Error(message);
+            }
+            this.server = server;
+            this.serverKey = serverKey;
+        }
+        if (!config.enabled)
             return;
-        }
-        const server = new BridgeServer({ port: config.port, token: config.token, shotsDir, log: this.log });
-        try {
-            await server.start();
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastError = `桥接启动失败（端口 ${config.port}）: ${message}`;
-            this.log(this.lastError);
-            throw error instanceof Error ? error : new Error(message);
-        }
-        this.server = server;
         // Unified URL policy in front of every navigation command: public mode
         // blocks private/loopback/metadata targets before they reach the
         // extension; intranet mode allows local/LAN but still blocks metadata.
-        this.guarded = new GuardedBridge(server, new UrlPolicy({ mode: config.urlMode }));
-        this.serverKey = key;
-        this.lastError = undefined;
+        // Rebuild whenever the policy inputs change (mode, master switch, the
+        // user-maintained metadata hostname/IP lists).
+        if (policyKey !== this.policyKey && this.server !== undefined) {
+            this.guarded = new GuardedBridge(this.server, new UrlPolicy(policyOptionsFor(config)));
+            this.policyKey = policyKey;
+            this.lastError = undefined;
+        }
     }
     /**
      * Run one extension command over the live, policy-guarded link.
@@ -143,6 +202,7 @@ class BridgeController {
         this.server = undefined;
         this.guarded = undefined;
         this.serverKey = '';
+        this.policyKey = '';
         return previous?.stop() ?? Promise.resolve();
     }
 }
@@ -809,6 +869,7 @@ export function apply(ctx, config) {
     if (resolved.urlMode !== 'public' && resolved.urlMode !== 'intranet') {
         throw new Error(`browser-bridge: invalid urlMode "${String(resolved.urlMode)}" (use public|intranet)`);
     }
+    assertMetadataLists(resolved);
     const controller = new BridgeController(line => ctx.logger.info(line));
     let current = () => resolved;
     // Equivalent of @deepseek-ai/dsh-settings' `installSettingsSection`, inlined so
@@ -822,6 +883,10 @@ export function apply(ctx, config) {
                 if (value.enabled && (value.token ?? '').trim().length === 0) {
                     throw new Error('browser-bridge: token must be a non-empty string when enabled');
                 }
+                if (value.urlMode !== 'public' && value.urlMode !== 'intranet') {
+                    throw new Error(`browser-bridge: invalid urlMode "${String(value.urlMode)}" (use public|intranet)`);
+                }
+                assertMetadataLists(value);
             },
         });
         current = () => scope.get();
