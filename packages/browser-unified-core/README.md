@@ -17,4 +17,6 @@ npm run typecheck  # tsc --noEmit
 npm run build      # tsc → dist/
 ```
 
+Chorme 扩展请前往上游仓库[caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control/releases)下载。
+
 归属矩阵见仓库根 NOTICE.md。分发/网络服务请遵守 AGPL-3.0（第 13 条）。

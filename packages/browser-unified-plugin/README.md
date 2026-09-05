@@ -62,6 +62,8 @@ pnpm add ./dsh-browser-unified-0.2.0.tgz
 # 重启 dsh web 生效；浏览器扩展（DSH Browser Control）不变。
 ```
 
+Chorme 扩展请前往上游仓库[caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control/releases)下载。
+
 ## 许可与归属
 
 - `LICENSE`：AGPL-3.0 全文。

@@ -27,7 +27,7 @@ dsh-browser-unified/
     └── browser-unified-core/    可编译合并原型（AGPL-3.0；含 self-update 纯逻辑）
 ```
 
-## 四条路线一句话
+## 上游插件的实现差异
 
 | 目录 | 路线 | 浏览器 | 安全模型 |
 |---|---|---|---|
@@ -36,7 +36,7 @@ dsh-browser-unified/
 | `upstream/dsh-browser-control-kyo615` | @playwright/mcp 子进程 | 插件另起有头 Chrome（--isolated） | 无 URL 校验，靠宿主批准 |
 | `upstream/dsh-browser-control-caob23` | 扩展 + 本地 WebSocket 桥（CDP） | **用户的真实浏览器**（含登录态） | 无 URL 校验；本地端口信任边界 |
 
-## 合并原型的范围（许可证决策 2026-09-05：接受 AGPL-3.0）
+## 合并原型的范围
 
 `packages/browser-unified-core` 现在是**整包 AGPL-3.0-only** 的合并核心，包含四块：
 
@@ -62,6 +62,8 @@ npm install            # 仅 typescript + @types/node
 npm run typecheck      # tsc --noEmit
 npm run build          # tsc → dist/
 ```
+
+Chorme 扩展请前往上游仓库[caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control/releases)下载。
 
 ## 上游自检与授权更新（开发基线）
 
