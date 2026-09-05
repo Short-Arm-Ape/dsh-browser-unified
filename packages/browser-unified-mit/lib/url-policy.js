@@ -168,6 +168,60 @@ function isFakeIpAddress(addr, family) {
 function normalizeList(entries, fallback) {
     return new Set((entries ?? fallback).map((entry) => normalizeHostname(entry)).filter((host) => host.length > 0));
 }
+/** Normalize one allow/deny entry keeping a leading `*.` wildcard intact. */
+function normalizeEntry(raw) {
+    const value = raw.trim().toLowerCase();
+    if (value.startsWith('*.'))
+        return '*.' + normalizeHostname(value.slice(2));
+    return normalizeHostname(value);
+}
+/** Match a normalized host against exact entries and `*.suffix` wildcards. */
+function entryMatches(host, entries) {
+    for (const entry of entries) {
+        if (entry.startsWith('*.')) {
+            if (host.endsWith(entry.slice(1)))
+                return true;
+        }
+        else if (entry === host) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
+ * Classify a normalized host into its realm:
+ * - `local`: loopback literals and localhost names (the machine itself);
+ * - `lan`: other private/ULA/link-local/fake-ip literals and local-only
+ *   suffixes (.local/.lan/.internal/…);
+ * - `internet`: everything else.
+ * Hostnames that only resolve to private addresses are not classified here
+ * (DNS is only consulted in public mode) — documented approximation.
+ */
+export function realmOf(host) {
+    const family = isIP(host);
+    if (family !== 0) {
+        if (family === 4) {
+            const parts = host.split('.');
+            const a = Number(parts[0]);
+            if (a === 127)
+                return 'local'; // loopback 127/8
+        }
+        else if (host === '::1' || host === '::') {
+            return 'local';
+        }
+        return isPrivateAddress(host, family) || isFakeIpAddress(host, family) ? 'lan' : 'internet';
+    }
+    const lower = host.toLowerCase();
+    if (lower === 'localhost' || lower === 'localhost.localdomain' || lower === 'ip6-localhost')
+        return 'local';
+    if (/(^|\.)(local|lan|internal|home|corp|intranet|localhost)(\.|$)/.test(lower))
+        return 'lan';
+    return 'internet';
+}
+/** Short display name of a realm for policy messages. */
+export function realmLabel(realm) {
+    return realm === 'local' ? 'Local' : realm === 'lan' ? 'LAN' : 'Internet';
+}
 /**
  * Host-level blocklist usable against ANY request URL (navigation, redirects,
  * subresources). Invalid URLs fail open here — the strict navigation check is
@@ -203,6 +257,16 @@ export class UrlPolicy {
     blocked;
     metadataHosts;
     metadataIps;
+    internetAccess;
+    lanAccess;
+    localAccess;
+    internetTemp;
+    lanTemp;
+    localTemp;
+    dshAccessEnabled;
+    dshOrigins;
+    allowEntries;
+    denyEntries;
     resolveDns;
     constructor(options) {
         this.mode = options.mode;
@@ -213,17 +277,165 @@ export class UrlPolicy {
         this.blocked = options.blockedHostnames ?? (options.mode === 'public' ? DEFAULT_BLOCKED_HOSTNAMES : new Set());
         this.metadataHosts = normalizeList(options.metadataHostnames, DEFAULT_METADATA_HOSTNAMES);
         this.metadataIps = normalizeList(options.metadataIps, DEFAULT_METADATA_IPS);
+        this.internetAccess = options.internetAccess ?? 'allow';
+        this.lanAccess = options.lanAccess ?? 'allow';
+        this.localAccess = options.localAccess ?? 'allow';
+        this.internetTemp = options.internetTemp ?? true;
+        this.lanTemp = options.lanTemp ?? true;
+        this.localTemp = options.localTemp ?? true;
+        this.dshAccessEnabled = options.dshAccessEnabled ?? false;
+        this.dshOrigins = (options.dshOrigins ?? []).map((o) => o.trim().toLowerCase()).filter((o) => o.length > 0);
+        this.allowEntries = (options.allowHosts ?? []).map(normalizeEntry).filter((entry) => entry.length > 0);
+        this.denyEntries = (options.denyHosts ?? []).map(normalizeEntry).filter((entry) => entry.length > 0);
         this.resolveDns = options.resolveDns ?? true;
     }
     get isIntranet() {
         return this.mode === 'intranet';
     }
+    /** Whether the origin of `url` is explicitly granted as a DSH control page. */
+    dshGranted(url) {
+        if (!this.dshAccessEnabled || this.dshOrigins.length === 0)
+            return false;
+        const origin = url.origin.toLowerCase();
+        for (const rule of this.dshOrigins) {
+            if (rule === origin)
+                return true;
+            // `host:*` style: allow any port of the same scheme+host.
+            if (rule.endsWith(':*') && origin.startsWith(rule.slice(0, -1)))
+                return true;
+        }
+        return false;
+    }
+    /** Realm policy of a normalized host. */
+    accessFor(host) {
+        const realm = realmOf(host);
+        const access = realm === 'internet' ? this.internetAccess : realm === 'lan' ? this.lanAccess : this.localAccess;
+        const temp = realm === 'internet' ? this.internetTemp : realm === 'lan' ? this.lanTemp : this.localTemp;
+        return { realm, access, temp };
+    }
+    /** Whether a host is currently granted through the persistent allow list. */
+    isAllowlisted(host) {
+        return entryMatches(host, this.allowEntries);
+    }
+    denyBlocked(host) {
+        return entryMatches(host, this.denyEntries);
+    }
     /**
-     * Validate `raw` for a navigation. Public mode: http(s) only, no embedded
-     * credentials, default-hostname blocklist, IP-literal screening and (unless
+     * Authorize one navigation target. Returns an explicit verdict instead of
+     * throwing:
+     * - `block`: refused unconditionally (routing stance, blocklist, metadata,
+     *   denied hosts, embedded credentials…);
+     * - `allow`: routing stance permits the target and (ask mode) the host is on
+     *   the allow list;
+     * - `ask`: routing permits the target but authorization is `ask` and the
+     *   host needs an explicit user approval first.
+     * No browser state is touched; callers decide how to surface `ask`
+     * (approval prompt, temp session grant, tool guidance…).
+     */
+    async authorizeUrl(raw) {
+        let url;
+        try {
+            url = new URL(raw);
+        }
+        catch {
+            return { decision: 'block', code: 'WEB_INVALID_URL', reason: `Invalid URL: ${raw}`, host: '' };
+        }
+        const schemeOk = url.protocol === 'http:' || url.protocol === 'https:' || (this.allowFile && url.protocol === 'file:');
+        if (!schemeOk) {
+            return {
+                decision: 'block',
+                code: 'WEB_INVALID_URL',
+                reason: `Only http(s)${this.allowFile ? ' and file' : ''} URLs are allowed: ${raw}`,
+                host: '',
+            };
+        }
+        if (url.username || url.password) {
+            return { decision: 'block', code: 'WEB_BLOCKED_URL', reason: 'URLs with embedded credentials are blocked', host: '' };
+        }
+        const host = normalizeHostname(url.hostname);
+        if (this.blocked.has(host)) {
+            return { decision: 'block', code: 'WEB_BLOCKED_URL', reason: `Hostname is blocked: ${host}`, host };
+        }
+        if (this.denyBlocked(host)) {
+            return { decision: 'block', code: 'WEB_BLOCKED_URL', reason: `Hostname is denied by configuration: ${host}`, host };
+        }
+        const reason = blockReasonForUrl(url, {
+            blockMetadata: this.blockMetadata,
+            blockedHostnames: this.blocked,
+            metadataHostnames: [...this.metadataHosts],
+            metadataIps: [...this.metadataIps],
+        });
+        if (reason)
+            return { decision: 'block', code: 'WEB_BLOCKED_URL', reason, host };
+        // --- DSH-page special rule (explicit user opt-in, double-warned in GUI):
+        // granted origins bypass the routing stance and the realm ask/deny layer.
+        if (this.dshGranted(url))
+            return { decision: 'allow', reason: '', host };
+        // --- routing stance (public: literal + DNS screening) ---
+        if (this.mode === 'public' && !this.allowPrivate) {
+            const literalFamily = isIP(host);
+            if (literalFamily !== 0) {
+                if (this.blockedAsPrivate(host, literalFamily)) {
+                    return { decision: 'block', code: 'WEB_PRIVATE_TARGET', reason: `Non-public IP literal is blocked: ${host}`, host };
+                }
+            }
+            else if (this.resolveDns) {
+                let resolved;
+                try {
+                    resolved = await lookup(host, { all: true });
+                }
+                catch {
+                    return {
+                        decision: 'block',
+                        code: 'WEB_PROVIDER_ERROR',
+                        reason: `DNS resolution failed for ${host}`,
+                        host,
+                    };
+                }
+                for (const entry of resolved) {
+                    if (this.blockedAsPrivate(entry.address, entry.family)) {
+                        return {
+                            decision: 'block',
+                            code: 'WEB_PRIVATE_TARGET',
+                            reason: `Hostname resolves to a non-public address: ${host}`,
+                            host,
+                        };
+                    }
+                }
+            }
+        }
+        // --- authorization layer: per-realm allow / ask / deny (skipped for
+        // granted DSH origins above) ---
+        const realmPolicy = this.accessFor(host);
+        if (realmPolicy.access === 'deny') {
+            return {
+                decision: 'block',
+                code: 'WEB_REALM_DENIED',
+                reason: `${realmLabel(realmPolicy.realm)} access is denied by policy: ${host}`,
+                host,
+            };
+        }
+        if (realmPolicy.access === 'ask' && !this.isAllowlisted(host)) {
+            return {
+                decision: 'ask',
+                code: 'NEED_AUTHORIZATION',
+                reason: `Host requires user authorization before access: ${host}`
+                    + (realmPolicy.temp ? '' : ` (this realm does not allow temporary grants — add the host to allowHosts instead)`),
+                host,
+            };
+        }
+        return { decision: 'allow', reason: '', host };
+    }
+    /**
+     * Validate `raw` for a navigation — the ROUTE-ONLY gate used by
+     * GuardedBridge. Public mode: http(s) only, no embedded credentials,
+     * default-hostname blocklist, deny list, IP-literal screening and (unless
      * disabled) resolve-then-validate DNS. Intranet mode: http(s) (+file), no
-     * credentials, and only the metadata/extras blocklist — private and loopback
-     * targets are intentionally allowed (that is the point of the intranet mode).
+     * credentials, and only the metadata/extras/deny blocklist — private and
+     * loopback targets are intentionally allowed (that is the point of the
+     * intranet mode). The authorization layer (ask/allow lists) intentionally
+     * lives OUTSIDE this gate: tools decide how to surface `ask` (approval +
+     * session grant) before the bridge ever sees the command.
      * @throws {UrlPolicyError} with a stable `code` when unusable.
      */
     async assertUsableUrl(raw) {
@@ -245,6 +457,9 @@ export class UrlPolicy {
         if (this.blocked.has(host)) {
             throw new UrlPolicyError('WEB_BLOCKED_URL', `Hostname is blocked: ${host}`);
         }
+        if (this.denyBlocked(host)) {
+            throw new UrlPolicyError('WEB_BLOCKED_URL', `Hostname is denied by configuration: ${host}`);
+        }
         const reason = blockReasonForUrl(url, {
             blockMetadata: this.blockMetadata,
             blockedHostnames: this.blocked,
@@ -253,6 +468,8 @@ export class UrlPolicy {
         });
         if (reason)
             throw new UrlPolicyError('WEB_BLOCKED_URL', reason);
+        if (this.dshGranted(url))
+            return url;
         if (this.mode === 'intranet')
             return url;
         if (this.allowPrivate)

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-09-05T08:30:00.000Z",
+  "lastUpdated": "2026-09-05T09:20:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -336,6 +336,99 @@
         {
           "at": "2026-09-05",
           "what": "status -> applied (source=user, agent-executed direct edit; 根 README 按上游结构重组完成，docs/gap-analysis.md 差距清单落地)"
+        }
+      ]
+    },
+    {
+      "id": "de-012",
+      "title": "分域访问控制：外网/内网 allow|ask|deny + temp 授权开关 + Full Access 可选 + 会话临时授权 + 只读状态工具 + 读取门",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "core/mit url-policy（Realm 分类 realmOf、per-realm access、temp 开关、fullAccess、authorizeUrl、deny wildcard）；browser-bridge Config（internetAccess/intranetAccess/internetTemp/intranetTemp/fullAccess/allowHosts/denyHosts）；导航授权门 + 已开标签读取门（read/snapshot/screenshot/pdf）；browser_policy_status；GUI「访问控制」折叠卡；systemPrompt 注入",
+      "affectedModules": [
+        "url-policy",
+        "plugin/bridge",
+        "tooling/tools",
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user）：分域（外网/内网）分别设置 allow/ask/deny 及“是否允许临时新增审批”；ask 未授权给模型 NEED_AUTHORIZATION 指引并注入 systemPrompt 防空转；Full Access 做成可选项（保留 deny/元数据/凭据红线，切换前设置保留可恢复）；对模式/名单变更前已打开的标签页按当前策略拒绝读取。另含深色开关修复（thumb 用层色令牌）与折叠卡片。",
+      "notes": [
+        "authorizeUrl 语义：硬红线（凭据/deny/元数据/路由 public 私网）→ block；realm allow→放行；realm ask→白名单命中或已临时授权则放行，否则 ask；realm deny→block(WEB_REALM_DENIED)；fullAccess 跳过路由与 realm，仅保留红线",
+        "realm 判定 realmOf：私网/回环字面量与 localhost/.local/.lan/.internal 等后缀归内网；仅靠 DNS 解析为私网的域名不归类（文档化近似）",
+        "实施版本 0.4.0"
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户在问答中确认实现范围)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "设计修订（source=user, agent-executed direct edit）：按用户 7 点反馈改为分域模型 + Full Access 可选 + temp 开关 + 读取门；authorization 单域字段被分域字段取代"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied（0.6.1 实机验收）：DSH-off 跨工具拦截（含 evaluate）；回环等价+别名 DNS 复核（localtest/nip.io）；IPv6 映射；元数据名单通配（*.suffix 含裸域）；ask/deny/继承 三态与审批弹窗；局域网 deny/本机 allow 分域；不可达站点 schema 修复"
+        }
+      ]
+    },
+    {
+      "id": "de-013",
+      "title": "扩展自动拉起与“无痕式临时干净配置”（拟议）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "browser-bridge autoLaunch 配置（browserExe/profileDir/tempProfile/extensionDir/idleSeconds）；断连探测 + spawn detached；README/安装建议专用配置文件",
+      "affectedModules": [
+        "plugin/bridge"
+      ],
+      "summary": "用户明示（source=user）：支持指定配置文件拉起第二个 Edge；提供类似无痕的临时干净 profile（需 extensionDir 才能 sideload 扩展）；并建议把扩展装到专用浏览器配置文件。实现细节与授权门槛待确认。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户列出需求点 3/6)"
+        }
+      ]
+    },
+    {
+      "id": "de-014",
+      "title": "用户操作/示范录制与宏执行（拟议，仅设计）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "扩展端事件捕获（输入/拖拽 dataTransfer.files/点击 DOM 特征）→ 每标签操作日志只读通道；进阶为可回放宏；宏=模型编写的小程序处理复杂/重复操作（连点 N 次、条件等待元素出现等）",
+      "affectedModules": [
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user）：想记录用户操作（如演示拖拽上传）供模型学习；并讨论模型编写宏执行复杂/频繁操作。均先入设计稿，不实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户 7 与宏两条，先设计后实现)"
+        }
+      ]
+    },
+    {
+      "id": "de-015",
+      "title": "本仓库自检（releases 版号，非 commits 匹配）+ 授权下代提 issue/PR（拟议）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "把 dsh-browser-unified 自身纳入 check 通道：跟踪 https://github.com/Short-Arm-Ape/dsh-browser-unified 的 GitHub Releases 版本号与既有 upstream 分开处理；不进 commits 基线（发布即产生新 commit，不能做 commit 匹配）；远期在用户授权下由 LLM 代提 issue/PR",
+      "affectedModules": [
+        "registry",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user）：browser_check_update 在查四上游之外，也查本仓库是否有新 Release（先匹配 releases 版本号，发布本身会产生新 commit 故不能 commit 匹配）；并讨论在用户授权的前提下让 LLM 代为提交 issue/PR。均先入设计稿，不实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户说明 releases 匹配原因与 issue/PR 设想)"
         }
       ]
     }

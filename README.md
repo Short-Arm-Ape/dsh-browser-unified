@@ -26,6 +26,10 @@
 
 > 想要 MIT 许可、不含 caob23 派生代码的版本，用同仓库的 MIT 版 `dsh-browser-unified-mit`
 > （不带浏览器桥与 `browser_*` 工具，仅 URL 策略 / 审批 / 自更新等模块）。
+>
+> **建议（专用配置文件）**：把 DSH Browser Control 扩展装在**专用的浏览器配置文件**里，与日常
+> 浏览隔离；需要访问本机服务（如 127.0.0.1）时把 urlMode 设为 `intranet`。跨 profile 自动拉起与
+> “无痕式临时干净配置”属拟议能力（design `de-013`），尚未实现。
 
 ## 配置与设置界面
 

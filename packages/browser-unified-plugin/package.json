@@ -1,7 +1,7 @@
 {
   "name": "dsh-browser-unified",
   "description": "Unified browser bridge plugin for DeepSeek Harness (AGPL-3.0): caob23 bridge wiring merged with the unified URL policy (public|intranet via GuardedBridge) plus self-update / design-registry tools and a GUI Settings section. Same extension (DSH Browser Control) and instance id as the upstream plugin it replaces.",
-  "version": "0.3.0",
+  "version": "0.6.1",
   "private": false,
   "type": "module",
   "main": "lib/index.js",

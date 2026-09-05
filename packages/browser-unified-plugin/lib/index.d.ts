@@ -64,6 +64,49 @@ export interface Config {
      */
     metadataIps?: string[];
     /**
+     * Per-realm access policies. Realms: 外网 `internet` / 局域网 `lan` /
+     * 本机 `local` (loopback). Each may be `allow` (default), `ask` (approval
+     * required unless allowlisted / session-granted) or `deny`.
+     */
+    internetAccess?: string;
+    lanAccess?: string;
+    localAccess?: string;
+    /** Whether ask-mode approvals may grant temporary hosts this session, per realm. Default true. */
+    internetTemp?: boolean;
+    lanTemp?: boolean;
+    localTemp?: boolean;
+    /**
+     * Behavior for a realm in `ask` mode when the target host is not on the
+     * allow list. `prompt` (default) shows the host approval (under an
+     * approval policy of never the request is auto-rejected and the model gets
+     * NEED_AUTHORIZATION guidance); `allow` grants the host for this session
+     * without prompting — explicit red lines (denyHosts, metadata, DSH-page
+     * access being off, credentials) still apply because they are enforced
+     * before this branch; `deny` refuses without asking.
+     */
+    askMode?: string;
+    /**
+     * DSH-page special rule: when enabled, origins in `dshOrigins` (the harness
+     * control page, e.g. http://127.0.0.1:3080) are reachable even under the
+     * `public` routing stance and skip the realm ask/deny layer. Enabling is
+     * double-confirmed in the GUI: the model could otherwise drive its own
+     * approval prompts from that page. Under a host approval policy of `never`,
+     * this is the only way to grant such access (approvals cannot be asked).
+     */
+    dshAccessEnabled?: boolean;
+    dshOrigins?: string[];
+    /**
+     * Hosts that never need per-host approval in `ask` realms. Exact hostnames/IPs
+     * or `*.suffix` wildcards (matches any subdomain).
+     */
+    allowHosts?: string[];
+    /**
+     * Hosts always denied — regardless of urlMode, realm or authorization. Exact
+     * hostnames/IPs or `*.suffix` wildcards. Hard blocks (metadata endpoints,
+     * embedded credentials, routing stance) apply in addition to this list.
+     */
+    denyHosts?: string[];
+    /**
      * Absolute directory containing `design/registry.json` and
      * `upstream-baseline.json` for the self-update tools. Empty (default) means
      * the copies bundled under the package `registry/` directory.
