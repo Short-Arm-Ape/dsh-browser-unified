@@ -2,7 +2,7 @@
 
 四条 DeepSeek Harness 浏览器路线的合并核心（可编译原型）。
 
-**License: AGPL-3.0-only**（决策 2026-09-05）。本包包含：
+**License: AGPL-3.0-only**。本包包含：
 - MIT 语义复刻：统一 URL 策略 `public | intranet`（`src/url-policy.ts`，源自 xylt369/dsh-browser
   与 Short-Arm-Ape/dsh-intranet-browser）；审批门决策表（`src/approval.ts`）。
 - AGPL-3.0 收编：caob23/dsh-browser-control 的桥实现（`src/bridge/ws.ts`、`src/bridge/server.ts`）。

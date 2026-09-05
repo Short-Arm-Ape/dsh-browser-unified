@@ -3,15 +3,15 @@
 四条 DeepSeek Harness（dsh）浏览器路线合一的**归档 + 合并原型**仓库。
 
 > 结构：`upstream/` —— 四个上游项目的原样归档（各自带 LICENSE）；
-> `packages/browser-unified-core` —— 可编译合并原型。**许可证决策（2026-09-05）：采纳 AGPL-3.0**，
-> 故 caob23 的桥代码已并入原型，整包以 AGPL-3.0-only 发布（详见 NOTICE.md）。
+> `packages/browser-unified-core` —— 可编译合并原型。
+> 由于 caob23 的桥代码已并入原型，整包以 **AGPL-3.0-only** 发布（详见 NOTICE.md）。
 
 ## 目录结构
 
 ```
 dsh-browser-unified/
 ├── README.md                    本文件
-├── NOTICE.md                    上游来源/版本/许可证矩阵（必读）
+├── NOTICE.md                    上游来源/版本/许可证矩阵
 ├── upstream-baseline.json       开发基线：四个上游归档日的 commit SHA（自检基准）
 ├── design/                      设计意图唯一书面出处（改设计先看这里）
 │   ├── README.md                工具契约 / LLM 触发描述模板 / 威胁模型与鉴权 / 条目状态机
@@ -65,8 +65,8 @@ npm run build          # tsc → dist/
 
 ## 上游自检与授权更新（开发基线）
 
-`upstream-baseline.json` 记录了四个上游**归档日 main 的 commit SHA**（与 `upstream/` 快照逐文件
-0 差异，2026-09-05 实测）。日常开发前或怀疑上游更新时运行：
+`upstream-baseline.json` 记录了四个上游**归档日 main 的 commit SHA**。
+日常开发前或怀疑上游更新时运行：
 
 ```bash
 pwsh scripts/check-upstream.ps1                          # 全部上游

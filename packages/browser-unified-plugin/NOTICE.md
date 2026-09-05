@@ -8,7 +8,7 @@
 | 1   | `dsh-browser-xylt369/`                | dsh-browser（xylt369）                | https://github.com/xylt369/dsh-browser                | 仓库 v0.1.0；包 @yeesy369/* 0.6.0–0.8.1 | MIT          | ✅ 是（url-policy 的分类器/守卫语义；MIT 允许并入 AGPL 包）                                             |
 | 2   | `dsh-intranet-browser-short-arm-ape/` | dsh-intranet-browser（Short-Arm-Ape） | https://github.com/Short-Arm-Ape/dsh-intranet-browser | 0.1.0                               | MIT          | ✅ 是（url-policy 元数据黑名单/归一化、approval 决策表语义）                                             |
 | 3   | `dsh-browser-control-kyo615/`         | dsh-browser-control（kyo615）         | https://github.com/kyo615/dsh-browser-control         | 1.0.0                               | MIT          | ⚠️ 暂未并入（其价值=GUI 实时画面，属集成层；原型阶段未取用）                                                    |
-| 4   | `dsh-browser-control-caob23/`         | @caob23/dsh-browser-control         | https://github.com/caob23/dsh-browser-control         | 1.0.7                               | **AGPL-3.0** | ✅ 是（2026-09-05 决策：采纳 AGPL；bridge/ws.ts + bridge/server.ts 收编进 core，整包转 AGPL-3.0-only） |
+| 4   | `dsh-browser-control-caob23/`         | @caob23/dsh-browser-control         | https://github.com/caob23/dsh-browser-control         | 1.0.7                               | **AGPL-3.0** | ✅ 是（bridge/ws.ts + bridge/server.ts 收编进 core，整包为 AGPL-3.0-only） |
 
 ## 各归档内自带的第三方声明
 
@@ -17,11 +17,7 @@
 - `dsh-browser-control-kyo615/`：`THIRD_PARTY_NOTICES`（@playwright/mcp Apache-2.0、Playwright Apache-2.0、DSH MIT、Cordis MIT；原样保留）。
 - `dsh-browser-control-caob23/`：仓库内无集中第三方声明，LICENSE=AGPL-3.0。
 
-## AGPL-3.0 决策记录与合规说明
-
-**2026-09-05 决策：采纳 AGPL-3.0。** `packages/browser-unified-core` 因此**整体换牌为
-AGPL-3.0-only**（其 LICENSE 文件为完整 AGPL-3.0 文本），并把 `@caob23/dsh-browser-control`
-（AGPL-3.0）的 `src/ws.ts`、`src/server.ts` 收编为 `src/bridge/ws.ts`、`src/bridge/server.ts`。
+## AGPL-3.0 合规说明
 
 1. `upstream/dsh-browser-control-caob23/` 以 AGPL-3.0 原样归档；并入 core 的收编文件头部
    保留上游版权与来源（vendored from @caob23/dsh-browser-control v1.0.7）。
