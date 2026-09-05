@@ -1,0 +1,11 @@
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+*.log
+.DS_Store
+test-results/
+playwright-report/
+.smoke/
+we-png.cjs
+we-tex.cjs

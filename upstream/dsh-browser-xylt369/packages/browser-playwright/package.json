@@ -1,0 +1,55 @@
+{
+  "name": "@yeesy369/dsh-browser-playwright",
+  "version": "0.8.1",
+  "type": "module",
+  "description": "Playwright-backed Service Provider for the dsh-browser capability seam.",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "cordis.patch.yml", "README.md", "README.en.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/bundle-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "lint": "echo \"(lint: not configured for dsh-browser-playwright)\"",
+    "test": "node --import tsx --test test/url-guard.test.ts test/refs.test.ts test/stealth.test.ts test/form.test.ts test/client-bundle.test.ts",
+    "test:e2e": "node --import tsx --test test/browser.e2e.test.ts",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@yeesy369/dsh-browser": "workspace:*",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "playwright": "^1.49.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-settings-plugins"]
+    }
+  }
+}

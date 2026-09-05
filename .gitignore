@@ -1,0 +1,14 @@
+# deps / build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# local npm cache used during prototype verification
+.npm-cache/
+
+# OS
+Thumbs.db
+.DS_Store
+packages/browser-unified-plugin/.npm-cache/
+packages/browser-unified-plugin/*.tgz
+

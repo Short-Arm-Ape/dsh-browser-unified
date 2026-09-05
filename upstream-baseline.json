@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "note": "开发基线：upstream/ 归档快照所对应的上游 commit SHA。scripts/check-upstream.ps1 以本清单为基准比对上游是否有新提交。任何「重新归档 / 吸收上游新提交 / 合并源码」的动作之后，必须同步把对应 repos[].pinnedSha 推进到新基线并更新 pinnedAt（-UpdateBaseline 开关只做这一件事，不碰源码）。",
+  "pinnedAt": "2026-09-05 11:32 +08:00",
+  "repos": [
+    {
+      "id": "xylt369-dsh-browser",
+      "url": "https://github.com/xylt369/dsh-browser",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-browser-xylt369",
+      "pinnedSha": "2f1adeea9f56eed710680aab9d0a6d1da12407b3",
+      "pinnedVersion": "repo 0.1.0；packages @yeesy369/* 0.6.0-0.8.1",
+      "license": "MIT",
+      "mergedIntoCore": true,
+      "baselineVerifiedFileDiff": 0
+    },
+    {
+      "id": "short-arm-ape-intranet",
+      "url": "https://github.com/Short-Arm-Ape/dsh-intranet-browser",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-intranet-browser-short-arm-ape",
+      "pinnedSha": "d3f63d4765647dacca829dc7edc6c8b43b4fd39e",
+      "pinnedVersion": "0.1.0",
+      "license": "MIT",
+      "mergedIntoCore": true,
+      "baselineVerifiedFileDiff": 0
+    },
+    {
+      "id": "kyo615-browser-control",
+      "url": "https://github.com/kyo615/dsh-browser-control",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-browser-control-kyo615",
+      "pinnedSha": "9c10f2c42999947a2c8009443994f6297d472b8c",
+      "pinnedVersion": "1.0.0",
+      "license": "MIT",
+      "mergedIntoCore": false,
+      "baselineVerifiedFileDiff": 0
+    },
+    {
+      "id": "caob23-browser-control",
+      "url": "https://github.com/caob23/dsh-browser-control",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-browser-control-caob23",
+      "pinnedSha": "27631487aaf7fddf2ce2e51926ad8849bb4feed4",
+      "pinnedVersion": "1.0.7",
+      "license": "AGPL-3.0",
+      "mergedIntoCore": true,
+      "baselineVerifiedFileDiff": 0
+    }
+  ]
+}

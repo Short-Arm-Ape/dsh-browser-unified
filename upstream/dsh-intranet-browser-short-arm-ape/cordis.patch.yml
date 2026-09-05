@@ -1,0 +1,9 @@
+# dsh-intranet-browser bundle patch: mounts a STANDALONE intranet/local
+# debugging browser. Deliberate SSRF-guard bypass: this instance performs no
+# private-IP screening, so every intranet_* tool call is gated behind user
+# approval (ctx.approval) before it can navigate anywhere.
+# The original @yeesy369/dsh-browser-playwright instance and its url-guard
+# stay untouched.
+- insert:
+    - id: intranet-browser
+      name: '@short-arm-ape/dsh-intranet-browser'

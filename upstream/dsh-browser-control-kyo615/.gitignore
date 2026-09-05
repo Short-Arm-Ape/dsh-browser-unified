@@ -1,0 +1,12 @@
+# dependencies
+node_modules/
+
+# runtime artifacts (screenshots, snapshots, console logs from Playwright MCP)
+.playwright-mcp/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,49 @@
+{
+  "name": "dsh-browser-control",
+  "version": "1.0.0",
+  "description": "A dynamic Cordis plugin for DeepSeek Harness: let an AI control a real, visible Chrome browser via Playwright MCP, with a live view of every action inside the GUI.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "playwright",
+    "mcp",
+    "browser",
+    "chrome",
+    "ai-agent"
+  ],
+  "scripts": {
+    "install:deps": "npm install @playwright/mcp"
+  },
+  "dependencies": {
+    "@playwright/mcp": "^0.0.79"
+  },
+  "license": "MIT"
+}

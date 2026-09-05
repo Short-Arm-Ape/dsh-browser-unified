@@ -1,0 +1,118 @@
+/** Browser capability vocabulary. @module dsh-browser/types */
+
+/** Options for opening a page in a browser runtime. */
+export interface BrowserPageOptions {
+  /** Isolate pages/tabs under this key (typically a harness session id). */
+  sessionKey?: string
+  /** Persistent profile directory for cross-session login state. */
+  profileDir?: string
+  /**
+   * Window mode:
+   * - `visible` — real browser window on the desktop (manual login / captcha possible).
+   * - `hidden` — real browser with the window minimized/offscreen (anti-bot friendliest, no visible window).
+   * - `headless` — no window at all; best for servers/CI, weaker against aggressive bot detection.
+   * Providers may default to `visible`.
+   */
+  windowVisibility?: 'visible' | 'hidden' | 'headless'
+  /** @deprecated Use `windowVisibility` instead. */
+  headless?: boolean
+  /** Preferred viewport size. */
+  viewport?: { width: number; height: number }
+  /** Use a locally installed real browser channel instead of the bundled Chromium. */
+  channel?: 'chrome' | 'msedge'
+}
+
+/** One tab owned by a session. */
+export interface BrowserTabInfo {
+  id: string
+  url: string | null
+  title: string | null
+  active: boolean
+}
+
+/** Result of navigating a page to a URL. */
+export interface BrowserNavigateResult {
+  url: string
+  statusCode: number | null
+  title: string | null
+}
+
+/**
+ * Compact, model-friendly page representation. `text` is derived from the
+ * accessibility tree (or body text as a fallback) rather than raw HTML, so the
+ * model receives a low-token, actionable view of the page.
+ */
+export interface BrowserSnapshot {
+  url: string
+  text: string
+  /** Actionable element references. Parsed from the accessibility tree; empty until that mapping lands. */
+  refs: readonly string[]
+}
+
+/** An encoded screenshot produced by the page. */
+export interface BrowserScreenshot {
+  mediaType: 'image/png' | 'image/jpeg'
+  data: Uint8Array
+  width: number
+  height: number
+}
+
+/** Result of an in-page action such as click or type. */
+export interface BrowserActionResult {
+  url: string
+  ok: boolean
+  detail?: string
+}
+
+/** Options for scrolling the current page. */
+export interface BrowserScrollOptions {
+  /** Direction to scroll; defaults to `down`. */
+  direction?: 'up' | 'down' | 'left' | 'right'
+  /** Distance in CSS pixels; defaults to 800. */
+  amount?: number
+}
+
+/** Result of scrolling the page. */
+export interface BrowserScrollResult {
+  url: string
+  ok: boolean
+  /** New horizontal scroll offset in CSS pixels. */
+  scrollX: number
+  /** New vertical scroll offset in CSS pixels. */
+  scrollY: number
+  /** True when the page could not move the full requested distance (reached an edge). */
+  atBoundary: boolean
+}
+
+/** Options for a bounded wait. */
+export interface BrowserWaitOptions {
+  /** Milliseconds to wait (capped by the consumer). */
+  ms?: number
+  /** Also wait until `domcontentloaded` after the timer. */
+  load?: boolean
+}
+
+/** A live page inside one browser context. */
+export interface BrowserPage {
+  readonly id: string
+  url(): string | null
+  title(): Promise<string | null>
+  navigate(url: string, signal?: AbortSignal): Promise<BrowserNavigateResult>
+  snapshot(signal?: AbortSignal): Promise<BrowserSnapshot>
+  screenshot(signal?: AbortSignal): Promise<BrowserScreenshot>
+  click(ref: string, signal?: AbortSignal): Promise<BrowserActionResult>
+  type(text: string, signal?: AbortSignal): Promise<BrowserActionResult>
+  /** Replace the value of an element identified by accessibility ref or CSS selector. */
+  fill(ref: string, value: string, signal?: AbortSignal): Promise<BrowserActionResult>
+  /** Press a key, optionally targeting an element by ref or CSS selector. */
+  press(key: string, ref?: string, signal?: AbortSignal): Promise<BrowserActionResult>
+  /** Scroll the page by a pixel amount in a direction (main document scroll). */
+  scroll(options?: BrowserScrollOptions, signal?: AbortSignal): Promise<BrowserScrollResult>
+  /** Wait a bounded duration, optionally until the next `domcontentloaded`. */
+  wait(options?: BrowserWaitOptions, signal?: AbortSignal): Promise<BrowserActionResult>
+  /** Run a raw JavaScript expression in the page. High-risk: expose only behind approval. */
+  evaluate<T>(script: string, signal?: AbortSignal): Promise<T>
+  back(signal?: AbortSignal): Promise<BrowserNavigateResult>
+  forward(signal?: AbortSignal): Promise<BrowserNavigateResult>
+  close(signal?: AbortSignal): Promise<void>
+}

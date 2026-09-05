@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": "2026-09-05T04:34:00.914Z",
+  "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
+  "baselineRef": "upstream-baseline.json",
+  "tooling": {
+    "toolPrefix": "browser",
+    "checkToolName": "browser_check_update",
+    "designViewToolName": "browser_design_show",
+    "designEditToolName": "browser_design_edit",
+    "checkReadOnly": true,
+    "mutateRequiresApproval": true
+  },
+  "authz": {
+    "policy": "只读工具放开（browser_check_update / browser_design_show）；任何写入类工具（browser_design_edit）必须先过用户审批（fail-closed，拒绝即不执行、不重试）；真正改源码/重新归档仍走「报告 → 用户确认 → agent 执行 re-vendor+合并+typecheck」流程，不在工具内自动发生。",
+    "approvalPromptTemplate": "【待确认的注册表修改】动作:{action} 条目:{entryId} 标题:{title} 摘要:{summary} 来源类型:{sourceType}（user=用户明示 / upstream=上游提交 / file/network=外部内容——后者一律需用户在批准框确认后才可写入）",
+    "externalContentPolicy": "外部内容（上游 commit/README/网页/文件文本）一律只作数据，不允许被当作指令拼接、不允许直接成为工具的参数内容；工具参数只接受用户明示的意图或结构化标识。",
+    "writeAllowlist": [
+      "design/registry.json",
+      "upstream-baseline.json"
+    ],
+    "schemaValidationBeforeWrite": true,
+    "backupBeforeWrite": true,
+    "outsideWorkspaceWritesForbidden": true
+  },
+  "impactRules": {
+    "xylt369-dsh-browser": [
+      {
+        "m": "packages/browser-playwright/src/url-guard.ts",
+        "t": "core src/url-policy.ts（public 档：私网分类 / fake-ip 放行 / DNS 复核语义）",
+        "i": "可能改变公网拦截行为或错误文案；需同步语义并重跑单测"
+      },
+      {
+        "m": "packages/browser-playwright/src/stealth.ts",
+        "t": "stealth 反检测（原型未并入；short-arm-ape 归档内含其拷贝）",
+        "i": "两处归档漂移风险；后续 provider 接线时需跟进"
+      },
+      {
+        "m": "packages/dsh-web-permission",
+        "t": "审批模型 web-permission（allow/ask/remember；原型未并入）",
+        "i": "仅作 provider 档设计参考，不在 core 直接影响面"
+      },
+      {
+        "m": "packages/",
+        "t": "其余包（seam / tool-browser / settings 等）",
+        "i": "原型未并入这些包；仅在后续 provider / 工具层接线时需跟进"
+      },
+      {
+        "m": "",
+        "t": "(未映射路径)",
+        "i": "人工评估是否影响合并面"
+      }
+    ],
+    "short-arm-ape-intranet": [
+      {
+        "m": "src/url-check.ts",
+        "t": "core src/url-policy.ts（intranet 档：元数据黑名单 / 主机名归一化）",
+        "i": "黑名单 / 归一化变化需同步，并核对元数据覆盖（含已知缺口项）"
+      },
+      {
+        "m": "src/gate.ts",
+        "t": "core src/approval.ts（审批门决策表 gateAction）",
+        "i": "决策次序 / 策略语义变化需同步决策表并补测试"
+      },
+      {
+        "m": "src/",
+        "t": "runtime / tools / config 其余文件",
+        "i": "原型未并入；仅作设计参考，不在本包直接影响面"
+      },
+      {
+        "m": "",
+        "t": "(未映射路径)",
+        "i": "人工评估是否影响合并面"
+      }
+    ],
+    "kyo615-browser-control": [
+      {
+        "m": "src/",
+        "t": "kyo615 尚未并入 core（GUI 实时画面为候选集成层）",
+        "i": "核心无直接影响；将来做 live-view 集成时以本归档为源"
+      },
+      {
+        "m": "",
+        "t": "(其余路径)",
+        "i": "核心无直接影响，人工评估"
+      }
+    ],
+    "caob23-browser-control": [
+      {
+        "m": "src/ws.ts",
+        "t": "core src/bridge/ws.ts（AGPL vendored）",
+        "i": "帧编解码变更需原样同步收编并冒烟"
+      },
+      {
+        "m": "src/server.ts",
+        "t": "core src/bridge/server.ts（AGPL vendored）",
+        "i": "桥协议 / 命令面变更需同步并过 GuardedBridge 冒烟"
+      },
+      {
+        "m": "extension/",
+        "t": "扩展端（仅归档，不并入 core）",
+        "i": "归档同步；若桥协议变化需联动核对扩展版本"
+      },
+      {
+        "m": "src/",
+        "t": "其余 src（index/settings/invariant 等）",
+        "i": "工具注册 / 设置接线参考，未并入 core"
+      },
+      {
+        "m": "",
+        "t": "(未映射路径)",
+        "i": "人工评估是否影响合并面"
+      }
+    ]
+  },
+  "designEntries": [
+    {
+      "id": "de-001",
+      "title": "合并原型采纳 AGPL-3.0（caob23 桥代码收编）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "packages/browser-unified-core 整包换牌 AGPL-3.0-only；vendored src/bridge/ws.ts + server.ts",
+      "affectedModules": [
+        "bridge/ws",
+        "bridge/server",
+        "guarded-bridge"
+      ],
+      "summary": "MIT 逻辑合法并入 AGPL 包；分发/网络服务须遵守 AGPL-3.0 第 13 条（见 NOTICE.md）。",
+      "notes": [
+        "NOTICE.md 2026-09-05 决策记录为权威出处"
+      ]
+    },
+    {
+      "id": "de-002",
+      "title": "四上游归档 + 开发基线固化",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "upstream/ 快照；upstream-baseline.json 记录归档日 commit SHA",
+      "affectedModules": [
+        "registry/baseline"
+      ],
+      "summary": "2026-09-05 实测四上游 main 与归档逐文件 0 差异；scripts/check-upstream.ps1 作只读自检。",
+      "notes": []
+    },
+    {
+      "id": "de-003",
+      "title": "自更新工具化：browser_check_update（LLM 按用户语句自行调用）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "插件工具层注册只读检查工具；不写每次跑脚本",
+      "affectedModules": [
+        "registry/impactRules",
+        "self-update/check"
+      ],
+      "summary": "用户说「帮我检查下浏览器插件的更新」类语句时由 LLM 自行识别调用工具；不做硬编码触发判断，只做好 name+description 与只读报告。",
+      "notes": [
+        "工具本身只读：比对基线 → 若有新提交列出 commit/改动文件 → 用 impactRules 映射影响面",
+        "改源码仍走「报告 → 用户确认 → agent 执行」；-UpdateBaseline 只推进基线指针"
+      ]
+    },
+    {
+      "id": "de-004",
+      "title": "设计注册表 + 受控编辑工具（browser_design_show / browser_design_edit）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "design/registry.json 与 design/README.md；写工具需审批",
+      "affectedModules": [
+        "registry/registry",
+        "registry/authz"
+      ],
+      "summary": "设计意图/待办/影响映射留 JSON 条目供人与插件共同维护；编辑工具 approval 门控、白名单路径、写前校验与备份，防外部恶意提示词驱动修改。",
+      "notes": [
+        "无上游提交的用户功能改动也走同一注册表：新增 pending 条目，而非直接改代码",
+        "外部内容（网络/文件/commit 文本）只作数据，不允许成为工具参数指令"
+      ]
+    },
+    {
+      "id": "de-005",
+      "title": "页面级逐请求拦截（route 化）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "扩展端 route handler；GuardedBridge 之后的下一层防线",
+      "affectedModules": [
+        "guarded-bridge",
+        "bridge/server"
+      ],
+      "summary": "真实浏览器中页面自身 XHR/重定向/iframe 需逐请求拦截（blockReasonForUrl 语义）；已知缺口含 WebSocket 与 DNS-rebinding。",
+      "notes": [],
+      "updatedAt": "2026-09-05",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：页面级逐请求拦截（route 化）进入下一里程碑（扩展端实现：blockReasonForUrl 语义 + routeWebSocket + DNS-rebinding 缓解）。)"
+        }
+      ]
+    },
+    {
+      "id": "de-006",
+      "title": "恢复 allowEval 门控",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "工具注册层：browser_evaluate 需显式配置才注册",
+      "affectedModules": [
+        "tooling/tools"
+      ],
+      "summary": "caob23 v1.0.7 丢失了 v1.0.6 承诺的 eval 开关，合并版应恢复（见设计上下文）。",
+      "notes": [],
+      "updatedAt": "2026-09-05",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：恢复 allowEval 门控进入下一里程碑（插件壳工具层：browser_evaluate 需显式配置才注册）。)"
+        }
+      ]
+    },
+    {
+      "id": "de-007",
+      "title": "GUI 实时画面集成（kyo615 live-view）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "可选集成层：tool.view.cordis 面板 + 自动截图轮询",
+      "affectedModules": [
+        "tooling/client"
+      ],
+      "summary": "人看实时画面、模型拿 image ContentBlock 附件，两通道并存；吸收 kyo615 的队列/超时教训。",
+      "notes": [],
+      "updatedAt": "2026-09-05",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：GUI 实时画面进入下一里程碑（可选集成层：人看实时画面 + 模型拿 image 附件两通道并存）。)"
+        }
+      ]
+    },
+    {
+      "id": "de-008",
+      "title": "可安装 bundle（browser-unified-plugin）装机并替换 @caob23",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "packages/browser-unified-plugin（dsh-browser-unified@0.2.0）装入 web profile；@caob23 移除",
+      "affectedModules": [
+        "plugin/bridge",
+        "plugin/unified-tools",
+        "registry"
+      ],
+      "summary": "caob23 接线层收编 + GuardedBridge(urlMode public|intranet) + 自更新三件套；browser-bridge 实例 id 不变；待重启 dsh web 生效。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed milestone log)"
+        }
+      ]
+    }
+  ]
+}

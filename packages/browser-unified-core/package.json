@@ -1,0 +1,29 @@
+{
+  "name": "browser-unified-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Merge prototype (AGPL-3.0): unified URL policy (public|intranet) + approval-gate decision table + instance registry + vendored caob23 bridge (RFC 6455 codec + local WS/HTTP BridgeServer) wrapped by GuardedBridge.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "AGPL-3.0-only",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

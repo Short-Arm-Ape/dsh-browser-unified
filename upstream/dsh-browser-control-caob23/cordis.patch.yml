@@ -1,0 +1,9 @@
+# dsh-browser-control: mounts disabled by default.
+# Enable via Settings -> Plugins -> DSH Browser Control.
+- insert:
+    - id: browser-bridge
+      name: '@caob23/dsh-browser-control'
+      config:
+        enabled: false
+        port: 9777
+        token: dsh-local

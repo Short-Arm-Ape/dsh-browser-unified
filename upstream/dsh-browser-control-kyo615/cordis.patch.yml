@@ -1,0 +1,7 @@
+# dsh-browser-control 的 bundle patch。
+# 通过 `dsh plugin add <该仓库>` 安装时，本文件把插件行插入 Cordis 组合树：
+#   id   —— 插件实例标识
+#   name —— 包名（决定从 package.json 的 "main" / exports["."] 解析宿主入口）
+- insert:
+    - id: browser-control
+      name: dsh-browser-control

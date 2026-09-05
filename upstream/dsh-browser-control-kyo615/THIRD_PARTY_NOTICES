@@ -1,0 +1,35 @@
+Third-Party Notices
+===================
+
+dsh-browser-control launches and communicates with the following third-party
+software. This project does NOT include or modify their source code; it only
+interacts with them at runtime (subprocess / protocol / plugin API level).
+
+1. @playwright/mcp  (Microsoft Playwright MCP server)
+   - Copyright (c) Microsoft Corporation
+   - License: Apache License 2.0
+   - Source: https://github.com/microsoft/playwright-mcp
+   - Usage: spawned as a subprocess; controlled over the Model Context
+     Protocol (MCP) stdio transport.
+
+2. playwright / playwright-core
+   - Copyright (c) Microsoft Corporation
+   - License: Apache License 2.0
+   - Source: https://github.com/microsoft/playwright
+   - Usage: pulled in as a dependency of @playwright/mcp.
+
+3. DeepSeek Harness (DSH)
+   - Copyright (c) 2026 DeepSeek
+   - License: MIT
+   - Usage: this project is a dynamic Cordis plugin that runs inside DSH
+     (harness.registerTool / harness.handle / slots).
+
+4. Cordis (@deepseek-ai/cordis)
+   - Copyright (c) 2021-present Shigma
+   - License: MIT
+
+The Model Context Protocol specification is an open standard released under
+an open license (see https://modelcontextprotocol.io).
+
+Full Apache-2.0 license text: https://www.apache.org/licenses/LICENSE-2.0
+Full MIT license text: see ./LICENSE

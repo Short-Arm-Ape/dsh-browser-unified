@@ -1,0 +1,9 @@
+# dsh-browser-unified-mit (MIT edition): mounts the self-update / design-registry
+# tools. No bridge, no browser driver, no enable switch — the instance always
+# registers browser_check_update / browser_design_show / browser_design_edit.
+# Set registryDir to a directory containing design/registry.json + upstream-baseline.json.
+- insert:
+    - id: browser-unified-mit
+      name: 'dsh-browser-unified-mit'
+      config:
+        registryDir: ''

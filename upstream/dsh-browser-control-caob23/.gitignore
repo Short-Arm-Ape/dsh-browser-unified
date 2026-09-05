@@ -1,0 +1,7 @@
+node_modules/
+lib/tsconfig.tsbuildinfo
+*.pem
+*.zip
+*.crx
+.DS_Store
+*.tmp
