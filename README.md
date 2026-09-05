@@ -1,6 +1,6 @@
 # dsh-browser-unified
 
-四条 DeepSeek Harness（dsh）浏览器路线合一的**归档 + 合并原型**仓库。
+四条 DeepSeek Harness（dsh）浏览器插件路线合一的**归档 + 合并原型**仓库。
 
 > 结构：`upstream/` —— 四个上游项目的原样归档（各自带 LICENSE）；
 > `packages/browser-unified-core` —— 可编译合并原型。
