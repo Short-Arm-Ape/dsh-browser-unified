@@ -431,6 +431,48 @@
           "what": "created (source=user, agent-executed direct edit; 用户说明 releases 匹配原因与 issue/PR 设想)"
         }
       ]
+    },
+    {
+      "id": "de-016",
+      "title": "受限态下 ask 域兜底策略（通用化：审批缺失 / Full Access 等，随 permission-preset 上下文解释）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "browser-bridge 把「askMode」语义收敛为：仅在宿主无法请求审批时生效；通过 permission-preset 上下文（如 @deepseek-ai/dsh-permission-presets / 会话权限 preset）探测当前姿态；三档=忽略(默认，ask 失效其余规则照常)/放行(再忽略黑白名单，红线除外)/禁止；红线(凭据/云元数据/DSH-off)恒在最前。未来把『仅可查看/read-only』等姿态与浏览器读写能力映射一并纳入（映射边界待定）",
+      "affectedModules": [
+        "plugin/bridge",
+        "tooling/tools",
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user，讨论确认）：审批缺失策略只在无法审批时生效；继承=忽略 ask（其余规则照常）；放行=连黑白名单一起忽略（仍不过红线）；禁止=拒绝。插件应读取 permission preset 上下文而非仅靠设置项盲判；命名由 agent 定（倾向「受限态下 ask 处理：忽略/放行/禁止」）。仅设计，不实现，进后续版本。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 讨论结论入账)"
+        }
+      ]
+    },
+    {
+      "id": "de-017",
+      "title": "CDP 透传通道（受控）：方法白名单 + 操作门/红线 + 按域授权；分阶段：Network/Fetch(→de-005)、存储、性能、WebAuthn 等命令组",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "扩展端 chrome.debugger 通路；browser_cdp {tabId, method, params} 受控透传；method 白名单（只读/调试类默认放行，Fetch/Network.setBlockedURLs/Browser.* 等强副作用单独审批或默认关）；先过现有操作门/红线与 askMode 语义；与「开发工具面板即 CDP UI」的认知对齐（无面板级 API）",
+      "affectedModules": [
+        "plugin/bridge",
+        "tooling/tools",
+        "registry"
+      ],
+      "summary": "用户明示（source=user）：想操作 DevTools（控制台/应用-存储/网络等）。官方无面板级 API，面板=CDP UI；官方已有 Chrome DevTools MCP/Playwright MCP 但覆盖面有限。方案：经扩展 debugger 权限做受控 CDP 透传 + 白名单，逐步补 Network/Fetch(页面拦截,de-005)、存储(IndexedDB/CacheStorage/DOMStorage/Cookies)、性能/内存(Performance/Memory/HeapProfiler)、WebAuthn/Emulation(传感器) 等命令组；纯 UI 面板（3D/CSS概述/Recorder 等）不做。仅设计，不实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户确认登记 CDP 透传设计)"
+        }
+      ]
     }
   ]
 }
