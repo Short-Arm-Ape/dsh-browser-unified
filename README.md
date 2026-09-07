@@ -12,7 +12,9 @@
 1. **浏览器扩展**：装 DSH Browser Control（Chrome/Edge 请从上游
    [caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control/releases) 下载，与
    @caob23 版同扩展、同实例 id，无需换扩展）。
-2. **插件**（在 dsh profile 目录，如 `F:\dsh-data\profiles\web`）：
+2. **插件**：
+
+   从Releases下载 `browser-unified-plugin.zip`，解压，然后在解压后的目录执行：
 
    ```bash
    pnpm add ./dsh-browser-unified-0.3.0.tgz        # 或 pnpm add dsh-browser-unified@file:<path>
