@@ -4,7 +4,7 @@
 （DSH Browser Control 扩展 + 本地桥）给模型提供 16 个 `browser_*` 驱动工具，前面统一加一层
 可配置的 URL 策略守卫，另附「上游自检 / 设计注册表」工具三件套与 GUI 设置分区。
 
-> 仓库 = `upstream/`（四个上游原样归档，各自带 LICENSE）+ `packages/`（合并产物）。
+> 仓库 = `upstream/`（五个上游原样归档，各自带 LICENSE）+ `packages/`（合并产物）。
 > 合并核心与插件壳整包以 **AGPL-3.0-only** 发布（含 caob23 桥收编代码，归属矩阵见 `NOTICE.md`）。
 
 ## 安装
@@ -17,9 +17,9 @@
    从Releases下载 `browser-unified-plugin.zip`，解压，然后在解压后的目录执行：
 
    ```bash
-   pnpm add ./dsh-browser-unified-0.3.0.tgz        # 或 pnpm add dsh-browser-unified@file:<path>
+   pnpm add ./dsh-browser-unified-0.7.3.tgz        # 或 pnpm add dsh-browser-unified@file:<path>
    # package.json:
-   #   dependencies:        "dsh-browser-unified": "file:dsh-browser-unified-0.3.0.tgz"
+   #   dependencies:        "dsh-browser-unified": "file:dsh-browser-unified-0.7.3.tgz"
    #                        "browser-unified-core": "file:<abs path to packages/browser-unified-core>"
    #   dsh.profile.bundles: 加入 "dsh-browser-unified"
    ```
@@ -57,7 +57,7 @@ better-sidebar 的「侧边卡片」），逐项即时生效（改 URL 策略 / 
     blockMetadata: true        # 云元数据拦截总开关
     metadataHostnames: [metadata, metadata.google.internal, instance-data, instance-data.ec2.internal, metadata.azure.internal, metadata.tencentyun.com]
     metadataIps: [169.254.169.254, 100.100.100.200, fd00:ec2::254]
-    registryDir: 'F:\path\to\dsh-browser-unified'   # 含 design/registry.json + upstream-baseline.json；留空读包内 registry/
+    registryDir: '<repo-dir>'   # 指向本仓库根（含 design/registry.json + upstream-baseline.json）；留空读包内 registry/
     # port: 9777, token: dsh-local, shotsDir: dsh-browser-shots（默认即可）
 ```
 
@@ -95,12 +95,12 @@ metadata 等）作为安全网，不受上述列表影响。
 dsh-browser-unified/
 ├── README.md                    本文件
 ├── NOTICE.md                    上游来源/版本/许可证归属矩阵
-├── upstream-baseline.json       开发基线：四上游归档日 commit SHA
+├── upstream-baseline.json       开发基线：五上游归档日 commit SHA
 ├── design/                      设计意图唯一书面出处
 │   ├── README.md                工具契约 / 威胁模型与鉴权 / 条目状态机
 │   └── registry.json            impactRules（单一事实源）/ tooling / authz / designEntries
 ├── scripts/check-upstream.ps1   上游自检（只读）
-├── upstream/                    四上游原样快照（各自 LICENSE）
+├── upstream/                    五上游原样快照（各自 LICENSE）
 └── packages/
     ├── browser-unified-core/    合并核心（AGPL）：url-policy / approval / bridge(收编) / guarded-bridge / self-update
     ├── browser-unified-plugin/  dsh 插件壳（AGPL）：16 个 browser_* 工具 + 自更新三件套 + GUI「浏览器」设置分区
@@ -119,7 +119,7 @@ dsh-browser-unified/
 
 - **构建 / 验证**：`packages/browser-unified-core`、`browser-unified-plugin`、`browser-unified-mit`
   各自 `npm run typecheck` / `npm run build`；插件用 `node scripts/build-pack.mjs`（tsc→lib，
-  client/client.js→lib/client.js，npm pack 到包根）。产物 `dsh-browser-unified-0.3.0.tgz`。
+  client/client.js→lib/client.js，npm pack 到包根）。产物 `dsh-browser-unified-0.7.3.tgz`。
 - **上游自检**：`pwsh scripts/check-upstream.ps1 [-UpstreamId <id>] [-UpdateBaseline]`。检出
   DRIFT 后**必须先向你报告**“上游改了什么、影响哪些合并模块”，你确认后 agent 才 re-vendor +
   合并 + typecheck；`-UpdateBaseline` 只推进基线 SHA。改动会写 `design/registry.json` 条目。
@@ -128,9 +128,9 @@ dsh-browser-unified/
 
 ## 与上游功能差距
 
-（0.3.0 之后与四上游逐项对比的差距清单：页面级请求拦截、allowEval 门控、GUI 实时画面、
+（0.3.0 之后与四并入/候选上游逐项对比的差距清单：页面级请求拦截、allowEval 门控、GUI 实时画面、
 stealth / web-permission 授权 UI 等未实现项，见 `docs/gap-analysis.md`，条目状态在
-`design/registry.json`。）详见对话产出的差距报告。
+`design/registry.json`；第 5 归档 `dsh-agent-webops` 为参考路线，见 de-019。）详见对话产出的差距报告。
 
 ## 许可
 

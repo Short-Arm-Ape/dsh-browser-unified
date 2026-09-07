@@ -29,7 +29,7 @@ dsh-browser-unified/
 ├── design/
 │   ├── README.md            本设计文档
 │   └── registry.json        设计注册表（impactRules / tooling / authz / designEntries）
-├── upstream-baseline.json   四上游归档日 commit SHA（机器基线）
+├── upstream-baseline.json   五上游归档日 commit SHA（机器基线）
 ├── scripts/
 │   └── check-upstream.ps1   只读自检（实现 A：离线/终端；impactRules 读自 registry.json）
 └── packages/browser-unified-core/src/self-update/
@@ -61,12 +61,13 @@ dsh-browser-unified/
 **description 模板（写进工具注册，LLM 靠它自识别）**：
 
 > Check whether the browser plugin's tracked upstream repositories (dsh-browser,
-> dsh-intranet-browser, dsh-browser-control kyo615/caob23) have new commits since the
-> development baseline. Read-only: reports UP-TO-DATE or lists the new commits, changed
-> files, and their expected impact on the merged code (url-policy / approval / vendored
-> bridge modules). Call this when the user asks to check for plugin/upstream updates,
-> new commits, version drift, or what changed upstream — e.g. "帮我检查下浏览器插件的更新".
-> Never modify anything; for source changes an explicit user-approved flow is required.
+> dsh-intranet-browser, dsh-browser-control kyo615/caob23, dsh-agent-webops) have new
+> commits since the development baseline. Read-only: reports UP-TO-DATE or lists the new
+> commits, changed files, and their expected impact on the merged code (url-policy /
+> approval / vendored bridge modules). Call this when the user asks to check for
+> plugin/upstream updates, new commits, version drift, or what changed upstream —
+> e.g. "帮我检查下浏览器插件的更新". Never modify anything; for source changes an
+> explicit user-approved flow is required.
 
 用户可能的话术（仅供文档参考，不做匹配逻辑）："检查下浏览器插件更新 / 上游有没有新提交 /
 现在基线是多少 / 最近上游改了什么、影响哪里"。

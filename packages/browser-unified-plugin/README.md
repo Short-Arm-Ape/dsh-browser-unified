@@ -8,7 +8,7 @@ settings namespace (`browser-bridge`) as the upstream plugin it replaces.
 | 项 | 值 |
 |---|---|
 | 包名 | `dsh-browser-unified` |
-| 版本 | 0.3.0 |
+| 版本 | 0.7.3 |
 | 许可证 | **AGPL-3.0-only**（含 caob23 收编代码；归属与合规见 NOTICE.md） |
 | 实例 id / 设置命名空间 | `browser-bridge`（与 @caob23 一致，便于迁移） |
 | 提供 | 16 个 `browser_*` 驱动工具、`GuardedBridge` URL 策略守卫、自更新三件套、GUI「浏览器」设置分区 |
@@ -46,7 +46,7 @@ GUI：设置 →「浏览器」；等价 profile YAML（`cordis.patch.yml`）：
     blockMetadata: true
     metadataHostnames: [metadata, metadata.google.internal, instance-data, instance-data.ec2.internal, metadata.azure.internal, metadata.tencentyun.com]
     metadataIps: [169.254.169.254, 100.100.100.200, fd00:ec2::254]
-    registryDir: 'F:\path\to\dsh-browser-unified'   # 留空读包内 registry/
+    registryDir: '<repo-dir>'            # 指向本仓库根（含 design/registry.json + upstream-baseline.json）；留空读包内 registry/
     # port: 9777, token: dsh-local, shotsDir: dsh-browser-shots
 ```
 
@@ -61,15 +61,15 @@ npm run build-pack        # tsc 编译 src -> lib/；client/client.js -> lib/cli
 # 或： node scripts/build-pack.mjs     （--no-pack 只编译+拷贝 client）
 ```
 
-产物：`dsh-browser-unified-0.3.0.tgz`。
+产物：`dsh-browser-unified-0.7.3.tgz`。
 
 ## 安装
 
 ```bash
-cd <dsh-profile-dir>                     # 例如 F:\dsh-data\profiles\web
-pnpm add ./dsh-browser-unified-0.3.0.tgz
+cd <dsh-profile-dir>                     # 你的 dsh web profile 目录
+pnpm add ./dsh-browser-unified-0.7.3.tgz
 # package.json:
-#   dependencies:        "dsh-browser-unified": "file:dsh-browser-unified-0.3.0.tgz"
+#   dependencies:        "dsh-browser-unified": "file:dsh-browser-unified-0.7.3.tgz"
 #                        "browser-unified-core": "file:<abs path to packages/browser-unified-core>"
 #   dsh.profile.bundles: 加入 "dsh-browser-unified"（移除旧 @caob23/dsh-browser-control）
 # 重启 dsh web 生效（宿主与 client 半区均需重启加载）；浏览器扩展（DSH Browser Control）不变。

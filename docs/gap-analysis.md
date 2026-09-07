@@ -1,7 +1,9 @@
-# 上游功能差距清单（dsh-browser-unified vs 四上游）
+# 上游功能差距清单（dsh-browser-unified vs 四并入/候选上游）
 
 > 与 0.3.0 的逐项对比。结论同时在 `design/registry.json`（de-005…de-007 等条目）与对话报告同步。
 > 出处均为 `upstream/` 原样归档路径；「未实现 / 部分」项对应后续里程碑，需走注册表条目 + 用户确认流程。
+> 注：第 5 个归档 `dsh-agent-webops`（参考，de-019）不在本差距表内——其为独立 headless
+> 实例路线，仅供 de-013/017 并入参考，无逐项功能对比。
 
 ## 汇总表
 

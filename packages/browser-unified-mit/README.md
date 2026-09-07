@@ -33,8 +33,8 @@ node_modules / junction）。首次运行缺依赖时脚本会自动 `npm instal
 
 ```bash
 # 在 dsh 的 web profile 下（示例）：
-cd <profile-dir>            # 例如 F:\dsh-data\profiles\web
-dsh plugin --profile web add ./dsh-browser-unified-mit-0.1.0.tgz
+cd <dsh-profile-dir>            # 你的 dsh web profile 目录
+dsh plugin --profile <name> add ./dsh-browser-unified-mit-0.1.0.tgz
 # 并把 'dsh-browser-unified-mit' 加入 package.json 的 dsh.profile.bundles
 ```
 
