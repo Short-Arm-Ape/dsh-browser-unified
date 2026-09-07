@@ -1,6 +1,6 @@
 {
   "sessionId": "session-8eff7cfc-623b-428a-88de-f6f5fe12af50",
-  "updatedAt": "2026-09-07T13:50:24.438Z",
+  "updatedAt": "2026-09-07T14:06:23.040Z",
   "turns": [
     {
       "turn": 60,
@@ -40,6 +40,26 @@
       "toolCalls": 6,
       "errors": 0,
       "estTokens": 486,
+      "contextChars": 0
+    },
+    {
+      "turn": 64,
+      "startAt": "2026-09-07T13:59:58.884Z",
+      "endAt": "2026-09-07T14:00:17.918Z",
+      "eventCount": 1155,
+      "toolCalls": 0,
+      "errors": 0,
+      "estTokens": 1269,
+      "contextChars": 0
+    },
+    {
+      "turn": 65,
+      "startAt": "2026-09-07T14:04:59.333Z",
+      "endAt": "2026-09-07T14:06:23.040Z",
+      "eventCount": 4166,
+      "toolCalls": 7,
+      "errors": 0,
+      "estTokens": 577,
       "contextChars": 0
     }
   ],

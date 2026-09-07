@@ -20,3 +20,12 @@
 
 ## 后续（已登记，未实现）
 de-014 录制/宏、de-015 本仓库 releases 自检 + 代提 issue/PR、de-017 CDP 透传、TOCTOU 复检、页面级拦截(de-005)、协议白名单(extension:// 控制)等；详见 `design/registry.json` 与 `docs/gap-analysis.md`。
+
+## 0.7.1 – 0.7.3 增量
+- 0.7.1：自动拉起修复——可执行文件按常见绝对路径探测（msedge/chrome），spawn 失败逐候选记录日志，不再静默。
+- 0.7.2：自动拉起支持 `--profile-directory`（新增「配置文件名称」字段；目录直接填 `...\Profile 4` 时自动拆分 user-data-dir/name）。实机验证：按扩展所在 Profile 4 拉起并重连 OK。
+- 0.7.3：修复 `browser_policy_status` 未渲染「自动拉起」行的转义 bug（含 profile 摘要）。
+- UI：设置折叠卡开合状态按卡 id 持久化（localStorage，`dshBu:fold:*`）。
+
+## 上游采纳
+- de-019：`jonah791/dsh-agent-webops`（MIT，headless Edge/CDP 独立实例 + 临时 user-data-dir，`webops_*` 工具面）经评估后归档为第 5 上游（`upstream/dsh-agent-webops`，HEAD `8603a0a`）；baseline 新增 `webops-dsh-agent-webops`；README 上游表加行；仅供 de-013/017 等未来并入参考（mergedIntoCore=false）。

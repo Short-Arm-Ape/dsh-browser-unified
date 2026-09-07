@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-09-07T13:00:00.000Z",
+  "lastUpdated": "2026-09-07T14:10:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -534,6 +534,26 @@
         {
           "at": "2026-09-07",
           "what": "created (source=user, agent-executed direct edit; 参考 README(MIT, webops_* 工具)后接受并归档)"
+        }
+      ]
+    },
+    {
+      "id": "de-020",
+      "title": "模型主动拉起临时干净实例（工具面，拟议）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-07",
+      "updatedAt": "2026-09-07",
+      "scope": "browser 工具新增受控“临时干净实例”命令（审批门控）：spawn 临时 user-data-dir + extensionDir sideload（de-013 机制复用）；单连接桥下以“切换受控实例”语义实现，并行多实例需桥扩展",
+      "affectedModules": [
+        "plugin/bridge",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user，讨论）：临时干净实例能否由模型自己拉起。可行但需审批门控与单连接语义确认；先入设计稿。",
+      "history": [
+        {
+          "at": "2026-09-07",
+          "what": "created (source=user) 讨论入账"
         }
       ]
     }

@@ -2,6 +2,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
+packages/browser-unified-plugin/.npm-cache/
+packages/browser-unified-plugin/*.tgz
+.dsh/
+docs/
 
 # local npm cache used during prototype verification
 .npm-cache/
@@ -9,6 +13,3 @@ dist/
 # OS
 Thumbs.db
 .DS_Store
-packages/browser-unified-plugin/.npm-cache/
-packages/browser-unified-plugin/*.tgz
-

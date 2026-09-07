@@ -191,6 +191,8 @@ class BridgeController {
             askMode: c?.askMode,
             autoLaunchEnabled: c?.autoLaunchEnabled,
             autoLaunchIdleSeconds: c?.autoLaunchIdleSeconds,
+            autoLaunchProfileDir: c?.autoLaunchProfileDir,
+            autoLaunchProfileName: c?.autoLaunchProfileName,
             dshAccessEnabled: c?.dshAccessEnabled,
             dshOrigins: c?.dshOrigins,
             allowHosts: c?.allowHosts,
@@ -721,6 +723,7 @@ function applyBrowserTools(ctx, controller) {
                 lines.push(fmt('局域网', 'lan', s.lanAccess, s.lanTemp));
                 lines.push(fmt('本机', 'local', s.localAccess, s.localTemp));
                 lines.push(`受限态 ask 策略: ${askModeZh(s.askMode)}`);
+                lines.push(`自动拉起: ${s.autoLaunchEnabled ? '开（断开容忍 ' + (s.autoLaunchIdleSeconds ?? 15) + 's' + (s.autoLaunchProfileDir ? '，profile=' + (s.autoLaunchProfileName || path.basename(s.autoLaunchProfileDir)) : '') + '）' : '关'}`);
                 lines.push(`allowHosts: ${firstN(s.allowHosts) || '（空）'}`);
                 lines.push(`denyHosts: ${firstN(s.denyHosts) || '（空）'}`);
                 lines.push(`blockMetadata: ${s.blockMetadata === false ? '关' : '开'}；metadataHostnames: ${(s.metadataHostnames ?? []).length} 条；metadataIps: ${(s.metadataIps ?? []).length} 条`);

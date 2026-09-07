@@ -321,7 +321,7 @@ class BridgeController {
 	}
 
 	/** Snapshot for the read-only policy-status tool. */
-	describePolicy(): { enabled: boolean; urlMode?: string; internetAccess?: string; lanAccess?: string; localAccess?: string; internetTemp?: boolean; lanTemp?: boolean; localTemp?: boolean; askMode?: string; autoLaunchEnabled?: boolean; autoLaunchIdleSeconds?: number; dshAccessEnabled?: boolean; dshOrigins?: string[]; allowHosts?: string[]; denyHosts?: string[]; blockMetadata?: boolean; metadataHostnames?: string[]; metadataIps?: string[]; tempGrants: readonly string[]; ready: boolean } {
+	describePolicy(): { enabled: boolean; urlMode?: string; internetAccess?: string; lanAccess?: string; localAccess?: string; internetTemp?: boolean; lanTemp?: boolean; localTemp?: boolean; askMode?: string; autoLaunchEnabled?: boolean; autoLaunchIdleSeconds?: number; autoLaunchProfileDir?: string; autoLaunchProfileName?: string; dshAccessEnabled?: boolean; dshOrigins?: string[]; allowHosts?: string[]; denyHosts?: string[]; blockMetadata?: boolean; metadataHostnames?: string[]; metadataIps?: string[]; tempGrants: readonly string[]; ready: boolean } {
 		const c = this.current
 		return {
 			enabled: c?.enabled ?? false,
@@ -335,6 +335,8 @@ class BridgeController {
 			askMode: c?.askMode,
 			autoLaunchEnabled: c?.autoLaunchEnabled,
 			autoLaunchIdleSeconds: c?.autoLaunchIdleSeconds,
+			autoLaunchProfileDir: c?.autoLaunchProfileDir,
+			autoLaunchProfileName: c?.autoLaunchProfileName,
 			dshAccessEnabled: c?.dshAccessEnabled,
 			dshOrigins: c?.dshOrigins,
 			allowHosts: c?.allowHosts,
@@ -910,6 +912,7 @@ function applyBrowserTools(ctx: Context, controller: BridgeController): void {
 				lines.push(fmt('局域网', 'lan', s.lanAccess, s.lanTemp))
 				lines.push(fmt('本机', 'local', s.localAccess, s.localTemp))
 				lines.push(`受限态 ask 策略: ${askModeZh(s.askMode)}`)
+				lines.push(`自动拉起: ${s.autoLaunchEnabled ? '开（断开容忍 ' + (s.autoLaunchIdleSeconds ?? 15) + 's' + (s.autoLaunchProfileDir ? '，profile=' + (s.autoLaunchProfileName || path.basename(s.autoLaunchProfileDir)) : '') + '）' : '关'}`)
 				lines.push(`allowHosts: ${firstN(s.allowHosts) || '（空）'}`)
 				lines.push(`denyHosts: ${firstN(s.denyHosts) || '（空）'}`)
 				lines.push(`blockMetadata: ${s.blockMetadata === false ? '关' : '开'}；metadataHostnames: ${(s.metadataHostnames ?? []).length} 条；metadataIps: ${(s.metadataIps ?? []).length} 条`)
