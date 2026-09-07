@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-09-05T09:20:00.000Z",
+  "lastUpdated": "2026-09-07T13:00:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -113,6 +113,13 @@
       }
     ]
   },
+  "webops-dsh-agent-webops": [
+    {
+      "m": "src/",
+      "t": "(未并入 core) headless Edge(CDP) 独立实例与临时 user-data-dir 路线参考（de-013/de-017 相关）",
+      "i": "MIT 可参考；若要并入需评估与真实浏览器路线的隔离语义与工具面取舍"
+    }
+  ],
   "designEntries": [
     {
       "id": "de-001",
@@ -377,10 +384,10 @@
     {
       "id": "de-013",
       "title": "扩展自动拉起与“无痕式临时干净配置”（拟议）",
-      "status": "proposed",
+      "status": "applied",
       "decidedBy": "user",
       "createdAt": "2026-09-05",
-      "updatedAt": "2026-09-05",
+      "updatedAt": "2026-09-07",
       "scope": "browser-bridge autoLaunch 配置（browserExe/profileDir/tempProfile/extensionDir/idleSeconds）；断连探测 + spawn detached；README/安装建议专用配置文件",
       "affectedModules": [
         "plugin/bridge"
@@ -390,6 +397,10 @@
         {
           "at": "2026-09-05",
           "what": "created (source=user, agent-executed direct edit; 用户列出需求点 3/6)"
+        },
+        {
+          "what": "status -> applied（0.7.0 完成：自动拉起/临时实例）",
+          "at": "2026-09-07"
         }
       ]
     },
@@ -435,10 +446,10 @@
     {
       "id": "de-016",
       "title": "受限态下 ask 域兜底策略（通用化：审批缺失 / Full Access 等，随 permission-preset 上下文解释）",
-      "status": "proposed",
+      "status": "applied",
       "decidedBy": "user",
       "createdAt": "2026-09-05",
-      "updatedAt": "2026-09-05",
+      "updatedAt": "2026-09-07",
       "scope": "browser-bridge 把「askMode」语义收敛为：仅在宿主无法请求审批时生效；通过 permission-preset 上下文（如 @deepseek-ai/dsh-permission-presets / 会话权限 preset）探测当前姿态；三档=忽略(默认，ask 失效其余规则照常)/放行(再忽略黑白名单，红线除外)/禁止；红线(凭据/云元数据/DSH-off)恒在最前。未来把『仅可查看/read-only』等姿态与浏览器读写能力映射一并纳入（映射边界待定）",
       "affectedModules": [
         "plugin/bridge",
@@ -450,6 +461,10 @@
         {
           "at": "2026-09-05",
           "what": "created (source=user, agent-executed direct edit; 讨论结论入账)"
+        },
+        {
+          "what": "status -> applied（0.7.0 完成：受限态 askMode + 审批可用性判定）",
+          "at": "2026-09-07"
         }
       ]
     },
@@ -471,6 +486,54 @@
         {
           "at": "2026-09-05",
           "what": "created (source=user, agent-executed direct edit; 用户确认登记 CDP 透传设计)"
+        }
+      ]
+    },
+    {
+      "id": "de-018",
+      "title": "整体设计收敛：四层模型（语法/红线/名单/分域可达与授权），去掉 urlMode 私网硬拦改 preset 默认域配置",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-07",
+      "updatedAt": "2026-09-07",
+      "scope": "L1 语法(仅 http(s)/file、无凭据)；L2 红线（云元数据含 DNS 别名、DSH 页登记列表默认拒显式开、凭据）——不可被授权/模式覆盖；L3 用户名单 denyHosts/allowHosts（*.suffix；非红线可编辑解除，顺序仍在 ask 前）；L4 分域(外网/局域网/本机) allow|ask|deny + *Temp，urlMode 降为“默认域 preset”(public≈外网 allow·局域网 deny·本机 deny；intranet≈全 allow)且分域可单独覆盖；askMode(de-016) 在其上（仅审批不可用生效）。UI 文案需显式注明语义避免歧义（如“放行=忽略黑白名单、红线仍生效；忽略/继承=遵守黑白名单等其余规则”）",
+      "affectedModules": [
+        "url-policy",
+        "plugin/bridge",
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user，三点全部同意）：去掉 urlMode 对私网/回环的硬路由拦，改由各域默认+覆盖表达；DSH 页明确为红线级特例；read-only 映射并入 L4 议题挂起。实施放后续版本；de-012 保持已实现记录，本条目定义收敛后的目标模型。",
+      "history": [
+        {
+          "at": "2026-09-07",
+          "what": "created (source=user, agent-executed direct edit; 用户同意三点收敛模型，含文案需注明避免歧义的要求)"
+        },
+        {
+          "at": "2026-09-07",
+          "what": "0.7 轮1：core 基元落地（presetForMode / resolveRealmAccess / addressRealm / classifyHostRealm，含 fake-ip→internet 与 DNS 分类；13 项单测通过，mit 同步）——行为接线留轮2"
+        },
+        {
+          "what": "status -> applied（0.7.0 完成：四层收敛(preset/红线/名单/分域)+文案免歧义）",
+          "at": "2026-09-07"
+        }
+      ]
+    },
+    {
+      "id": "de-019",
+      "title": "采纳 dsh-agent-webops 为第 5 上游归档（headless CDP 独立实例路线参考）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-07",
+      "updatedAt": "2026-09-07",
+      "scope": "upstream/dsh-agent-webops 归档 + upstream-baseline.json repos[] 新增（webops-dsh-agent-webops, MIT, pinned 8603a0a…）；impactRules 新增该键",
+      "affectedModules": [
+        "registry"
+      ],
+      "summary": "用户明示（source=user）：https://github.com/jonah791/dsh-agent-webops 与想开发的功能（headless 自主网页操作、临时干净 profile 隔离）不谋而合，接受后列为上游项目。已归档；仅供设计与未来并入参考（未 mergedIntoCore）。",
+      "history": [
+        {
+          "at": "2026-09-07",
+          "what": "created (source=user, agent-executed direct edit; 参考 README(MIT, webops_* 工具)后接受并归档)"
         }
       ]
     }

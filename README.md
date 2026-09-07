@@ -113,6 +113,7 @@ dsh-browser-unified/
 | `dsh-intranet-browser-short-arm-ape` | 上者内网分支 | 独立实例+profile | 元数据黑名单+逐次审批 | ✅ url-policy(intranet)/approval |
 | `dsh-browser-control-kyo615` | @playwright/mcp 子进程 | 另起 Chrome | 无 URL 校验 | ➖ 仅归档（live-view 候选） |
 | `dsh-browser-control-caob23` | 扩展+本地 WS 桥(CDP) | **用户真实浏览器** | 无 URL 校验（本插件已补） | ✅ bridge + GuardedBridge |
+| `dsh-agent-webops` (第5上游) | headless Edge(CDP) 独立实例 | 一次性临时 profile | 无 URL 校验（参考） | ➖ 归档参考（de-019；de-013/17 相关） |
 
 - **构建 / 验证**：`packages/browser-unified-core`、`browser-unified-plugin`、`browser-unified-mit`
   各自 `npm run typecheck` / `npm run build`；插件用 `node scripts/build-pack.mjs`（tsc→lib，

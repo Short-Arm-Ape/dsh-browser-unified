@@ -51,6 +51,81 @@ export type Realm = 'internet' | 'lan' | 'local'
  */
 export type RealmAccess = 'allow' | 'ask' | 'deny'
 
+/** de-018: per-realm default bundle of one mode preset. */
+export interface RealmPreset {
+  readonly internet: RealmAccess
+  readonly lan: RealmAccess
+  readonly local: RealmAccess
+}
+
+/** de-018 preset table: 'public' = internet-only defaults; 'intranet' = all realms allowed. */
+export function presetForMode(mode: UrlPolicyMode): RealmPreset {
+  return mode === 'intranet'
+    ? { internet: 'allow', lan: 'allow', local: 'allow' }
+    : { internet: 'allow', lan: 'deny', local: 'deny' }
+}
+
+/**
+ * de-018: resolve one realm's effective access. An explicit user realm value
+ * wins; otherwise the mode preset default applies (so urlMode becomes a
+ * preset, not a second hard gate).
+ */
+export function resolveRealmAccess(option: RealmAccess | undefined, mode: UrlPolicyMode, realm: Realm): RealmAccess {
+  if (option !== undefined) return option
+  return presetForMode(mode)[realm]
+}
+
+/**
+ * de-018: realm of one resolved address. Fake-ip answers (Clash/Surge/mihomo)
+ * count as `internet` while `allowFakeIp` is on — that is what keeps proxy
+ * setups working once private/loopback are no longer hard-blocked by routing.
+ */
+export function addressRealm(addr: string, family: number, allowFakeIp: boolean): Realm {
+  const lower = addr.toLowerCase()
+  if (family === 4) {
+    if (Number(addr.split('.')[0]) === 127) return 'local'
+    if (isFakeIpAddress(addr, family)) return allowFakeIp ? 'internet' : 'lan'
+    return isPrivateAddress(addr, family) ? 'lan' : 'internet'
+  }
+  if (isLoopbackIp6(lower)) return 'local'
+  if (isFakeIpAddress(lower, family)) return allowFakeIp ? 'internet' : 'lan'
+  return isPrivateAddress(lower, family) ? 'lan' : 'internet'
+}
+
+/**
+ * de-018: classify a host into a realm, resolving hostnames when asked. For a
+ * hostname the "most local" answer wins (any loopback answer → local, else
+ * any LAN answer → lan, else internet), matching the old any-private-block
+ * conservatism. DNS failure surfaces `unresolved` instead of guessing.
+ */
+export async function classifyHostRealm(
+  host: string,
+  options: { readonly resolveDns: boolean; readonly allowFakeIp: boolean },
+): Promise<{ realm: Realm; unresolved: boolean }> {
+  const family = isIP(host)
+  if (family !== 0) {
+    return { realm: addressRealm(host, family, options.allowFakeIp), unresolved: false }
+  }
+  if (!options.resolveDns) {
+    // Without DNS we can only trust local-only spellings; treat as internet.
+    return { realm: realmOf(host) === 'local' ? 'local' : realmOf(host) === 'lan' ? 'lan' : 'internet', unresolved: false }
+  }
+  let resolved
+  try {
+    resolved = await lookup(host, { all: true })
+  } catch {
+    return { realm: 'internet', unresolved: true }
+  }
+  let local = false
+  let lan = false
+  for (const entry of resolved) {
+    const r = addressRealm(entry.address, entry.family, options.allowFakeIp)
+    if (r === 'local') local = true
+    else if (r === 'lan') lan = true
+  }
+  return { realm: local ? 'local' : lan ? 'lan' : 'internet', unresolved: false }
+}
+
 export interface UrlPolicyOptions {
   readonly mode: UrlPolicyMode
   /** Allow Clash/Surge/mihomo fake-ip answers in 198.18.0.0/15 (public mode). Default true. */
@@ -428,9 +503,9 @@ export class UrlPolicy {
   private readonly blocked: ReadonlySet<string>
   private readonly metadataHosts: readonly string[]
   private readonly metadataIps: ReadonlySet<string>
-  private readonly internetAccess: RealmAccess
-  private readonly lanAccess: RealmAccess
-  private readonly localAccess: RealmAccess
+  private readonly internetAccess: RealmAccess | undefined
+  private readonly lanAccess: RealmAccess | undefined
+  private readonly localAccess: RealmAccess | undefined
   private readonly internetTemp: boolean
   private readonly lanTemp: boolean
   private readonly localTemp: boolean
@@ -449,9 +524,9 @@ export class UrlPolicy {
     this.blocked = options.blockedHostnames ?? (options.mode === 'public' ? DEFAULT_BLOCKED_HOSTNAMES : new Set<string>())
     this.metadataHosts = (options.metadataHostnames ?? DEFAULT_METADATA_HOSTNAMES).map(normalizeEntry).filter((h) => h.length > 0)
     this.metadataIps = normalizeList(options.metadataIps, DEFAULT_METADATA_IPS)
-    this.internetAccess = options.internetAccess ?? 'allow'
-    this.lanAccess = options.lanAccess ?? 'allow'
-    this.localAccess = options.localAccess ?? 'allow'
+    this.internetAccess = options.internetAccess
+    this.lanAccess = options.lanAccess
+    this.localAccess = options.localAccess
     this.internetTemp = options.internetTemp ?? true
     this.lanTemp = options.lanTemp ?? true
     this.localTemp = options.localTemp ?? true
@@ -534,12 +609,21 @@ export class UrlPolicy {
     return loopbackHit ? 'dsh' : null
   }
 
-  /** Realm policy of a normalized host. */
-  accessFor(host: string): { access: RealmAccess; temp: boolean; realm: Realm } {
-    const realm = realmOf(host)
-    const access = realm === 'internet' ? this.internetAccess : realm === 'lan' ? this.lanAccess : this.localAccess
+  /** Effective access of one realm: explicit user value wins, else mode preset. */
+  private effectiveAccess(realm: Realm): RealmAccess {
+    const option = realm === 'internet' ? this.internetAccess : realm === 'lan' ? this.lanAccess : this.localAccess
+    return resolveRealmAccess(option, this.mode, realm)
+  }
+
+  /** de-018 fast path: when every realm is allowed there is nothing to gate. */
+  private allRealmsAllow(): boolean {
+    return (['internet', 'lan', 'local'] as Realm[]).every((realm) => this.effectiveAccess(realm) === 'allow')
+  }
+
+  /** Realm policy of a classified realm (access + temp-grant switch). */
+  realmPolicyOf(realm: Realm): { access: RealmAccess; temp: boolean; realm: Realm } {
     const temp = realm === 'internet' ? this.internetTemp : realm === 'lan' ? this.lanTemp : this.localTemp
-    return { realm, access, temp }
+    return { realm, access: this.effectiveAccess(realm), temp: temp ?? true }
   }
 
   /** Whether a host is currently granted through the persistent allow list. */
@@ -619,48 +703,27 @@ export class UrlPolicy {
         host,
       }
     }
-    // Default routing blocklist (public mode: localhost etc.) — applied after
-    // the DSH rule so an explicit DSH enable may reach it, but not on red
-    // lines above (denyHosts / metadata / credentials) which stay absolute.
-    if (this.blocked.has(host)) {
-      return { decision: 'block', code: 'WEB_BLOCKED_URL', reason: `Hostname is blocked: ${host}`, host }
-    }
-
-    // --- routing stance (public: literal + DNS screening) ---
-    if (this.mode === 'public' && !this.allowPrivate) {
-      const literalFamily = isIP(host)
-      if (literalFamily !== 0) {
-        if (this.blockedAsPrivate(host, literalFamily)) {
-          return { decision: 'block', code: 'WEB_PRIVATE_TARGET', reason: `Non-public IP literal is blocked: ${host}`, host }
-        }
-      } else if (this.resolveDns) {
-        let resolved
-        try {
-          resolved = await lookup(host, { all: true })
-        } catch {
-          return {
-            decision: 'block',
-            code: 'WEB_PROVIDER_ERROR',
-            reason: `DNS resolution failed for ${host}`,
-            host,
-          }
-        }
-        for (const entry of resolved) {
-          if (this.blockedAsPrivate(entry.address, entry.family)) {
-            return {
-              decision: 'block',
-              code: 'WEB_PRIVATE_TARGET',
-              reason: `Hostname resolves to a non-public address: ${host}`,
-              host,
-            }
-          }
+    // --- de-018: preset-driven realm authorization (no routing hard-block).
+    // Effective access = explicit user realm value, else the mode preset.
+    // Fast path: all realms allowed → nothing left to gate.
+    if (this.allRealmsAllow()) return { decision: 'allow', reason: '', host }
+    const family = isIP(host)
+    let realm: Realm
+    if (family !== 0) {
+      realm = addressRealm(host, family, this.allowFakeIp)
+    } else {
+      const cls = await classifyHostRealm(host, { resolveDns: this.resolveDns, allowFakeIp: this.allowFakeIp })
+      if (cls.unresolved && this.resolveDns) {
+        return {
+          decision: 'block',
+          code: 'WEB_PROVIDER_ERROR',
+          reason: `DNS resolution failed for ${host}`,
+          host,
         }
       }
+      realm = cls.realm
     }
-
-    // --- authorization layer: per-realm allow / ask / deny (skipped for
-    // granted DSH origins above) ---
-    const realmPolicy = this.accessFor(host)
+    const realmPolicy = this.realmPolicyOf(realm)
     if (realmPolicy.access === 'deny') {
       return {
         decision: 'block',
@@ -725,31 +788,24 @@ export class UrlPolicy {
     if (await this.dnsRedlineBlocked(url)) {
       throw new UrlPolicyError('WEB_DSH_DISABLED', `Access disabled — target resolves to a protected endpoint (DSH loopback or cloud metadata): ${url.host}`)
     }
-    if (this.blocked.has(host)) {
-      throw new UrlPolicyError('WEB_BLOCKED_URL', `Hostname is blocked: ${host}`)
-    }
-    if (this.mode === 'intranet') return url
-    if (this.allowPrivate) return url
 
-    // --- public mode: literal + DNS screening (resolve-then-validate) ---
-    const literalFamily = isIP(host)
-    if (literalFamily !== 0) {
-      if (this.blockedAsPrivate(host, literalFamily)) {
-        throw new UrlPolicyError('WEB_PRIVATE_TARGET', `Non-public IP literal is blocked: ${host}`)
+    // --- de-018: preset-driven realm authorization (route gate). ask is NOT
+    // enforced here (it is surfaced by the tool layer before the bridge).
+    if (this.allRealmsAllow()) return url
+    const family = isIP(host)
+    let realm: Realm
+    if (family !== 0) {
+      realm = addressRealm(host, family, this.allowFakeIp)
+    } else {
+      const cls = await classifyHostRealm(host, { resolveDns: this.resolveDns, allowFakeIp: this.allowFakeIp })
+      if (cls.unresolved && this.resolveDns) {
+        throw new UrlPolicyError('WEB_PROVIDER_ERROR', `DNS resolution failed for ${host}`)
       }
-      return url
+      realm = cls.realm
     }
-    if (!this.resolveDns) return url
-    let resolved
-    try {
-      resolved = await lookup(host, { all: true })
-    } catch (cause) {
-      throw new UrlPolicyError('WEB_PROVIDER_ERROR', `DNS resolution failed for ${host}`, { cause })
-    }
-    for (const entry of resolved) {
-      if (this.blockedAsPrivate(entry.address, entry.family)) {
-        throw new UrlPolicyError('WEB_PRIVATE_TARGET', `Hostname resolves to a non-public address: ${host}`)
-      }
+    const routePolicy = this.realmPolicyOf(realm)
+    if (routePolicy.access === 'deny') {
+      throw new UrlPolicyError('WEB_REALM_DENIED', `${realmLabel(realm)} access is denied by policy: ${host}`)
     }
     return url
   }

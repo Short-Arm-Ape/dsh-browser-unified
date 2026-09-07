@@ -17,6 +17,9 @@
  */
 
 import { mkdir, writeFile } from 'node:fs/promises'
+import { existsSync, mkdtempSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FiberState, type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -133,6 +136,20 @@ export interface Config {
 	 * the copies bundled under the package `registry/` directory.
 	 */
 	registryDir?: string
+	/** de-013: auto-launch a browser when the extension has been disconnected too long. Default false. */
+	autoLaunchEnabled?: boolean
+	/** Seconds the extension may stay disconnected before an auto-launch attempt. Default 15. */
+	autoLaunchIdleSeconds?: number
+	/** Browser executable to launch (e.g. msedge.exe full path). Omit to search PATH for msedge/chrome. */
+	autoLaunchBrowserExe?: string
+	/** Existing dedicated profile dir for the extension (recommended). Empty = default profile of the executable. */
+	autoLaunchProfileDir?: string
+	/** Edge/Chrome 配置文件名称（如 'Profile 4'/'Default'）。留空=自动识别目录名或 Default。 */
+	autoLaunchProfileName?: string
+	/** Use a fresh temporary profile (like an incognito/clean instance) instead of a profile dir. */
+	autoLaunchTempProfile?: boolean
+	/** When using a temporary profile: path to an UNPACKED extension dir to sideload (`--load-extension`). */
+	autoLaunchExtensionDir?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -144,9 +161,9 @@ export const Config: z<Config> = z.object({
 	blockMetadata: z.boolean().default(true),
 	metadataHostnames: z.array(z.string()).default([...DEFAULT_METADATA_HOSTNAMES]),
 	metadataIps: z.array(z.string()).default([...DEFAULT_METADATA_IPS]),
-	internetAccess: z.string().default('allow'),
-	lanAccess: z.string().default('allow'),
-	localAccess: z.string().default('allow'),
+	internetAccess: z.string(),
+	lanAccess: z.string(),
+	localAccess: z.string(),
 	internetTemp: z.boolean().default(true),
 	lanTemp: z.boolean().default(true),
 	localTemp: z.boolean().default(true),
@@ -156,6 +173,13 @@ export const Config: z<Config> = z.object({
 	allowHosts: z.array(z.string()).default([]),
 	denyHosts: z.array(z.string()).default([]),
 	registryDir: z.string().default(''),
+	autoLaunchEnabled: z.boolean().default(false),
+	autoLaunchIdleSeconds: z.number().step(1).min(3).max(3600).default(15),
+	autoLaunchBrowserExe: z.string().default(''),
+	autoLaunchProfileDir: z.string().default(''),
+	autoLaunchProfileName: z.string().default(''),
+	autoLaunchTempProfile: z.boolean().default(false),
+	autoLaunchExtensionDir: z.string().default(''),
 })
 
 interface ResolvedConfig {
@@ -167,9 +191,9 @@ interface ResolvedConfig {
 	blockMetadata: boolean
 	metadataHostnames: string[]
 	metadataIps: string[]
-	internetAccess: string
-	lanAccess: string
-	localAccess: string
+	internetAccess: string | undefined
+	lanAccess: string | undefined
+	localAccess: string | undefined
 	internetTemp: boolean
 	lanTemp: boolean
 	localTemp: boolean
@@ -179,6 +203,13 @@ interface ResolvedConfig {
 	allowHosts: string[]
 	denyHosts: string[]
 	registryDir: string
+	autoLaunchEnabled: boolean
+	autoLaunchIdleSeconds: number
+	autoLaunchBrowserExe: string
+	autoLaunchProfileDir: string
+	autoLaunchProfileName: string
+	autoLaunchTempProfile: boolean
+	autoLaunchExtensionDir: string
 }
 
 /**
@@ -251,7 +282,9 @@ function policyOptionsFor(config: ResolvedConfig): ConstructorParameters<typeof 
 		dshAccessEnabled: config.dshAccessEnabled ?? false,
 		dshOrigins: config.dshOrigins ?? [],
 		allowHosts: config.allowHosts ?? [],
-		denyHosts: config.denyHosts ?? [],
+		// de-016/de-018: 受限态「放行」档 = 忽略黑名单（红线/元数据/DSH 等仍先行）。
+		// 策略实例按当前 askMode 静态构建；红线不经此列表，因此仍生效。
+		denyHosts: config.askMode === 'allow' ? [] : config.denyHosts ?? [],
 	}
 }
 
@@ -275,6 +308,10 @@ class BridgeController {
 	/** Per-session grants: hosts the user approved once in ask mode. Cleared when
 	 *  policy inputs change or the plugin stops. */
 	private readonly tempAllow = new Set<string>()
+	// de-013 auto-launch watchdog state.
+	private watchdogTimer: ReturnType<typeof setInterval> | undefined
+	private lastSpawnAt = 0
+	private droppedSince = 0
 
 	constructor(private readonly log: (line: string) => void) {}
 
@@ -284,7 +321,7 @@ class BridgeController {
 	}
 
 	/** Snapshot for the read-only policy-status tool. */
-	describePolicy(): { enabled: boolean; urlMode?: string; internetAccess?: string; lanAccess?: string; localAccess?: string; internetTemp?: boolean; lanTemp?: boolean; localTemp?: boolean; askMode?: string; dshAccessEnabled?: boolean; dshOrigins?: string[]; allowHosts?: string[]; denyHosts?: string[]; blockMetadata?: boolean; metadataHostnames?: string[]; metadataIps?: string[]; tempGrants: readonly string[]; ready: boolean } {
+	describePolicy(): { enabled: boolean; urlMode?: string; internetAccess?: string; lanAccess?: string; localAccess?: string; internetTemp?: boolean; lanTemp?: boolean; localTemp?: boolean; askMode?: string; autoLaunchEnabled?: boolean; autoLaunchIdleSeconds?: number; dshAccessEnabled?: boolean; dshOrigins?: string[]; allowHosts?: string[]; denyHosts?: string[]; blockMetadata?: boolean; metadataHostnames?: string[]; metadataIps?: string[]; tempGrants: readonly string[]; ready: boolean } {
 		const c = this.current
 		return {
 			enabled: c?.enabled ?? false,
@@ -296,6 +333,8 @@ class BridgeController {
 			lanTemp: c?.lanTemp,
 			localTemp: c?.localTemp,
 			askMode: c?.askMode,
+			autoLaunchEnabled: c?.autoLaunchEnabled,
+			autoLaunchIdleSeconds: c?.autoLaunchIdleSeconds,
 			dshAccessEnabled: c?.dshAccessEnabled,
 			dshOrigins: c?.dshOrigins,
 			allowHosts: c?.allowHosts,
@@ -306,6 +345,108 @@ class BridgeController {
 			tempGrants: [...this.tempAllow],
 			ready: this.guarded !== undefined,
 		}
+	}
+
+	// --- de-013 auto-launch watchdog -------------------------------------
+	/** (Re)arm the watchdog from the resolved config; clears it when disabled. */
+	private refreshWatchdog(config: ResolvedConfig): void {
+		if (this.watchdogTimer !== undefined) {
+			clearInterval(this.watchdogTimer)
+			this.watchdogTimer = undefined
+		}
+		this.droppedSince = 0
+		if (!config.enabled || !config.autoLaunchEnabled) return
+		const idleMs = Math.max(3, Math.min(3600, config.autoLaunchIdleSeconds ?? 15)) * 1000
+		this.watchdogTimer = setInterval(() => {
+			void this.watchdogTick(idleMs, config)
+		}, Math.min(5000, Math.max(1000, idleMs)))
+	}
+
+	private async watchdogTick(idleMs: number, config: ResolvedConfig): Promise<void> {
+		const status = this.server?.status
+		if (status === undefined || !status.listening) return
+		if (status.extensionConnected) {
+			this.droppedSince = 0
+			return
+		}
+		const now = Date.now()
+		if (this.droppedSince === 0) this.droppedSince = now
+		if (now - this.droppedSince < idleMs) return
+		const cooldown = Math.max(30_000, idleMs * 2)
+		if (now - this.lastSpawnAt < cooldown) return
+		this.lastSpawnAt = now
+		this.spawnBrowser(config)
+	}
+
+	private spawnBrowser(config: ResolvedConfig): void {
+		let userDataDir = ''
+		let profileName = ''
+		if (config.autoLaunchTempProfile) {
+			if (!config.autoLaunchExtensionDir) {
+				this.log('[browser-bridge] autoLaunch: 临时干净实例需要 autoLaunchExtensionDir（未打包扩展目录）才能 sideload；改用已装扩展的 profile 目录')
+				return
+			}
+			userDataDir = mkdtempSync(path.join(tmpdir(), 'dsh-browser-'))
+		} else if (config.autoLaunchProfileDir) {
+			const resolved = path.resolve(config.autoLaunchProfileDir)
+			const base = path.basename(resolved)
+			if (/^(Default|Profile\s?\d+)$/i.test(base)) {
+				// 目录直接指向某个 profile（如 ...\User Data\Profile 4）：父目录作 user-data-dir，名字作 profile。
+				userDataDir = path.dirname(resolved)
+				profileName = base
+			} else {
+				userDataDir = resolved
+				profileName = config.autoLaunchProfileName || 'Default'
+			}
+		}
+		const extra = config.autoLaunchTempProfile && config.autoLaunchExtensionDir
+			? ['--load-extension=' + path.resolve(config.autoLaunchExtensionDir)]
+			: []
+		const args = ['--no-first-run', '--no-default-browser-check']
+		if (userDataDir) args.push('--user-data-dir=' + userDataDir)
+		if (profileName) args.push('--profile-directory=' + profileName)
+		args.push(...extra)
+		args.push('about:blank')
+		for (const exe of this.resolveBrowserCandidates(config.autoLaunchBrowserExe)) {
+			try {
+				const child = spawn(exe, args, { detached: true, stdio: 'ignore' })
+				child.on('error', (error) => {
+					this.log(`[browser-bridge] autoLaunch ${exe} 启动失败：${error.message}（若配置了可执行文件请给完整路径）`)
+				})
+				child.unref()
+				this.log(`[browser-bridge] autoLaunch: 已拉起 ${exe}（user-data-dir=${userDataDir || '默认'}${profileName ? ', profile=' + profileName : ''}）`)
+				return
+			} catch (error) {
+				this.log(`[browser-bridge] autoLaunch ${exe} 失败：${error instanceof Error ? error.message : String(error)}`)
+			}
+		}
+		this.log('[browser-bridge] autoLaunch: 无可用的浏览器可执行文件（可在 autoLaunchBrowserExe 指定完整路径）')
+	}
+
+	/** Ordered candidate executables: configured value → common absolute paths → PATH names. */
+	private resolveBrowserCandidates(configured: string): string[] {
+		const out: string[] = []
+		const pushFile = (p: string): void => {
+			try { if (existsSync(p)) out.push(p) } catch { /* ignore */ }
+		}
+		if (configured && configured.length > 0) {
+			out.push(configured)
+			return out
+		}
+		if (process.platform === 'win32') {
+			const roots: string[] = []
+			if (process.env['ProgramFiles(x86)']) roots.push(process.env['ProgramFiles(x86)']!)
+			if (process.env.ProgramFiles) roots.push(process.env.ProgramFiles!)
+			for (const root of roots) {
+				pushFile(path.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
+				pushFile(path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'))
+			}
+			if (process.env.LOCALAPPDATA) {
+				pushFile(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
+			}
+		}
+		out.push('msedge', 'chrome')
+		return out
 	}
 
 	/**
@@ -336,7 +477,7 @@ class BridgeController {
 		// inputs change, so editing the lists / modes in Settings applies live
 		// without ever dropping an in-flight browser command.
 		const policyKey = config.enabled
-			? `${config.urlMode}|${config.blockMetadata ? '1' : '0'}|${config.internetAccess}|${config.lanAccess}|${config.localAccess}|`
+			? `${config.urlMode}|${config.blockMetadata ? '1' : '0'}|${config.askMode}|${config.internetAccess}|${config.lanAccess}|${config.localAccess}|`
 				+ `${config.internetTemp ? '1' : '0'}|${config.lanTemp ? '1' : '0'}|${config.localTemp ? '1' : '0'}|`
 				+ `${config.dshAccessEnabled ? '1' : '0'}|${(config.dshOrigins ?? []).join('\u0001')}|`
 				+ `${(config.metadataHostnames ?? []).join('\u0001')}|${(config.metadataIps ?? []).join('\u0001')}|`
@@ -368,7 +509,10 @@ class BridgeController {
 			this.server = server
 			this.serverKey = serverKey
 		}
-		if (!config.enabled) return
+		if (!config.enabled) {
+			this.refreshWatchdog(config)
+			return
+		}
 		// Unified URL policy in front of every navigation command: public mode
 		// blocks private/loopback/metadata targets before they reach the
 		// extension; intranet mode allows local/LAN but still blocks metadata.
@@ -382,6 +526,7 @@ class BridgeController {
 			this.policyKey = policyKey
 			this.lastError = undefined
 		}
+		this.refreshWatchdog(config)
 	}
 
 	/**
@@ -437,6 +582,11 @@ class BridgeController {
 
 	/** Stop the listener; safe to call repeatedly and during teardown. */
 	stop(): Promise<void> {
+		if (this.watchdogTimer !== undefined) {
+			clearInterval(this.watchdogTimer)
+			this.watchdogTimer = undefined
+		}
+		this.droppedSince = 0
 		const previous = this.server
 		this.server = undefined
 		this.guarded = undefined
@@ -482,41 +632,52 @@ async function authorizeNavigation(
 	if (verdict.decision === 'ask') {
 		const s = controller.describePolicy()
 		const realm = verdict.host.length > 0 ? realmOf(verdict.host) : 'internet'
-		// Behaviour when the realm is `ask`, the host is not allowlisted, and
-		// (usually) no user approval can be shown (host approval = never /
-		// Full Access):
-		//  - 'inherit' (default): keep whatever the earlier settings imply —
-		//    honour the per-realm temp switch, then try the host approval;
-		//  - 'allow': pass every ask-realm target through (ignore white/black
-		//    lists for this decision); metadata/credential/scheme red lines
-		//    that precede this verdict still apply;
-		//  - 'deny': refuse without asking.
-		const askMode = (s.askMode as 'inherit' | 'allow' | 'deny' | undefined) ?? 'inherit'
-		if (askMode === 'deny') {
-			throw new Error(`WEB_REALM_DENIED: ${verdict.reason} — ask 域被配置为直接禁止（审批缺失策略=禁止）`)
+		const agent = (exec as { agent?: unknown }).agent
+		const session = (agent as { session?: unknown } | undefined)?.session
+		const approval = ctx.get('approval') as
+			| { request: (req: { agent: unknown; toolName: string; reason?: string; signal?: AbortSignal }) => Promise<string>; overrideOf?: (s: unknown) => string | undefined; config?: { policy?: string } }
+			| undefined
+		// de-016: can a host approval actually be requested right now? The
+		// restricted-state askMode only applies when it cannot.
+		let askable = false
+		if (approval && typeof agent === 'object' && agent !== null && session !== undefined && typeof approval.overrideOf === 'function') {
+			try {
+				const override = approval.overrideOf(session as never)
+				const effective = override ?? approval.config?.policy ?? 'ask'
+				askable = effective === 'ask'
+			} catch {
+				askable = true // unknown → assume ask is usable (safe default: prompt)
+			}
 		}
-		if (askMode === 'allow') {
+		if (askable) {
+			// Approvals are usable: always show the host approval; askMode
+			// (restricted-state policy) deliberately does not apply here.
+			const realmTemp = realm === 'internet' ? (s.internetTemp ?? true) : realm === 'lan' ? (s.lanTemp ?? true) : (s.localTemp ?? true)
+			if (!realmTemp) {
+				throw new Error(`NEED_AUTHORIZATION: ${verdict.reason} — 该网络（${realmLabelZh(realm)}）不允许临时授权；请把主机 ${verdict.host} 加入 allowHosts 白名单后再试`)
+			}
+			if (!approval || !agent || !session) {
+				throw new Error(`NEED_AUTHORIZATION: ${verdict.reason} — no approval service or agent/session context available; add the host to allowHosts or set the realm access back to allow`)
+			}
+			const outcome = await approval.request({
+				agent: agent as never,
+				toolName,
+				reason: `【浏览器访问授权】目标 ${url}（主机 ${verdict.host}，${realmLabelZh(realm)}域）：该域为 ask 模式且主机不在 allowHosts。批准后本次会话内访问此主机不再重复询问。`,
+				signal: exec.signal,
+			})
+			if (outcome !== 'allowed-once') {
+				throw new Error(`NEED_AUTHORIZATION: 用户未批准访问 ${verdict.host}（${outcome}）。请勿自动重试该目标；如需继续，请向用户请求授权或把主机加入 allowHosts 白名单。`)
+			}
 			controller.grantTemporary(verdict.host)
 			return
 		}
-		const realmTemp = realm === 'internet' ? (s.internetTemp ?? true) : realm === 'lan' ? (s.lanTemp ?? true) : (s.localTemp ?? true)
-		if (!realmTemp) {
-			throw new Error(`NEED_AUTHORIZATION: ${verdict.reason} — 该网络（${realmLabelZh(realm)}）不允许临时授权；请把主机 ${verdict.host} 加入 allowHosts 白名单后再试`)
+		// Approvals unavailable (policy never / Full Access / no service):
+		// apply the restricted-state askMode.
+		const askMode = (s.askMode as 'inherit' | 'allow' | 'deny' | undefined) ?? 'inherit'
+		if (askMode === 'deny') {
+			throw new Error(`WEB_REALM_DENIED: ${verdict.reason} — ask 域被配置为直接禁止（受限态策略=禁止）`)
 		}
-		const approval = ctx.get('approval') as ApprovalService | undefined
-		const agent = (exec as { agent?: unknown }).agent
-		if (!approval || agent === undefined || agent === null || typeof agent !== 'object') {
-			throw new Error(`NEED_AUTHORIZATION: ${verdict.reason} — no approval service or agent context available; add the host to allowHosts or set the realm access back to allow`)
-		}
-		const outcome = await approval.request({
-			agent: agent as never,
-			toolName,
-			reason: `【浏览器访问授权】目标 ${url}（主机 ${verdict.host}，${realmLabelZh(realm)}域）：该域为 ask 模式且主机不在 allowHosts。批准后本次会话内访问此主机不再重复询问。`,
-			signal: exec.signal,
-		})
-		if (outcome !== 'allowed-once') {
-			throw new Error(`NEED_AUTHORIZATION: 用户未批准访问 ${verdict.host}（${outcome}）。请勿自动重试该目标；如需继续，请向用户请求授权或把主机加入 allowHosts 白名单。`)
-		}
+		// 'inherit'（忽略）与 'allow'（放行）都让目标通过：ask 失效。
 		controller.grantTemporary(verdict.host)
 	}
 }
@@ -530,7 +691,7 @@ function realmLabelZh(realm: string): string {
 }
 
 function askModeZh(mode: string | undefined): string {
-	return mode === 'allow' ? '放行' : mode === 'deny' ? '禁止' : '继承'
+	return mode === 'allow' ? '放行' : mode === 'deny' ? '禁止' : '忽略'
 }
 
 interface TabListPayload {
@@ -735,12 +896,20 @@ function applyBrowserTools(ctx: Context, controller: BridgeController): void {
 			const lines: string[] = []
 			lines.push(`启用: ${s.enabled ? '是' : '否'}${s.enabled && !s.ready ? '（桥未就绪）' : ''}`)
 			if (s.enabled) {
-				lines.push(`urlMode: ${s.urlMode ?? 'public'}`)
+				const mode = s.urlMode ?? 'public'
+				const effRealm = (realm: 'internet' | 'lan' | 'local', raw?: string): string => {
+					return raw ?? (mode === 'intranet' || realm === 'internet' ? 'allow' : 'deny')
+				}
+				const fmt = (label: string, realm: 'internet' | 'lan' | 'local', raw?: string, temp?: boolean): string => {
+					const eff = effRealm(realm, raw)
+					return `${label}: ${eff}${raw ? '（显式）' : '（预设）'}${temp === false ? '，无临时授权' : ''}`
+				}
+				lines.push(`网络预设: ${mode === 'intranet' ? '内网' : '公网'}${s.urlMode === undefined ? '（缺省公网）' : ''}`)
 				lines.push(`DSH 页面访问: ${s.dshAccessEnabled ? '开（' + (s.dshOrigins ?? []).join(', ') + '）' : '关'}`)
-				lines.push(`外网: ${s.internetAccess ?? 'allow'}${(s.internetAccess ?? 'allow') !== 'allow' ? `（临时授权: ${s.internetTemp === false ? '关' : '开'}）` : ''}`)
-				lines.push(`局域网: ${s.lanAccess ?? 'allow'}${(s.lanAccess ?? 'allow') !== 'allow' ? `（临时授权: ${s.lanTemp === false ? '关' : '开'}）` : ''}`)
-				lines.push(`本机: ${s.localAccess ?? 'allow'}${(s.localAccess ?? 'allow') !== 'allow' ? `（临时授权: ${s.localTemp === false ? '关' : '开'}）` : ''}`)
-				lines.push(`ask 域无审批策略: ${askModeZh(s.askMode)}`)
+				lines.push(fmt('外网', 'internet', s.internetAccess, s.internetTemp))
+				lines.push(fmt('局域网', 'lan', s.lanAccess, s.lanTemp))
+				lines.push(fmt('本机', 'local', s.localAccess, s.localTemp))
+				lines.push(`受限态 ask 策略: ${askModeZh(s.askMode)}`)
 				lines.push(`allowHosts: ${firstN(s.allowHosts) || '（空）'}`)
 				lines.push(`denyHosts: ${firstN(s.denyHosts) || '（空）'}`)
 				lines.push(`blockMetadata: ${s.blockMetadata === false ? '关' : '开'}；metadataHostnames: ${(s.metadataHostnames ?? []).length} 条；metadataIps: ${(s.metadataIps ?? []).length} 条`)
@@ -1343,7 +1512,7 @@ export function apply(ctx: Context, config: Config): void {
 		throw new Error(`browser-bridge: invalid urlMode "${String(resolved.urlMode)}" (use public|intranet)`)
 	}
 	for (const [label, v] of [['internetAccess', resolved.internetAccess], ['lanAccess', resolved.lanAccess], ['localAccess', resolved.localAccess]] as const) {
-		if (v !== 'allow' && v !== 'ask' && v !== 'deny') {
+		if (v !== undefined && v !== 'allow' && v !== 'ask' && v !== 'deny') {
 			throw new Error(`browser-bridge: invalid ${label} "${String(v)}" (use allow|ask|deny)`)
 		}
 	}
@@ -1379,7 +1548,7 @@ export function apply(ctx: Context, config: Config): void {
 						throw new Error(`browser-bridge: invalid urlMode "${String(value.urlMode)}" (use public|intranet)`)
 					}
 					for (const [label, v] of [['internetAccess', value.internetAccess], ['lanAccess', value.lanAccess], ['localAccess', value.localAccess]] as const) {
-						if (v !== 'allow' && v !== 'ask' && v !== 'deny') {
+						if (v !== undefined && v !== 'allow' && v !== 'ask' && v !== 'deny') {
 							throw new Error(`browser-bridge: invalid ${label} "${String(v)}" (use allow|ask|deny)`)
 						}
 					}

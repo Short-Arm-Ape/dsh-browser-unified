@@ -41,9 +41,12 @@ window.__ModuleLoader__.load({
 				general: '常规',
 				enabled: '启用浏览器桥',
 				enabledDesc: '关闭后工具仍挂载，但每次调用会提示如何重新开启。',
-				urlMode: 'URL 策略档位',
-				urlModePublic: 'public —— 拦私网 / 回环 / 云元数据目标',
-				urlModeIntranet: 'intranet —— 放行本地 / LAN，仍拦截云元数据端点',
+				urlMode: '网络预设（默认可达范围）',
+				urlModePublic: '公网预设：默认仅外网放行，局域网/本机默认拒绝（可逐域覆盖）',
+				urlModeIntranet: '内网预设：外网/局域网/本机默认放行（仍拦截云元数据端点）',
+				presetPublic: '公网（默认仅外网）',
+				presetIntranet: '内网（默认放行本地/局域网）',
+				realmPresetOpt: '沿用预设（默认）',
 				transport: '监听与路径',
 				transportSub: '端口、令牌与目录（改动会重启本地桥）',
 				port: '端口',
@@ -84,11 +87,19 @@ window.__ModuleLoader__.load({
 				tempLan: '允许局域网临时授权',
 				tempLocal: '允许本机临时授权',
 				tempHint: '关闭后该域不再弹批准，只能靠白名单放行',
-				askMode: '审批缺失（完全权限）时的策略',
-				askModeDesc: '仅影响 ask 域且主机未列入白名单、且无法请求审批时：继承=沿用此前设置（含本会话临时授权）；放行=视为已授权放行（云元数据端点、未启用的 DSH 页面访问、凭据与 denyHosts 等在放行前先行判定）；禁止=直接拒绝',
-				askModeInherit: '继承',
+				askMode: '受限态（无法请求审批，如完全权限）时的 ask 策略',
+				askModeDesc: '仅在无法请求审批时生效（审批可用则始终弹窗，不受此项影响）：忽略=ask 失效、黑白名单等其余规则照常；放行=连黑白名单一并忽略（红线仍生效）；禁止=直接拒绝',
+				askModeInherit: '忽略',
 				askModeAllow: '放行',
 				askModeDeny: '禁止',
+				autoLaunch: '断线自动拉起浏览器',
+				autoLaunchDesc: '扩展断开超过「断开容忍秒数」后自动拉起浏览器（需装有扩展的专用 profile，或临时实例+扩展目录）。默认关。',
+				autoIdle: '断开容忍秒数',
+				autoExe: '浏览器可执行文件（留空自动探测 msedge/chrome）',
+				autoProfile: '专用 profile 目录（推荐：已装扩展）',
+				autoProfileName: '配置文件名称（如 Profile 4；留空自动识别目录名或 Default）',
+				autoTemp: '用临时干净实例（无痕式）',
+				autoExt: '未打包扩展目录（临时实例 sideload 用）',
 				modeAllow: '放行',
 				modeAsk: '需审批',
 				modeDeny: '拒绝',
@@ -116,9 +127,9 @@ window.__ModuleLoader__.load({
 				general: 'General',
 				enabled: 'Enable browser bridge',
 				enabledDesc: 'When off, tools stay mounted but every call explains how to turn it back on.',
-				urlMode: 'URL policy mode',
-				urlModePublic: 'public — blocks private / loopback / cloud-metadata targets',
-				urlModeIntranet: 'intranet — allows local / LAN, still blocks cloud-metadata endpoints',
+				urlMode: 'Network preset (default reach)',
+				urlModePublic: 'Public preset: default allow internet only; LAN/local denied unless overridden',
+				urlModeIntranet: 'Intranet preset: internet/LAN/local default allow (cloud-metadata endpoints still blocked)',
 				transport: 'Listener & paths',
 				transportSub: 'Port, token and directories (changing restarts the local bridge)',
 				port: 'Port',
@@ -157,11 +168,19 @@ window.__ModuleLoader__.load({
 				tempInternet: 'Allow temporary internet grants',
 				tempIntranet: 'Allow temporary intranet grants',
 				tempHint: 'When off, ask realms never pop approvals — only the allow list grants access',
-				askMode: 'Ask behaviour when approvals are missing (Full Access)',
-				askModeDesc: 'Applies when an ask-realm host is not on the allow list and no approval can be requested: inherit=keep earlier behaviour (incl. session grants); allow=act as approved (metadata endpoints, disabled DSH-page access, credentials and denyHosts are still enforced before this); deny=refuse',
-				askModeInherit: 'Inherit',
+				askMode: 'Ask-realm behaviour under restricted state (approvals unavailable, e.g. Full Access)',
+				askModeDesc: 'Only applies when approvals cannot be requested (when approvals work you always get the prompt): ignore=ask gate off, other rules (white/black lists, realm allow/deny) still apply; allow=also ignores white/black lists (red lines still apply); deny=refuse',
+				askModeInherit: 'Ignore',
 				askModeAllow: 'Allow',
 				askModeDeny: 'Deny',
+				autoLaunch: 'Auto-launch browser after disconnect',
+				autoLaunchDesc: 'Launch the browser when the extension stays disconnected longer than the idle seconds (dedicated profile with the extension, or temp instance + extension dir). Default off.',
+				autoIdle: 'Disconnect tolerance (s)',
+				autoExe: 'Browser executable (empty = detect msedge/chrome)',
+				autoProfile: 'Dedicated profile dir (recommended: extension installed)',
+				autoProfileName: 'Profile name (e.g. Profile 4; empty = detect dir name or Default)',
+				autoTemp: 'Fresh temp instance (incognito-like)',
+				autoExt: 'Unpacked extension dir (sideload for temp instance)',
 				// --- English parity supplements (last value wins) ---
 				accessSub: 'Per-realm (internet / LAN / local) authorization: allow, ask or deny, with separate temp-grant toggles and a DSH-page rule',
 				realmLan: 'LAN access',
@@ -374,17 +393,30 @@ window.__ModuleLoader__.load({
 
 		// Fold card: an accordion group in the settings-shell card recipe.
 		function FoldCard(props) {
-			var openDefault = props.open !== false
+			var foldKey = 'dshBu:fold:' + (props.id || '')
+			var stored = null
+			try {
+				var raw = window.localStorage.getItem(foldKey)
+				if (raw !== null) stored = raw === '1'
+			} catch (e) { /* storage unavailable */ }
+			var openDefault = stored !== null ? stored : props.open !== false
 			var state = useState(openDefault)
 			var open = state[0]
 			var setOpen = state[1]
+			var toggle = function () {
+				var next = !open
+				setOpen(next)
+				if (foldKey) {
+					try { window.localStorage.setItem(foldKey, next ? '1' : '0') } catch (e) { /* ignore */ }
+				}
+			}
 			return createElement(
 				'div',
 				{ style: cardStyle },
 				createElement(
 					'button',
 					{
-						onClick: function () { setOpen(!open) },
+						onClick: toggle,
 						style: cardHeaderStyle,
 						title: t('collapse'),
 						'aria-expanded': open ? 'true' : 'false',
@@ -465,13 +497,17 @@ window.__ModuleLoader__.load({
 		}
 
 		// One realm selector row.
-		function realmSelectRow(title, current, key, setField) {
+		function realmSelectRow(title, current, key, setField, unset) {
+			var effective = current === undefined || current === null ? 'preset' : current
 			return createElement(Row, { title: title, desc: t('realmDesc') },
 				createElement('select', {
-					value: String(current || 'allow'),
-					onChange: function (e) { setField(key, e.target.value) },
+					value: String(effective),
+					onChange: function (e) {
+						if (e.target.value === 'preset') { unset(key) } else { setField(key, e.target.value) }
+					},
 					style: selectStyle,
 				},
+					createElement('option', { value: 'preset' }, t('realmPresetOpt')),
 					createElement('option', { value: 'allow' }, t('modeAllow')),
 					createElement('option', { value: 'ask' }, t('modeAsk')),
 					createElement('option', { value: 'deny' }, t('modeDeny')),
@@ -605,7 +641,7 @@ window.__ModuleLoader__.load({
 				{ style: sectionStyle },
 				createElement('p', { style: introStyle }, t('intro')),
 				createElement('span', { style: pillStyle }, t('idBadge')),
-				createElement(FoldCard, { title: t('general') },
+				createElement(FoldCard, { id: 'general', title: t('general') },
 					createElement(Row, {
 						title: t('enabled'),
 						desc: (value.enabled === true ? t('enabledOn') : t('enabledOff')) + ' · ' + t('enabledDesc'),
@@ -624,15 +660,15 @@ window.__ModuleLoader__.load({
 							onChange: function (e) { setField('urlMode', e.target.value) },
 							style: selectStyle,
 						},
-							createElement('option', { value: 'public' }, 'public'),
-							createElement('option', { value: 'intranet' }, 'intranet'),
+							createElement('option', { value: 'public' }, t('presetPublic')),
+							createElement('option', { value: 'intranet' }, t('presetIntranet')),
 						),
 					),
 				),
-				createElement(FoldCard, { title: t('access'), subtitle: t('accessSub') },
-					realmSelectRow(t('realmInternet'), value.internetAccess, 'internetAccess', setField),
-					realmSelectRow(t('realmLan'), value.lanAccess, 'lanAccess', setField),
-					realmSelectRow(t('realmLocal'), value.localAccess, 'localAccess', setField),
+				createElement(FoldCard, { id: 'access', title: t('access'), subtitle: t('accessSub') },
+					realmSelectRow(t('realmInternet'), value.internetAccess, 'internetAccess', setField, function (k) { scope.unset(k).then(noop, noop) }),
+					realmSelectRow(t('realmLan'), value.lanAccess, 'lanAccess', setField, function (k) { scope.unset(k).then(noop, noop) }),
+					realmSelectRow(t('realmLocal'), value.localAccess, 'localAccess', setField, function (k) { scope.unset(k).then(noop, noop) }),
 					createElement('div', { style: rowDescStyle }, t('realmDesc')),
 					createElement(Row, { title: t('tempInternet'), desc: t('tempHint') },
 						createElement(Switch, { checked: value.internetTemp !== false, onChange: function (on) { setField('internetTemp', on) } }),
@@ -682,7 +718,7 @@ window.__ModuleLoader__.load({
 						}),
 					),
 				),
-				createElement(FoldCard, { title: t('transport'), subtitle: t('transportSub'), open: false },
+				createElement(FoldCard, { id: 'transport', title: t('transport'), subtitle: t('transportSub'), open: false },
 					createElement(Row, { title: t('port') },
 						createElement('input', {
 							type: 'number', min: 1024, max: 65535, step: 1,
@@ -703,8 +739,43 @@ window.__ModuleLoader__.load({
 					createElement(Row, { title: t('registryDir') },
 						createElement(TextInput, { value: value.registryDir, onChange: function (v) { setField('registryDir', v) } }),
 					),
+					createElement(Row, { title: t('autoLaunch'), desc: t('autoLaunchDesc') },
+						createElement(Switch, {
+							checked: value.autoLaunchEnabled === true,
+							onChange: function (on) { setField('autoLaunchEnabled', on) },
+						}),
+					),
+					createElement(Row, { title: t('autoIdle') },
+						createElement('input', {
+							type: 'number', min: 3, max: 3600, step: 1,
+							value: typeof value.autoLaunchIdleSeconds === 'number' ? value.autoLaunchIdleSeconds : 15,
+							onChange: function (e) {
+								var n = parseInt(e.target.value, 10)
+								setField('autoLaunchIdleSeconds', isNaN(n) ? 15 : n)
+							},
+							style: numberStyle,
+						}),
+					),
+					createElement(Row, { title: t('autoExe') },
+						createElement(TextInput, { value: value.autoLaunchBrowserExe, onChange: function (v) { setField('autoLaunchBrowserExe', v) } }),
+					),
+					createElement(Row, { title: t('autoProfile') },
+						createElement(TextInput, { value: value.autoLaunchProfileDir, onChange: function (v) { setField('autoLaunchProfileDir', v) } }),
+					),
+					createElement(Row, { title: t('autoProfileName') },
+						createElement(TextInput, { value: value.autoLaunchProfileName, onChange: function (v) { setField('autoLaunchProfileName', v) } }),
+					),
+					createElement(Row, { title: t('autoTemp') },
+						createElement(Switch, {
+							checked: value.autoLaunchTempProfile === true,
+							onChange: function (on) { setField('autoLaunchTempProfile', on) },
+						}),
+					),
+					createElement(Row, { title: t('autoExt') },
+						createElement(TextInput, { value: value.autoLaunchExtensionDir, onChange: function (v) { setField('autoLaunchExtensionDir', v) } }),
+					),
 				),
-				createElement(FoldCard, { title: t('metadata'), subtitle: t('metadataSub') },
+				createElement(FoldCard, { id: 'metadata', title: t('metadata'), subtitle: t('metadataSub') },
 					createElement(Row, {
 						title: t('blockMetadata'),
 						desc: t('blockMetadataDesc'),

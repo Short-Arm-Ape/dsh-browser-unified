@@ -46,6 +46,18 @@
       "license": "AGPL-3.0",
       "mergedIntoCore": true,
       "baselineVerifiedFileDiff": 0
+    },
+    {
+      "id": "webops-dsh-agent-webops",
+      "url": "https://github.com/jonah791/dsh-agent-webops",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-agent-webops",
+      "pinnedSha": "8603a0a8528ee6899f4acc6980396342f6f51700",
+      "pinnedVersion": "0.1.0",
+      "license": "MIT",
+      "mergedIntoCore": false,
+      "baselineVerifiedFileDiff": 0,
+      "note": "headless Edge(CDP) 独立实例路线（open/read/click/type/eval/shot/close + 临时 user-data-dir），与 de-013/17 相关的参考上游；2026-09-07 采纳为第 5 上游"
     }
   ]
 }

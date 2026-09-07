@@ -112,6 +112,20 @@ export interface Config {
      * the copies bundled under the package `registry/` directory.
      */
     registryDir?: string;
+    /** de-013: auto-launch a browser when the extension has been disconnected too long. Default false. */
+    autoLaunchEnabled?: boolean;
+    /** Seconds the extension may stay disconnected before an auto-launch attempt. Default 15. */
+    autoLaunchIdleSeconds?: number;
+    /** Browser executable to launch (e.g. msedge.exe full path). Omit to search PATH for msedge/chrome. */
+    autoLaunchBrowserExe?: string;
+    /** Existing dedicated profile dir for the extension (recommended). Empty = default profile of the executable. */
+    autoLaunchProfileDir?: string;
+    /** Edge/Chrome 配置文件名称（如 'Profile 4'/'Default'）。留空=自动识别目录名或 Default。 */
+    autoLaunchProfileName?: string;
+    /** Use a fresh temporary profile (like an incognito/clean instance) instead of a profile dir. */
+    autoLaunchTempProfile?: boolean;
+    /** When using a temporary profile: path to an UNPACKED extension dir to sideload (`--load-extension`). */
+    autoLaunchExtensionDir?: string;
 }
 export declare const Config: z<Config>;
 /** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */

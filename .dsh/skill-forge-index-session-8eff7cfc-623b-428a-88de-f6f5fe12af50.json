@@ -1,0 +1,49 @@
+{
+  "sessionId": "session-8eff7cfc-623b-428a-88de-f6f5fe12af50",
+  "updatedAt": "2026-09-07T13:50:24.438Z",
+  "turns": [
+    {
+      "turn": 60,
+      "startAt": "2026-09-07T13:35:17.856Z",
+      "endAt": "2026-09-07T13:36:15.105Z",
+      "eventCount": 1208,
+      "toolCalls": 2,
+      "errors": 0,
+      "estTokens": 1092,
+      "contextChars": 0
+    },
+    {
+      "turn": 61,
+      "startAt": "2026-09-07T13:37:24.129Z",
+      "endAt": "2026-09-07T13:38:33.302Z",
+      "eventCount": 3893,
+      "toolCalls": 7,
+      "errors": 0,
+      "estTokens": 308,
+      "contextChars": 0
+    },
+    {
+      "turn": 62,
+      "startAt": "2026-09-07T13:44:45.376Z",
+      "endAt": "2026-09-07T13:46:47.064Z",
+      "eventCount": 5206,
+      "toolCalls": 12,
+      "errors": 1,
+      "estTokens": 327,
+      "contextChars": 0
+    },
+    {
+      "turn": 63,
+      "startAt": "2026-09-07T13:49:20.086Z",
+      "endAt": "2026-09-07T13:50:24.438Z",
+      "eventCount": 2682,
+      "toolCalls": 6,
+      "errors": 0,
+      "estTokens": 486,
+      "contextChars": 0
+    }
+  ],
+  "notify": null,
+  "hint": null,
+  "segment": null
+}
