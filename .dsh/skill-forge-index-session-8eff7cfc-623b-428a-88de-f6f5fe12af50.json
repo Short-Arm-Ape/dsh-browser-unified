@@ -1,7 +1,27 @@
 {
   "sessionId": "session-8eff7cfc-623b-428a-88de-f6f5fe12af50",
-  "updatedAt": "2026-09-07T14:21:38.145Z",
+  "updatedAt": "2026-09-07T14:35:14.751Z",
   "turns": [
+    {
+      "turn": 2,
+      "startAt": "2026-09-07T14:29:33.780Z",
+      "endAt": null,
+      "eventCount": 7,
+      "toolCalls": 0,
+      "errors": 0,
+      "estTokens": 0,
+      "contextChars": 0
+    },
+    {
+      "turn": 6,
+      "startAt": "2026-09-07T14:29:33.791Z",
+      "endAt": null,
+      "eventCount": 1,
+      "toolCalls": 0,
+      "errors": 0,
+      "estTokens": 0,
+      "contextChars": 0
+    },
     {
       "turn": 60,
       "startAt": "2026-09-07T13:35:17.856Z",
@@ -71,9 +91,29 @@
       "errors": 0,
       "estTokens": 676,
       "contextChars": 0
+    },
+    {
+      "turn": 67,
+      "startAt": "2026-09-07T14:28:44.989Z",
+      "endAt": "2026-09-07T14:34:38.064Z",
+      "eventCount": 22747,
+      "toolCalls": 54,
+      "errors": 2,
+      "estTokens": 655,
+      "contextChars": 0
+    },
+    {
+      "turn": 68,
+      "startAt": "2026-09-07T14:34:38.068Z",
+      "endAt": "2026-09-07T14:35:14.751Z",
+      "eventCount": 3416,
+      "toolCalls": 10,
+      "errors": 0,
+      "estTokens": 466,
+      "contextChars": 0
     }
   ],
   "notify": null,
-  "hint": null,
-  "segment": null
+  "hint": 0,
+  "segment": 67
 }
