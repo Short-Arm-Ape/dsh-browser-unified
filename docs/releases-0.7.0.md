@@ -27,5 +27,9 @@ de-014 录制/宏、de-015 本仓库 releases 自检 + 代提 issue/PR、de-017 
 - 0.7.3：修复 `browser_policy_status` 未渲染「自动拉起」行的转义 bug（含 profile 摘要）。
 - UI：设置折叠卡开合状态按卡 id 持久化（localStorage，`dshBu:fold:*`）。
 
+## 0.7.3+（未升版本号，紧随其后）
+- **模型主动拉起 `browser_launch` 工具（de-013 延伸）**：看门狗之外的新入口——扩展断开时报 `no browser extension connected` 时，模型调用 `browser_launch` 即按当前设置项（`autoLaunchBrowserExe`/`autoLaunchProfileDir`/`autoLaunchProfileName`，与看门狗同源、非硬编码）spawn 配置的浏览器；**不要求 `autoLaunchEnabled` 开启**（开关关 = 不自动拉起，模型仍可主动拉），自带 10s 冷却防刷，`spawnBrowser` 返回结果文案供工具回显。实机验证：扩展断开 → `browser_launch` 拉起 Edge Profile 4 → 扩展自动连桥 → 导航正常。
+- **url-policy 误判修复（hosts 屏蔽清单）**：`classifyHostRealm` 分类改纯 DNS（resolve4/6，绕过 `/etc/hosts`）先行；本机 hosts 把公网域名（github.com 等）钉到 127.0.0.1/0.0.0.0 的屏蔽清单不再让公网域名被归为 `local`/`lan` 误拒（`WEB_REALM_DENIED: Local access is denied`）。纯 DNS 无应答才回退 hosts 感知 lookup，且回退答案全为黑洞地址视为 internet；红线（metadata/DSH/凭据）、deny/allow 名单、ask/临时授权机制均未动。实机验证：`https://github.com/J5now/JDex2` 修复前被拒、修复后正常打开。
+
 ## 上游采纳
 - de-019：`jonah791/dsh-agent-webops`（MIT，headless Edge/CDP 独立实例 + 临时 user-data-dir，`webops_*` 工具面）经评估后归档为第 5 上游（`upstream/dsh-agent-webops`，HEAD `8603a0a`）；baseline 新增 `webops-dsh-agent-webops`；README 上游表加行；仅供 de-013/017 等未来并入参考（mergedIntoCore=false）。
