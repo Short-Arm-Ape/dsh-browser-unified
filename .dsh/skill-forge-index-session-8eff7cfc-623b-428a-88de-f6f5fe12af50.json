@@ -1,6 +1,6 @@
 {
   "sessionId": "session-8eff7cfc-623b-428a-88de-f6f5fe12af50",
-  "updatedAt": "2026-09-08T13:57:51.599Z",
+  "updatedAt": "2026-09-08T13:59:06.605Z",
   "turns": [
     {
       "turn": 2,
@@ -188,6 +188,17 @@
       "estTokens": 667,
       "contextChars": 0,
       "steps": 7
+    },
+    {
+      "turn": 77,
+      "startAt": "2026-09-08T13:58:08.780Z",
+      "endAt": "2026-09-08T13:59:06.604Z",
+      "eventCount": 4918,
+      "toolCalls": 11,
+      "errors": 0,
+      "estTokens": 539,
+      "contextChars": 0,
+      "steps": 11
     }
   ],
   "notify": {
