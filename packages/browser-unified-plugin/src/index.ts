@@ -380,13 +380,36 @@ class BridgeController {
 		this.spawnBrowser(config)
 	}
 
-	private spawnBrowser(config: ResolvedConfig): void {
+	/**
+	 * de-013 model-invoked launch: bring the extension's browser back up on
+	 * demand. Unlike the disconnect watchdog this does not require
+	 * `autoLaunchEnabled` — the model asks, the browser starts. Spawn
+	 * parameters come from the same autoLaunch* settings the watchdog uses.
+	 * A short cooldown prevents the model from spawning a window per call.
+	 * @returns a human-readable outcome for the tool layer.
+	 */
+	launchBrowser(): string {
+		const status = this.server?.status
+		if (status?.extensionConnected) return '扩展已连接，无需拉起'
+		const config = this.current
+		if (config === undefined) return '浏览器控制尚未加载配置，无法拉起'
+		if (!config.enabled) return '浏览器控制未启用，无法拉起（请先打开开关）'
+		if (config.autoLaunchProfileDir.length === 0 && config.autoLaunchBrowserExe.length === 0) {
+			return '未配置拉起目标：请在「浏览器」设置里填 autoLaunchBrowserExe / autoLaunchProfileDir（或开 autoLaunchEnabled 交给看门狗）后再试'
+		}
+		const now = Date.now()
+		if (now - this.lastSpawnAt < 10_000) return '刚刚已尝试拉起，请稍候几秒让浏览器/扩展连上'
+		this.lastSpawnAt = now
+		return this.spawnBrowser(config)
+	}
+
+	private spawnBrowser(config: ResolvedConfig): string {
 		let userDataDir = ''
 		let profileName = ''
 		if (config.autoLaunchTempProfile) {
 			if (!config.autoLaunchExtensionDir) {
 				this.log('[browser-bridge] autoLaunch: 临时干净实例需要 autoLaunchExtensionDir（未打包扩展目录）才能 sideload；改用已装扩展的 profile 目录')
-				return
+				return '临时干净实例需要 autoLaunchExtensionDir（未打包扩展目录）才能 sideload；请改配已装扩展的 profile 目录或填扩展目录'
 			}
 			userDataDir = mkdtempSync(path.join(tmpdir(), 'dsh-browser-'))
 		} else if (config.autoLaunchProfileDir) {
@@ -417,12 +440,13 @@ class BridgeController {
 				})
 				child.unref()
 				this.log(`[browser-bridge] autoLaunch: 已拉起 ${exe}（user-data-dir=${userDataDir || '默认'}${profileName ? ', profile=' + profileName : ''}）`)
-				return
+				return `已拉起 ${exe}（user-data-dir=${userDataDir || '默认'}${profileName ? ', profile=' + profileName : ''}），等待扩展连接`
 			} catch (error) {
 				this.log(`[browser-bridge] autoLaunch ${exe} 失败：${error instanceof Error ? error.message : String(error)}`)
 			}
 		}
 		this.log('[browser-bridge] autoLaunch: 无可用的浏览器可执行文件（可在 autoLaunchBrowserExe 指定完整路径）')
+		return '无可用的浏览器可执行文件（请在 autoLaunchBrowserExe 指定完整路径）'
 	}
 
 	/** Ordered candidate executables: configured value → common absolute paths → PATH names. */
@@ -919,6 +943,29 @@ function applyBrowserTools(ctx: Context, controller: BridgeController): void {
 				lines.push(`本会话已授权主机: ${s.tempGrants.length > 0 ? s.tempGrants.join(', ') : '（无）'}`)
 			}
 			return { ok: true, text: lines.join('\n') }
+		},
+	}))
+
+	ctx.tools.register(defineTool({
+		name: 'browser_launch',
+		description: 'Launch the configured browser (the one with the DSH Browser Control extension, per autoLaunch profile/exe settings) so the extension can reconnect to the bridge. Use this when browser_* tools fail with "no browser extension connected" — call it once, wait a few seconds, then retry the failing tool. Does NOT require the auto-launch watchdog to be enabled. Safe: spawns the configured browser only; no page is touched until you navigate.',
+		parameters: {},
+		output: {
+			schema: {
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					ok: { type: 'boolean', required: true },
+					text: { type: 'string', required: true },
+				},
+			},
+			render: (_args, value) => [{ type: 'text', text: value.text }],
+		},
+		isConcurrencySafe: () => true,
+		timeoutMs: 15_000,
+		async execute() {
+			const text = controller.launchBrowser()
+			return { ok: true, text }
 		},
 	}))
 
