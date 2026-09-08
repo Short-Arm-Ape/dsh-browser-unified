@@ -5,7 +5,6 @@ dist/
 packages/browser-unified-plugin/.npm-cache/
 packages/browser-unified-plugin/*.tgz
 .dsh/
-docs/
 
 # local npm cache used during prototype verification
 .npm-cache/
