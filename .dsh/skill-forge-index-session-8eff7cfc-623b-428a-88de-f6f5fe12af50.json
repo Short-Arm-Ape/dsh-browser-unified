@@ -1,6 +1,6 @@
 {
   "sessionId": "session-8eff7cfc-623b-428a-88de-f6f5fe12af50",
-  "updatedAt": "2026-09-07T14:35:14.751Z",
+  "updatedAt": "2026-09-08T13:57:51.599Z",
   "turns": [
     {
       "turn": 2,
@@ -111,9 +111,90 @@
       "errors": 0,
       "estTokens": 466,
       "contextChars": 0
+    },
+    {
+      "turn": 69,
+      "startAt": "2026-09-08T13:22:03.875Z",
+      "endAt": null,
+      "eventCount": 2412,
+      "toolCalls": 2,
+      "errors": 0,
+      "estTokens": 68299,
+      "contextChars": 0,
+      "steps": 2
+    },
+    {
+      "turn": 70,
+      "startAt": "2026-09-08T13:23:04.616Z",
+      "endAt": "2026-09-08T13:37:29.832Z",
+      "eventCount": 78223,
+      "toolCalls": 42,
+      "errors": 1,
+      "estTokens": 1005,
+      "contextChars": 0,
+      "steps": 37
+    },
+    {
+      "turn": 71,
+      "startAt": "2026-09-08T13:39:03.042Z",
+      "endAt": "2026-09-08T13:40:02.388Z",
+      "eventCount": 4009,
+      "toolCalls": 9,
+      "errors": 0,
+      "estTokens": 596,
+      "contextChars": 0,
+      "steps": 9
+    },
+    {
+      "turn": 73,
+      "startAt": "2026-09-08T13:52:07.610Z",
+      "endAt": "2026-09-08T13:52:34.505Z",
+      "eventCount": 931,
+      "toolCalls": 1,
+      "errors": 0,
+      "estTokens": 1103,
+      "contextChars": 0,
+      "steps": 2
+    },
+    {
+      "turn": 74,
+      "startAt": "2026-09-08T13:54:08.445Z",
+      "endAt": "2026-09-08T13:54:41.138Z",
+      "eventCount": 2716,
+      "toolCalls": 0,
+      "errors": 0,
+      "estTokens": 3086,
+      "contextChars": 0,
+      "steps": 1
+    },
+    {
+      "turn": 75,
+      "startAt": "2026-09-08T13:55:57.755Z",
+      "endAt": "2026-09-08T13:56:40.095Z",
+      "eventCount": 1379,
+      "toolCalls": 7,
+      "errors": 0,
+      "estTokens": 505,
+      "contextChars": 0,
+      "steps": 8
+    },
+    {
+      "turn": 76,
+      "startAt": "2026-09-08T13:57:14.666Z",
+      "endAt": "2026-09-08T13:57:51.598Z",
+      "eventCount": 1794,
+      "toolCalls": 6,
+      "errors": 0,
+      "estTokens": 667,
+      "contextChars": 0,
+      "steps": 7
     }
   ],
-  "notify": null,
+  "notify": {
+    "nextStepThreshold": 200,
+    "nextToolThreshold": 302,
+    "notifiedCount": 0
+  },
   "hint": 0,
   "segment": 67
 }
