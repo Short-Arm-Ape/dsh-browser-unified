@@ -44,6 +44,47 @@ export type Realm = 'internet' | 'lan' | 'local';
  * - `deny`: refused regardless of allow list.
  */
 export type RealmAccess = 'allow' | 'ask' | 'deny';
+/** de-018: per-realm default bundle of one mode preset. */
+export interface RealmPreset {
+    readonly internet: RealmAccess;
+    readonly lan: RealmAccess;
+    readonly local: RealmAccess;
+}
+/** de-018 preset table: 'public' = internet-only defaults; 'intranet' = all realms allowed. */
+export declare function presetForMode(mode: UrlPolicyMode): RealmPreset;
+/**
+ * de-018: resolve one realm's effective access. An explicit user realm value
+ * wins; otherwise the mode preset default applies (so urlMode becomes a
+ * preset, not a second hard gate).
+ */
+export declare function resolveRealmAccess(option: RealmAccess | undefined, mode: UrlPolicyMode, realm: Realm): RealmAccess;
+/**
+ * de-018: realm of one resolved address. Fake-ip answers (Clash/Surge/mihomo)
+ * count as `internet` while `allowFakeIp` is on — that is what keeps proxy
+ * setups working once private/loopback are no longer hard-blocked by routing.
+ */
+export declare function addressRealm(addr: string, family: number, allowFakeIp: boolean): Realm;
+/**
+ * de-018: classify a host into a realm, resolving hostnames when asked. For a
+ * hostname the "most local" answer wins (any loopback answer → local, else
+ * any LAN answer → lan, else internet), matching the old any-private-block
+ * conservatism. DNS failure surfaces `unresolved` instead of guessing.
+ *
+ * Resolution is pure-DNS first: `/etc/hosts` block lists routinely pin *public*
+ * domains (github.com, google.com, …) to 127.0.0.1 / 0.0.0.0 to cut them off
+ * at the OS level — that machine-local override is NOT evidence the name is a
+ * local service, and the browser being driven may well resolve it normally.
+ * Only when pure DNS answers nothing (hosts-only / offline setups) do we
+ * consult the hosts file, and answers that are all block-list blackholes for a
+ * non-local-spelled name are still treated as internet, never as `local`/`lan`.
+ */
+export declare function classifyHostRealm(host: string, options: {
+    readonly resolveDns: boolean;
+    readonly allowFakeIp: boolean;
+}): Promise<{
+    realm: Realm;
+    unresolved: boolean;
+}>;
 export interface UrlPolicyOptions {
     readonly mode: UrlPolicyMode;
     /** Allow Clash/Surge/mihomo fake-ip answers in 198.18.0.0/15 (public mode). Default true. */
@@ -190,10 +231,27 @@ export declare class UrlPolicy {
     private readonly resolveDns;
     constructor(options: UrlPolicyOptions);
     get isIntranet(): boolean;
-    /** Whether the origin of `url` is explicitly granted as a DSH control page. */
-    private dshGranted;
-    /** Realm policy of a normalized host. */
-    accessFor(host: string): {
+    /** Verdict for a DSH control-page target: 'allow' when enabled, 'block'
+     * when listed but disabled (loopback aliases like localhost/::1/127.0.0.1
+     * are treated as the same endpoint), 'none' otherwise. */
+    private dshRule;
+    /**
+     * DNS-based red-line re-check for hostname aliases that only resolve to a
+     * protected endpoint (e.g. 127.0.0.1.nip.io → loopback, or an alias of
+     * 169.254.169.254 / 100.100.100.200 → cloud metadata). Runs only when a
+     * guard is actually armed:
+     *  - metadata aliases: whenever `blockMetadata` is on (any port);
+     *  - DSH-loopback aliases: when the DSH rule is DISABLED and the origin list
+     *    targets a loopback endpoint on the same port as the URL.
+     * Ordinary traffic that needs neither guard does no DNS work.
+     */
+    private dnsRedlineBlocked;
+    /** Effective access of one realm: explicit user value wins, else mode preset. */
+    private effectiveAccess;
+    /** de-018 fast path: when every realm is allowed there is nothing to gate. */
+    private allRealmsAllow;
+    /** Realm policy of a classified realm (access + temp-grant switch). */
+    realmPolicyOf(realm: Realm): {
         access: RealmAccess;
         temp: boolean;
         realm: Realm;

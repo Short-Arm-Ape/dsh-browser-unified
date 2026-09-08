@@ -17,7 +17,7 @@
  * @module dsh-browser-unified-mit/url-policy
  */
 
-import { lookup } from 'node:dns/promises'
+import { lookup, resolve4, resolve6 } from 'node:dns/promises'
 import { isIP } from 'node:net'
 
 /** Stable error code + human message; callers (tools) surface `code` to the model. */
@@ -97,11 +97,51 @@ export function addressRealm(addr: string, family: number, allowFakeIp: boolean)
   return isPrivateAddress(lower, family) ? 'lan' : 'internet'
 }
 
+/** Pure DNS answers (A+AAAA) for `host`, bypassing /etc/hosts overrides. */
+async function pureDnsAnswers(host: string): Promise<Array<{ address: string; family: number }>> {
+  const [a4, a6] = await Promise.allSettled([resolve4(host), resolve6(host)])
+  const answers: Array<{ address: string; family: number }> = []
+  if (a4.status === 'fulfilled') for (const address of a4.value) answers.push({ address, family: 4 })
+  if (a6.status === 'fulfilled') for (const address of a6.value) answers.push({ address, family: 6 })
+  return answers
+}
+
+/** Hosts-aware answers for `host` ([] on failure). */
+async function lookupHosts(host: string): Promise<Array<{ address: string; family: number }>> {
+  try {
+    return await lookup(host, { all: true })
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Addresses used by /etc/hosts block lists to "blackhole" a domain:
+ * 127.0.0.0/8, 0.0.0.0, ::1 and ::. A name pinned to one of these is being
+ * blocked at the OS level, not served by a local endpoint.
+ */
+function isBlackholeAddress(addr: string, family: number): boolean {
+  if (family === 4) {
+    const first = Number(addr.split('.')[0])
+    return first === 127 || first === 0
+  }
+  const lower = addr.toLowerCase()
+  return lower === '::' || lower === '::1' || lower.startsWith('::ffff:7f')
+}
+
 /**
  * de-018: classify a host into a realm, resolving hostnames when asked. For a
  * hostname the "most local" answer wins (any loopback answer → local, else
  * any LAN answer → lan, else internet), matching the old any-private-block
  * conservatism. DNS failure surfaces `unresolved` instead of guessing.
+ *
+ * Resolution is pure-DNS first: `/etc/hosts` block lists routinely pin *public*
+ * domains (github.com, google.com, …) to 127.0.0.1 / 0.0.0.0 to cut them off
+ * at the OS level — that machine-local override is NOT evidence the name is a
+ * local service, and the browser being driven may well resolve it normally.
+ * Only when pure DNS answers nothing (hosts-only / offline setups) do we
+ * consult the hosts file, and answers that are all block-list blackholes for a
+ * non-local-spelled name are still treated as internet, never as `local`/`lan`.
  */
 export async function classifyHostRealm(
   host: string,
@@ -115,20 +155,38 @@ export async function classifyHostRealm(
     // Without DNS we can only trust local-only spellings; treat as internet.
     return { realm: realmOf(host) === 'local' ? 'local' : realmOf(host) === 'lan' ? 'lan' : 'internet', unresolved: false }
   }
-  let resolved
-  try {
-    resolved = await lookup(host, { all: true })
-  } catch {
-    return { realm: 'internet', unresolved: true }
+  const spelling = realmOf(host) === 'local' ? 'local' : realmOf(host) === 'lan' ? 'lan' : 'internet'
+  if (spelling !== 'internet') {
+    // Explicit local-only spelling (localhost / *.local / *.lan / …): no DNS needed.
+    return { realm: spelling, unresolved: false }
   }
-  let local = false
-  let lan = false
-  for (const entry of resolved) {
+  const dnsAnswers = await pureDnsAnswers(host)
+  if (dnsAnswers.length > 0) {
+    let local = false
+    let lan = false
+    for (const entry of dnsAnswers) {
+      const r = addressRealm(entry.address, entry.family, options.allowFakeIp)
+      if (r === 'local') local = true
+      else if (r === 'lan') lan = true
+    }
+    return { realm: local ? 'local' : lan ? 'lan' : 'internet', unresolved: false }
+  }
+  // Pure DNS answered nothing → hosts-only / offline fallback.
+  const hostsAnswers = await lookupHosts(host)
+  if (hostsAnswers.length === 0) return { realm: 'internet', unresolved: true }
+  let hostLocal = false
+  let hostLan = false
+  let nonBlackhole = false
+  for (const entry of hostsAnswers) {
+    if (isBlackholeAddress(entry.address, entry.family)) continue
+    nonBlackhole = true
     const r = addressRealm(entry.address, entry.family, options.allowFakeIp)
-    if (r === 'local') local = true
-    else if (r === 'lan') lan = true
+    if (r === 'local') hostLocal = true
+    else if (r === 'lan') hostLan = true
   }
-  return { realm: local ? 'local' : lan ? 'lan' : 'internet', unresolved: false }
+  // All hosts answers were blackholes (block list) → not a local service.
+  if (!nonBlackhole) return { realm: 'internet', unresolved: false }
+  return { realm: hostLocal ? 'local' : hostLan ? 'lan' : 'internet', unresolved: false }
 }
 
 export interface UrlPolicyOptions {
