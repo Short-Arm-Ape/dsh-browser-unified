@@ -1,3 +1,25 @@
+> [!NOTE]
+> # **This repository is no longer maintained (2026-10-10).**
+> This plugin has been merged into [`Short-Arm-Ape/dsh-browser-unified`](https://github.com/Short-Arm-Ape/dsh-browser-unified):
+>
+> - The LAN access-grant semantics (metadata blocklist / hostname normalization / per-domain allow) have been folded into core's `url-policy`.
+> - The approval decision table (`approvalMode: per-call | arm`, fail-closed) has been folded into core's `approval.ts`.
+> - The "LAN profile" is now expressed by the unified plugin's `lanAccess` / `localAccess`.
+> - The only thing **not** merged is per-request route interception (the page's own XHR / redirects / iframes) — on the unified track, that is design item **de-005 (accepted)**, and after switching to the "extension + CDP bridge" approach it will need to be rewritten and cannot be copied as-is from Playwright's `context.route`.
+>
+> Therefore, this repository remains a read-only archive; no further changes will be accepted.
+
+> [!NOTE]
+> # **本仓库已停止维护（2026-10-10）。**
+> 本插件已经并入 [`Short-Arm-Ape/dsh-browser-unified`](https://github.com/Short-Arm-Ape/dsh-browser-unified)：
+> 
+> - 内网放行语义（元数据黑名单 / hostname 归一 / 分域 allow）收编进 core 的 `url-policy`，
+> - 审批决策表（`approvalMode: per-call | arm`、fail-closed）收编进 core 的 `approval.ts`，
+> - "内网档"现在由 unified 插件的 `lanAccess` / `localAccess` 表达。
+> - 唯一**未**并入的是逐请求 route 拦截（页面自身 XHR / 重定向 / iframe）—— 那件事在 unified 线里是设计条目 **de-005（accepted）**，且换到"扩展 + CDP 桥"路线后需要重写，不能照搬 Playwright 的 `context.route`。
+>
+> 故本仓库保持只读归档；不再接受改动。
+
 # dsh-intranet-browser
 Bypasses the SSRF protection of `@yeesy369/dsh-browser-playwright`
 

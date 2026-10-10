@@ -4,11 +4,20 @@
  * native-messaging host or registry setup exists; dsh drives commands through
  * {@link BridgeServer.execute} and reads link state through {@link BridgeServer.status}.
  * A small HTTP face (`/api/status`, `/api/command`, `/api/cleanup`, `/`) keeps
- * the bridge usable from curl while the server runs.
+ * the bridge usable from curl while the server runs. `/api/command` and
+ * `/api/cleanup` demand the same token as the WebSocket upgrade; `/` and
+ * `/api/status` stay readable because the status page needs them and they only
+ * report link state. No response carries `Access-Control-Allow-Origin`, and the
+ * upgrade checks `Host` plus `Origin` so neither a web page nor a rebound
+ * hostname can attach.
  *
  * Wire protocol (text frames, one JSON object each):
  * - extension → server: `{type:'hello',…}`, `{type:'pong',t}`, `{type:'result',id,ok,result?|error}`
  * - server → extension: `{type:'ping',t}`, `{type:'command',id,command,params}`
+ *
+ * Command names (sent in `command`) include: `ping`, `browser.info`, `tabs.list/open/close/activate`,
+ * `nav`, `eval`, `content`, `find`, `click`, `input`, `press`, `scroll`, `snapshot`, `screenshot`,
+ * `wait`, `dialog`, `console.log`, `network.log`, `network.clear`, `pdf`, `emulate`.
  * @module @deepseek-ai/dsh-browser-bridge/server
  */
 /** Per-command ceiling when the caller passes none. */
@@ -34,6 +43,8 @@ export interface BridgeServerStatus {
     readonly hello: BridgeHello | undefined;
     readonly pendingCommands: number;
     readonly lastError: string | undefined;
+    /** True when the active token is the published default or too short to be a secret. */
+    readonly insecureToken: boolean;
 }
 /** Caller controls for one {@link BridgeServer.execute} round-trip. */
 export interface BridgeExecuteOptions {
@@ -89,6 +100,7 @@ export declare class BridgeServer {
     constructor(options: BridgeServerOptions);
     /** Current link state, also served verbatim as `/api/status`. */
     get status(): BridgeServerStatus;
+    private get insecureToken();
     /** Bind `127.0.0.1:<port>` and start accepting the extension plus HTTP calls. */
     start(): Promise<void>;
     /** Close the extension link, fail every pending command, and release the port. Idempotent. */
@@ -104,6 +116,13 @@ export declare class BridgeServer {
      */
     cleanup(): Promise<CleanupResult>;
     private log;
+    /**
+     * Whether a request carries the bridge token, the same credential the WebSocket
+     * upgrade checks. Accepted forms: `Authorization: Bearer <token>`, `X-Token: <token>`
+     * and `?token=<token>` (the query form exists for curl and for the status page).
+     */
+    private authorized;
+    private rejectUnauthenticated;
     private handleHttp;
     private respondJson;
     private handleCommandRequest;

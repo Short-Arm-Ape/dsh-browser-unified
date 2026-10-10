@@ -7,9 +7,9 @@
 | #   | 归档路径（upstream/）                       | 项目 / 作者                             | 上游仓库                                                  | 归档版本                                | 许可证          | 是否并入 browser-unified-core                                                             |
 | --- | ------------------------------------- | ----------------------------------- | ----------------------------------------------------- | ----------------------------------- | ------------ | ------------------------------------------------------------------------------------- |
 | 1   | `dsh-browser-xylt369/`                | dsh-browser（xylt369）                | https://github.com/xylt369/dsh-browser                | 仓库 v0.1.0；包 @yeesy369/* 0.6.0–0.8.1 | MIT          | ✅ 是（url-policy 的分类器/守卫语义；MIT 允许并入 AGPL 包）                                             |
-| 2   | `dsh-intranet-browser-short-arm-ape/` | dsh-intranet-browser（Short-Arm-Ape） | https://github.com/Short-Arm-Ape/dsh-intranet-browser | 0.1.0                               | MIT          | ✅ 是（url-policy 元数据黑名单/归一化、approval 决策表语义）                                             |
+| 2   | `dsh-intranet-browser-short-arm-ape/` | dsh-intranet-browser（Short-Arm-Ape） | https://github.com/Short-Arm-Ape/dsh-intranet-browser | 0.1.0（**2026-10-10 README 刷新**，`81df0d5`） | MIT          | ✅ 是（url-policy 元数据黑名单/归一化、approval 决策表语义）                                             |
 | 3   | `dsh-browser-control-kyo615/`         | dsh-browser-control（kyo615）         | https://github.com/kyo615/dsh-browser-control         | 1.0.0                               | MIT          | ⚠️ 暂未并入（其价值=GUI 实时画面，属集成层；原型阶段未取用）                                                    |
-| 4   | `dsh-browser-control-caob23/`         | @caob23/dsh-browser-control         | https://github.com/caob23/dsh-browser-control         | 1.0.7                               | **AGPL-3.0** | ✅ 是（bridge/ws.ts + bridge/server.ts 收编进 core，整包为 AGPL-3.0-only） |
+| 4   | `dsh-browser-control-caob23/`         | @caob23/dsh-browser-control         | https://github.com/caob23/dsh-browser-control         | **1.0.8**（原 1.0.7；2026-10-10 刷新） | **AGPL-3.0** | ✅ 是（bridge/ws.ts + bridge/server.ts 收编进 core，整包为 AGPL-3.0-only）；v1.0.8 的 WS `Host`/`Origin` 校验与 token 形式已于同日并入（de-037） |
 | 5   | `dsh-agent-webops/`                    | dsh-agent-webops（jonah791）         | https://github.com/jonah791/dsh-agent-webops         | **0.2.2**（原 0.1.0）                | MIT          | ➖ 归档参考（de-019；de-035 于 2026-10-10 刷新到 `31e5c17`）。headless Edge(CDP) 独立实例 + **attach 外部 CDP 端点** + wait 谓词轮询 + 纯逻辑层/离线测试；Fabric 骨架自陈不可运行，不当契约 |
 
 ## 各归档内自带的第三方声明
@@ -27,7 +27,8 @@ AGPL-3.0-only**（其 LICENSE 文件为完整 AGPL-3.0 文本），并把 `@caob
 （AGPL-3.0）的 `src/ws.ts`、`src/server.ts` 收编为 `src/bridge/ws.ts`、`src/bridge/server.ts`。
 
 1. `upstream/dsh-browser-control-caob23/` 以 AGPL-3.0 原样归档；并入 core 的收编文件头部
-   保留上游版权与来源（vendored from @caob23/dsh-browser-control v1.0.7）。
+   保留上游版权与来源（vendored from @caob23/dsh-browser-control v1.0.7；**v1.0.8 的安全强化
+   于 2026-10-10 并入同一文件，文件头同时记明**）。
 2. 表中的 MIT 上游代码并入 AGPL 包合法（MIT 允许再授权）；分发时各文件出处以本表与
    文件头注释为准。
 3. **分发或提供网络服务（含 SaaS）时，整个衍生作品必须按 AGPL-3.0 第 13 条公开对应源代码**；
@@ -35,13 +36,18 @@ AGPL-3.0-only**（其 LICENSE 文件为完整 AGPL-3.0 文本），并把 `@caob
 4. kyo615 版（MIT，行 3）尚未并入；若将来并入，仍保持整包 AGPL-3.0（许可兼容），
    归属在本表登记。
 
-## 开发基线 / 上游自检（2026-09-05；webops 加入于 2026-09-07；**webops 归档刷新于 2026-10-10**）
+## 开发基线 / 上游自检（2026-09-05；webops 加入于 2026-09-07；**2026-10-10 刷新了 caob23 与 short-arm-ape 两份归档**）
 
 - `upstream-baseline.json` 将五个上游 **main 分支归档当日 commit SHA** 固化为机器可读基线
-  （xylt369 `2f1adee`、short-arm-ape `d3f63d4`、kyo615 `9c10f2c`、caob23 `2763148`、
+  （xylt369 `2f1adee`、
+  short-arm-ape **`81df0d5`（2026-10-10 刷新：README 停维护横幅，源码面仍为 0.1.0；旧快照 `d3f63d4`
+  备份为 `..\__archive-backups\dsh-intranet-browser-short-arm-ape-d3f63d4-20261010`）**、
+  kyo615 `9c10f2c`、
+  caob23 **`43e6325`（1.0.8，2026-10-10 刷新；旧快照 `2763148` 备份为
+  `..\__archive-backups\dsh-browser-control-caob23-2763148-20261010`）**、
   webops **`31e5c17`（0.2.2，2026-10-10 刷新；旧快照 `8603a0a` 备份为
-  `upstream/dsh-agent-webops.bak-20261010`）**；前四个当日实测归档快照与上游 main 逐文件 0 差异，
-  webops 归档于 2026-09-07、刷新于 2026-10-10）。
+  `upstream/dsh-agent-webops.bak-20261010`）**）。
+  归档快照与 pin 同步推进：2026-10-10 刷新后实测 `scripts/check-upstream.ps1` **5/5 UP-TO-DATE**。
   > 归档快照与这份 pin **必须同一步更新**：只改一处会让 `check-upstream` 误报或漏报。
 - `design/registry.json` 是设计意图/工具命名/鉴权策略/设计条目与 **impactRules（单一事实源）**
   的注册表；`design/README.md` 记录了工具契约（browser_check_update / browser_design_show /

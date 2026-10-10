@@ -56,7 +56,7 @@ Browsers via MCP (Playwright MCP, Puppeteer MCP, browser-use…) share one trait
 | Environment deps | No Node / npx / Python needed | Needs npx or uvx runtime |
 | Setup | Load extension + settings toggle | Edit MCP client JSON config |
 | Disk usage | Reuses existing Chrome, zero extra | Downloads hundreds of MB |
-| Integration depth | Native dsh plugin (settings card / status page / cleanup button) | Generic MCP server |
+| Integration depth | Native dsh plugin (status page / cleanup button; whether a settings card exists depends on the host version, see below) | Generic MCP server |
 
 In one line: **for "use MY browser" tasks (logged-in Bilibili, Zhihu, admin panels), use this project; for generic cross-browser test automation, use MCP.**
 
@@ -64,8 +64,8 @@ In one line: **for "use MY browser" tasks (logged-in Bilibili, Zhihu, admin pane
 
 | File | Purpose |
 |---|---|
-| [DSH-Browser-Control-1.0.7.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.7/DSH-Browser-Control-1.0.7.zip) | Chrome extension (unzip and load) |
-| [dsh-browser-control-plugin-v1.0.7.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.7/dsh-browser-control-plugin-v1.0.7.zip) | dsh plugin (offline fallback; online installs use Option A/B) |
+| [DSH-Browser-Control-v1.0.8.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.8/DSH-Browser-Control-v1.0.8.zip) | Chrome extension (unzip and load; standard zip header, Explorer can expand it directly) |
+| [dsh-browser-control-plugin-v1.0.8.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.8/dsh-browser-control-plugin-v1.0.8.zip) | dsh plugin (offline fallback; online installs use Option A/B) |
 
 ## Install the Chrome extension (30 seconds)
 
@@ -96,7 +96,7 @@ npm install @caob23/dsh-browser-control
 
 ```bash
 # Straight from GitHub
-dsh plugin --profile web add "github:caob23/dsh-browser-control#v1.0.7"
+dsh plugin --profile web add "github:caob23/dsh-browser-control#v1.0.8"
 
 # Local checkout for debugging (note: the explicit file: prefix is required)
 dsh plugin --profile web add "file:D:\path\to\dsh-browser-control"
@@ -114,7 +114,10 @@ dsh plugin --profile web remove @caob23/dsh-browser-control
 
 After installing and restarting, the bridge is on by default (v1.0.6+); no manual enable step. The status page at http://127.0.0.1:9777/ confirms the listener is up.
 
-> To opt out: set `enabled: false` under `browser-bridge.config` in `~/.dsh/settings.yml`.
+> To opt out: in your profile override layer `$DSH_HOME/profiles/<name>/cordis.patch.yml`, write
+> `- id: browser-bridge` with `config: { enabled: false }` (see [dsh-config/README.md](dsh-config/README.md)).
+> Do not change the in-package `cordis.patch.yml` back to `enabled: false` — that value overrides the
+> schema default and shows up as "nothing listens on 9777 after install" (issue #4).
 
 ### Option C: copy into the harness tree (legacy, v1.0.2 and earlier)
 
@@ -152,15 +155,39 @@ Then add three pieces of config:
 { "path": "./packages/web/browser-bridge" }
 ```
 
-Restart dsh → the "DSH Browser Control" card appears in Settings → enable it. Details in [dsh-config/README.md](dsh-config/README.md).
+Restart dsh. Details in [dsh-config/README.md](dsh-config/README.md) (this path targets the pre-v1.0.3 layout, where `enabled: false` really was the default).
 
 ## Usage
 
-1. dsh Settings → Plugins → DSH Browser Control → enable
+1. It is already on after install (v1.0.6+); no manual enable step
 2. The extension connects automatically (port 9777, default token dsh-local)
 3. Talk in natural language; the agent drives the browser
 
+### Whether a settings card exists depends on the host (issue #5)
+
+The published bundle ships only the host-side `lib/index.js`; there is no browser-side module, so the card is not drawn by this plugin:
+
+| Host | Settings page | How to change config |
+|---|---|---|
+| dsh 0.1.7+ / 0.2.x (dsh-settings 0.1.7-rc.2 onwards) | Yes — the host projects this plugin's own `Config` schema into a section | Settings page, or the profile override layer |
+| dsh 0.1.2 and earlier | No entry (no client half claims the namespace, so nothing renders) | Profile override layer only: `$DSH_HOME/profiles/<name>/cordis.patch.yml` |
+
+The config file works on both; see [dsh-config/README.md](dsh-config/README.md).
+
 Visit `http://127.0.0.1:9777/` for connection status.
+
+### Calling the HTTP face from a script
+
+`/api/command` and `/api/cleanup` now require the token — the same value the extension presents on the WebSocket:
+
+```bash
+curl -X POST http://127.0.0.1:9777/api/command \
+  -H 'Authorization: Bearer <your token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"nav","params":{"url":"https://example.com"}}'
+```
+
+`?token=<your token>` and `X-Token: <your token>` work too. Missing or wrong token is a 401; `/` and `/api/status` stay unauthenticated read-only. What used to work without a token no longer does (issue #3 / #6). The cleanup button on the status page asks for the token once and keeps it in the browser session only.
 
 ## Tools
 
@@ -196,7 +223,7 @@ Chrome browser
 - Extension dials out to the bridge (no native messaging host)
 - Off by default; enabled manually from Settings
 - Persistent debugger attachment — banner stays visible during control
-- Listens on 127.0.0.1 only, token-authenticated
+- Listens on 127.0.0.1 only; the command surface (WebSocket and HTTP) shares one token, and no cross-origin access is granted
 
 ## Verified
 
@@ -204,9 +231,11 @@ Chrome browser
 |---|---|
 | Baidu search → extract result titles | ✅ |
 | Bilibili user search → send DM | ✅ |
-| Bilibili search → count video cards + screenshot | ✅ |
-| Unit tests 29/29 | ✅ |
-| Type checks (host + client) | ✅ |
+| Bilibili search → count video cards + screenshot | ✅ (real browser, 1.0.x era) |
+| `npm run verify` harness: config resolution, three host shapes, HTTP auth and upgrade origin, published-bundle behaviour | ✅ 2026-10-10, see [verify/README.md](verify/README.md) |
+| `tsc --noEmit` + `publint` | ✅ 2026-10-10 |
+
+There have been no unit tests since v1.0.4 removed `tests/`; the three browser rows above are historical runs that were not repeated for this change, while every claim in this release comes from the repeatable harness under `verify/`.
 
 ## Changelog
 

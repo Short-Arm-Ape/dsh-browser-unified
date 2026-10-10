@@ -1,4 +1,4 @@
-<#
+﻿<#
   check-upstream.ps1 — 上游新提交自检（dsh-browser-unified 开发基线）
 
   用法：
@@ -14,6 +14,14 @@
     - -UpdateBaseline 只写 upstream-baseline.json（pinnedSha/pinnedAt），不碰任何源码。
     - "根据上游提交修改合并源码"必须走单独的审批流程：先向用户报告改了什么/影响面，
       用户确认后由 agent 手工执行 re-vendor + 合并 + typecheck，并同步推进本基线。
+
+  兼容性（2026-10-10 实撞；三项都会让自检"看起来跑了、其实什么都没查到"）：
+    - 本文件**必须带 UTF-8 BOM**：Windows PowerShell 5.1 把无 BOM 的非 ASCII .ps1 按 ANSI 解码，
+      中文字符串会吞掉引号 → 解析期直接报错（`MissingFileSpecification`）。
+    - 所有 JSON 读取都走 [System.IO.File]::ReadAllText(..., UTF8 无 BOM) 或 -Encoding UTF8：
+      PS 5.1 的 Get-Content 默认按 ANSI 读，UTF-8 中文会解出 GBK 尾字节 `\` → ConvertFrom-Json 抛 ArgumentException。
+    - git 探测参数按序回退（纯 sslVerify=false → 再加 openssl 后端 → 原样）：gnutls 版 git 不认
+      `http.sslBackend=openssl`，只带该参数会让五个上游全部误报 UNREACHABLE。
 #>
 [CmdletBinding()]
 param(
@@ -22,14 +30,27 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# 原生命令（git）输出是 UTF-8，而 PS 5.1 默认按控制台 OEM 代码页解码 ⇒ 提交标题全成乱码，
+# 而提交清单正是本脚本唯一的证据面。两条都钉成 UTF-8（无 BOM）。
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 $repoRoot  = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $baselineFile = Join-Path $repoRoot 'upstream-baseline.json'
 if (-not (Test-Path $baselineFile)) { Write-Error "baseline 文件不存在: $baselineFile"; exit 2 }
-$baseline = Get-Content $baselineFile -Raw | ConvertFrom-Json
+# PS 5.1 的 Get-Content 默认按 ANSI 代码页读文件：本仓库这两个 JSON 都是 UTF-8 无 BOM 且含中文，
+# 按 ANSI 解码会产出 GBK 尾字节恰好是 `\` 的乱码 ⇒ ConvertFrom-Json 抛 ArgumentException。
+# 所以**所有** JSON 读取都必须显式 -Encoding UTF8（2026-10-10 实撞）。
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+$baseline = [System.IO.File]::ReadAllText($baselineFile, $utf8) | ConvertFrom-Json
 
-# 本沙箱缺 CA（schannel 无凭据 / openssl 无证书链）时的只读探测参数；
-# 在正常终端里可去掉这两项。仅影响 git 本次进程，不改任何全局配置。
-$gitArgs = @('-c', 'http.sslBackend=openssl', '-c', 'http.sslVerify=false')
+# 只读网络探测的 git 参数。旧写法只用 `-c http.sslBackend=openssl`，而本机 git 是 gnutls 构建
+# （无 openssl 后端）⇒ 该参数本身就让 git 失败、五个上游全部误报 UNREACHABLE（bi-030 同一坑）。
+# 现在按序回退：先只关校验，再试 openssl 后端，最后原样重试。
+$gitArgSets = @(
+  ,@('-c', 'http.sslVerify=false')
+  ,@('-c', 'http.sslBackend=openssl', '-c', 'http.sslVerify=false')
+  ,@()
+)
 $env:GIT_TERMINAL_PROMPT = '0'
 
 $tmp = Join-Path $repoRoot '__upstream-check'
@@ -37,9 +58,9 @@ if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 # ---- 影响映射：单一事实源 = design/registry.json 的 impactRules（勿在代码里再写一份）----
-$registryFile = Join-Path $repoRoot 'design\registry.json'
+$registryFile = Join-Path (Join-Path $repoRoot 'design') 'registry.json'
 if (-not (Test-Path $registryFile)) { Write-Error "registry 文件不存在: $registryFile"; exit 2 }
-$registry = Get-Content $registryFile -Raw | ConvertFrom-Json
+$registry = [System.IO.File]::ReadAllText($registryFile, $utf8) | ConvertFrom-Json
 $impactMap = @{}
 foreach ($prop in $registry.impactRules.PSObject.Properties) {
   $impactMap[$prop.Name] = @($prop.Value)
@@ -51,9 +72,15 @@ foreach ($repo in $baseline.repos) {
   if ($UpstreamId -and $repo.id -ne $UpstreamId) { continue }
   Write-Output ("===== {0} =====" -f $repo.id)
   $dst = Join-Path $tmp $repo.id
-  & git @gitArgs clone --quiet $repo.url $dst 2>&1 | Out-Null
+  foreach ($gitArgs in $gitArgSets) {
+    if (Test-Path (Join-Path $dst '.git')) { break }
+    if (Test-Path $dst) { Remove-Item -Recurse -Force $dst -ErrorAction SilentlyContinue }
+    $attempt = (& git @gitArgs clone --quiet $repo.url $dst 2>&1 | Out-String).Trim()
+    if (-not (Test-Path (Join-Path $dst '.git')) -and $attempt) { $cloneError = $attempt }
+  }
   if (-not (Test-Path (Join-Path $dst '.git'))) {
     Write-Output '  状态      : UNREACHABLE —— clone 失败（网络 / 代理 / 认证），本次跳过'
+    if ($cloneError) { Write-Output ("  末次错误  : {0}" -f ($cloneError -split "`n" | Select-Object -First 1)) }
     Write-Output ''
     continue
   }
@@ -61,7 +88,7 @@ foreach ($repo in $baseline.repos) {
   $headLine = (& git -C $dst --no-pager log -1 --format='%h %cs %s' 2>&1 | Select-Object -First 1)
   $pj = Join-Path $dst 'package.json'
   $ver = '<n/a>'
-  if (Test-Path $pj) { try { $ver = (Get-Content $pj -Raw | ConvertFrom-Json).version } catch { $ver = '<unreadable>' } }
+  if (Test-Path $pj) { try { $ver = ([System.IO.File]::ReadAllText($pj, $utf8) | ConvertFrom-Json).version } catch { $ver = '<unreadable>' } }
   Write-Output ("  HEAD      : {0}  [{1}]  version={2}" -f $head, $headLine, $ver)
   Write-Output ("  基线      : {0}  (pinned {1})" -f $repo.pinnedSha, $repo.pinnedVersion)
 
@@ -113,7 +140,10 @@ if ($UpdateBaseline -and $anyDrift) {
   }
   if ($dirty) {
     $baseline.pinnedAt = $now
-    $baseline | ConvertTo-Json -Depth 8 | Set-Content -Path $baselineFile -Encoding UTF8
+    # 不用 Set-Content -Encoding UTF8：PS 5.1 会写 **带 BOM** 的 UTF-8，而我们的工具与 Node
+    # 都按无 BOM 解析（JSON.parse 会把 BOM 当非法字符）。这里显式写无 BOM UTF-8。
+    # 注意：本开关会按 PS 的格式重排整个文件（仍是合法 JSON）。
+    [System.IO.File]::WriteAllText($baselineFile, ($baseline | ConvertTo-Json -Depth 8), $utf8)
     Write-Output '已更新 upstream-baseline.json（仅 pinnedSha/pinnedAt；未触碰任何源码）。'
   } else {
     Write-Output '无漂移，基线未改动。'

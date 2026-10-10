@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-10T09:35:00.000Z",
+  "lastUpdated": "2026-10-10T10:06:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -219,13 +219,19 @@
       "affectedModules": [
         "tooling/tools"
       ],
-      "summary": "caob23 v1.0.7 丢失了 v1.0.6 承诺的 eval 开关，合并版应恢复（见设计上下文）。",
-      "notes": [],
-      "updatedAt": "2026-09-05",
+      "summary": "本仓库自己的 eval 门控（`browser_evaluate` 需显式配置才注册）。**前提更正（2026-10-10）**：原记录写作「caob23 v1.0.7 丢失了 v1.0.6 承诺的 eval 开关」，上游 v1.0.8 的 CHANGELOG 明确更正为「该开关**从未实现过**（grep 只在 CHANGELOG 出现），`eval` 一直可用」，并重写了 SECURITY.md 的口径（Token 才是边界，回环绑定不是）。所以这是一条**我们自己的新增功能**，不是「恢复上游能力」。",
+      "notes": [
+        "（2026-10-10）上游立场：他们选择「撤回文档承诺」而不是补实现；我们不跟随该立场，仍按本条实现显式门控。"
+      ],
+      "updatedAt": "2026-10-10",
       "history": [
         {
           "at": "2026-09-05",
           "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：恢复 allowEval 门控进入下一里程碑（插件壳工具层：browser_evaluate 需显式配置才注册）。)"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "前提更正：上游从未实现 allowEval，且已在 v1.0.8 公开撤回 v1.0.6 的那句承诺 —— 条目性质由「恢复上游能力」改为「本仓库自有功能」。"
         }
       ]
     },
@@ -934,6 +940,27 @@
         {
           "at": "2026-10-10T09:35:00.000Z",
           "what": "created + status -> applied（合并实施：新模块 src/buddy.ts、插件 schema 加 4 旋钮、client 收编两行并新增「工具面」卡、测试搬迁；tests/buddy-merged.mjs 21/21、render-settings-pages 22/22、tool-render 61/61；探针实例启动正常、dump-config 零跳过）"
+        }
+      ]
+    },
+    {
+      "id": "de-037",
+      "title": "跟进上游 v1.0.8：Host/Origin 校验与 token 形式并入 core 的 bridge/server.ts",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-10",
+      "updatedAt": "2026-10-10",
+      "scope": "packages/browser-unified-core/src/bridge/server.ts（vendored 自 caob23，AGPL）+ tests/bridge-http-auth.mjs（新）+ upstream-baseline.json 两处副本 + NOTICE.md",
+      "affectedModules": [
+        "bridge/server",
+        "tooling/tests",
+        "registry"
+      ],
+      "summary": "用户明示（source=user）：「先把自己的东西修好吧，我们跟进上游」（本轮不提 PR）。上游 caob23 于 2026-10-10 16:58 (+08:00) 发布 v1.0.8（43e6325，9 提交 / 27 文件），其中两条正是我们 2026-09-25 在自己 fork 里独立发现并修过的同类问题（#3/#6：HTTP 命令面无鉴权 + `Access-Control-Allow-Origin: *` 全放行），而且上游修得比我们全 —— 额外做了 WS 升级的 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与「网页直接拨号」）。本轮把这两项并入我们的 vendored server.ts；保留三处有意差异：① `guardCommand` 策略钩子（X18，HTTP 面也要过 URL 策略）；② 空 token = 不校验的向后兼容；③ `/api/status` 仍对**回环来源**回显 CORS（GUI 设置页的只读端口探测依赖它；原先是无条件 `ACAO: *`，现收窄为回环回显）。",
+      "history": [
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "created + status -> applied（core 0.1.3→0.1.4、插件 0.11.16→0.11.17 已装机。验收：tests/bridge-http-auth.mjs 32/32；探针实例 exit=124、stderr 0 行、0 跳过；9797 实测 —— 无 Origin 不回 ACAO、回环来源回显、公网来源不回收、OPTIONS 204 且无 CORS、无 token 401 / 带 token 503（阳性对照）、WS Host 非回环 403、网页 Origin 403、扩展 scheme 与无 Origin 101）"
         }
       ]
     }

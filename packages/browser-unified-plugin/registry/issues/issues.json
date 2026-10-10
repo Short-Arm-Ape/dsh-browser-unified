@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-10T09:35:00.000Z",
+  "lastUpdated": "2026-10-10T10:06:00.000Z",
   "purpose": "浏览器插件的**第二部分注册表：调用时的问题**（第一部分 registry/design/registry.json 记「功能对齐与计划」，本文件记「实际调用时踩到的坑」）。用法：模型在某会话里首次调用 browser_* 时会收到 open 问题的绕行摘要（+ 自上次调用以来已修复的问题告知）；完整内容只在调用 browser_issues 时输出，避免每轮占 token。",
   "fields": {
     "status": "open（仍存在，必须给 workaround）| fixed（已修，写 fixedIn）| wontfix（不修，写原因）",
@@ -741,6 +741,10 @@
         {
           "at": "2026-10-10T09:35:00.000Z",
           "what": "de-036 合并后：同伴件的 browser_frames / browser_frame_eval 已改走 controller（并先跑工具层的已开标签页红线），HTTP 命令面上不再有这条常客 —— X18 的 guard 仍在，但\"谁能用这条通道\"的面缩小了。"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "上游对照（v1.0.8）：上游同日以 #3/#6 修复了同一类问题 —— HTTP 面要求 Token（Bearer / X-Token / ?token= + timingSafeEqual）、全部移除 ACAO、并额外加了 WS 升级的 Host 回环校验与 Origin 校验。本仓库保留自己的 X18 策略钩子（谁能在 HTTP 面执行什么），并把 WS 的 Host/Origin 那两道并入 core 0.1.4；`/api/status` 的 CORS 收窄为「只对回环来源回显」（GUI 探测依赖，公网来源不再可读）。"
         }
       ],
       "fixedIn": "core 0.1.3 + 插件 0.11.14"
@@ -772,6 +776,61 @@
         }
       ],
       "fixedIn": "插件 0.11.14"
+    },
+    {
+      "id": "bi-031",
+      "title": "状态页把桥 token 内嵌进 HTML：任何能 GET / 的本机程序都读到唯一凭据",
+      "status": "fixed",
+      "symptom": "`statusPageHtml(port, token)` 把 token 直接写进页面脚本（`const TOKEN=\"…\"`）供清理按钮使用。而 `/` 是**免鉴权**只读端点 ⇒ 本机任意进程（任何用户态、任何脚本）`GET /` 一次就拿到 token，随后即可 `POST /api/command` 驱动这台已登录的浏览器。等于把「回环绑定不是边界、token 才是」这条事实反过来用：唯一凭据被状态页主动发出去。上游 v1.0.8 独立发现同一处并改掉了（改 sessionStorage + 现问）。",
+      "workaround": "（已修）core 0.1.4：状态页不再内嵌 token，清理按钮改为输入框 + sessionStorage（不写盘）并向用户索取，请求带 `Authorization: Bearer`。旧版本上：把 token 换成强随机值，并假定它已经泄露给本机进程（因为确实会）。",
+      "match": "statusPageHtml|状态页|const TOKEN=",
+      "affected": "core ≤0.1.3",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "security",
+        "token",
+        "status-page"
+      ],
+      "evidence": "对照上游 v1.0.8 的 `src/server.ts` 时发现同一处（`bridgeToken()` + sessionStorage）。修法：删掉内嵌常量，新增 `#token` 输入框与 `bridgeToken()`（无值则 prompt，存 sessionStorage），清理请求改为 `Authorization: Bearer`，401 时提示「Token 不对，清理没有执行」。回归：tests/bridge-http-auth.mjs 断言 `GET /` 正文**不含** token。",
+      "history": [
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "created（跟进上游 v1.0.8 时逐处对照发现；与上游同日独立命中同一处缺陷）"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "status -> fixed（core 0.1.4）"
+        }
+      ],
+      "fixedIn": "core 0.1.4"
+    },
+    {
+      "id": "bi-032",
+      "title": "WS 升级不过 Host/Origin：默认 token 是公开的 dsh-local ⇒ DNS-rebinding 或网页可直接拨号",
+      "status": "fixed",
+      "symptom": "`handleUpgrade` 只比对 `?token=`，不看 `Host` 与 `Origin`。两个后果：① **DNS-rebinding** —— 攻击者控制的公网域名解析到 127.0.0.1，浏览器发起的 `Host` 是那个域名，服务端照收；② **网页直接拨号** —— WS 握手不受 CORS 约束，网页只要拿到 token 就能连（而默认 token 是文档里公开的 `dsh-local`，且 token 还会被状态页内嵌，见 bi-031）。连上即等于拿到整条扩展命令面（eval/click/nav/截图）。",
+      "workaround": "（已修）core 0.1.4（随上游 v1.0.8 口径）：`Host` 必须是回环名（127.0.0.1/localhost/[::1]/::1），`Origin` 只放行扩展 scheme（chrome/moz/ms/safari-extension://）与不带 Origin 的本机客户端，其余 403。旧版本上：改强随机 token + 不要用浏览器（网页）访问桥端口。",
+      "match": "handleUpgrade|websocket rejected|DNS-rebinding",
+      "affected": "core ≤0.1.3",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "security",
+        "websocket",
+        "dns-rebinding",
+        "token"
+      ],
+      "evidence": "上游 v1.0.8 的 `isLoopbackHost()` / `isTrustedUpgradeOrigin()`（AGPL）并入本仓库 `src/bridge/server.ts`。回归：tests/bridge-http-auth.mjs —— 无 Origin/扩展 Origin + 正确 token → 101；`Origin: https://evil.example` → 403；`Host: evil.example` → 403；token 错 → 401。",
+      "history": [
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "created（上游 v1.0.8 强化对照本仓库实现时确认缺口）"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "status -> fixed（core 0.1.4；探针实例 9797 实测 403 两条）"
+        }
+      ],
+      "fixedIn": "core 0.1.4"
     }
   ]
 }

@@ -5,6 +5,13 @@
  * rewritten to './ws.js', and `import type net` became a namespace import.
  * Upstream: https://github.com/caob23/dsh-browser-control
  *
+ * 2026-10-10：并入上游 **v1.0.8**（`43e6325`，同 AGPL-3.0）的安全强化 —— WebSocket
+ * 升级加 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与网页直接拨号）、HTTP 面
+ * 鉴权接受 `Authorization: Bearer` / `X-Token` / `?token=` 并用 `timingSafeEqual`、
+ * 状态页不再把 token 内嵌进 HTML（改 sessionStorage + 现问）。我们保留的差异：
+ * ① `guardCommand` 策略钩子（X18）；② 空 token = 不校验的向后兼容；③ `/api/status`
+ * 仍对**回环来源**回显 CORS（GUI 设置页的只读探测依赖它，`ACAO: *` 已收窄成回环回显）。
+ *
  * Local WebSocket+HTTP bridge between one browser extension and dsh. The
  * extension connects OUT to `ws://127.0.0.1:<port>/ws?token=...`, so no
  * native-messaging host or registry setup exists; dsh drives commands through
@@ -24,7 +31,7 @@
 
 import http from 'node:http'
 import type * as net from 'node:net'
-import { randomUUID, createHash } from 'node:crypto'
+import { randomUUID, createHash, timingSafeEqual } from 'node:crypto'
 import { mkdir, readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { encodeCloseFrame, encodeControlFrame, encodeTextFrame, FrameReader } from './ws.js'
@@ -60,6 +67,11 @@ export interface BridgeServerStatus {
   readonly hello: BridgeHello | undefined
   readonly pendingCommands: number
   readonly lastError: string | undefined
+  /**
+   * Token 还是内置默认值（`dsh-local`）或短于 16 字符 —— 状态面据此标红，
+   * 因为**回环绑定不是边界，token 才是**（上游 v1.0.8 的口径）。
+   */
+  readonly insecureToken: boolean
 }
 
 /** Caller controls for one {@link BridgeServer.execute} round-trip. */
@@ -168,6 +180,7 @@ export class BridgeServer {
       hello: this.hello,
       pendingCommands: this.pending.size,
       lastError: this.lastError,
+      insecureToken: isWeakToken(this.options.token ?? ''),
     }
   }
 
@@ -207,6 +220,10 @@ export class BridgeServer {
     })
     this.httpServer = server
     this.log(`listening on ws://127.0.0.1:${this.options.port}/ws`)
+    if (isWeakToken(this.options.token ?? '')) {
+      // 告警而非拒绝启动（上游 v1.0.8 同口径）：拒绝启动会让所有现存配对当场断连。
+      this.log('warning: bridge token is the built-in default or shorter than 16 chars — the token is the only real boundary; set a strong one in the bridge config')
+    }
   }
 
   /** Close the extension link, fail every pending command, and release the port. Idempotent. */
@@ -287,74 +304,106 @@ export class BridgeServer {
 
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://localhost')
+    const origin = String(req.headers.origin ?? '')
     if (req.method === 'OPTIONS') {
-      // 安全（2026-09-25）：以前无条件回 `Access-Control-Allow-Origin: *`，于是**任意网页**
-      // 都能通过预检并 POST /api/command 驱动用户已登录的浏览器（实测复现）。
-      // 现在只对扩展来源回显，且写类端点不再发 CORS 头。
-      const origin = String(req.headers.origin ?? '')
-      const headers: Record<string, string> = {
-        'Access-Control-Allow-Methods': 'GET, POST',
-        'Access-Control-Allow-Headers': 'Content-Type, X-DSH-Token',
-      }
-      if (origin.startsWith('chrome-extension://') || origin.startsWith('extension://')) {
-        headers['Access-Control-Allow-Origin'] = origin
-      }
-      res.writeHead(204, headers)
+      // 2026-10-10（上游 v1.0.8 口径）：预检不再回任何 CORS 头。网页想发 JSON POST 必先
+      // 过预检，预检不给 ACAO ⇒ 真请求根本不会发出。只读的 `/api/status` 是简单 GET，
+      // 不经过预检，它的跨域可读性由 respondJson 的**回环来源回显**负责（GUI 探测靠那条）。
+      res.writeHead(204)
       res.end()
       return
     }
     if (url.pathname === '/api/status' && req.method === 'GET') {
-      this.respondJson(res, 200, { ok: true, ...this.status, wsUrl: `ws://127.0.0.1:${this.options.port}/ws`, shotsDir: path.resolve(this.options.shotsDir) })
+      this.respondJson(
+        res,
+        200,
+        {
+          ok: true,
+          ...this.status,
+          wsUrl: `ws://127.0.0.1:${this.options.port}/ws`,
+          shotsDir: path.resolve(this.options.shotsDir),
+        },
+        { corsOrigin: loopbackCorsOrigin(origin) },
+      )
       return
     }
     if (url.pathname === '/api/cleanup' && req.method === 'POST') {
       // 安全（2026-09-25）：写操作必须带 token（以前任意网页都能触发清理）。
-      if (!this.tokenOk(req, url)) {
-        this.respondJson(res, 401, { ok: false, error: 'unauthorized: /api/cleanup requires ?token=' }, { cors: false })
+      if (!this.authorized(req, url)) {
+        this.rejectUnauthenticated(res, 'POST /api/cleanup')
         return
       }
       void this.cleanup().then(
-        (result) => this.respondJson(res, 200, { ok: true, ...result }, { cors: false }),
-        (error) => this.respondJson(res, 500, { ok: false, error: errorMessage(error) }, { cors: false }),
+        (result) => this.respondJson(res, 200, { ok: true, ...result }),
+        (error) => this.respondJson(res, 500, { ok: false, error: errorMessage(error) }),
       )
       return
     }
     if (url.pathname === '/api/command' && req.method === 'POST') {
       // 安全（2026-09-25，重要）：该端点能执行任意桥命令（含 eval），以前既不校验 token
       // 又回 `ACAO: *` ⇒ 任意网页都能驱动这台已登录的浏览器。两道一起收。
-      if (!this.tokenOk(req, url)) {
-        this.respondJson(res, 401, { ok: false, error: 'unauthorized: /api/command requires ?token=' }, { cors: false })
+      if (!this.authorized(req, url)) {
+        this.rejectUnauthenticated(res, 'POST /api/command')
         return
       }
       this.handleCommandRequest(req, res)
       return
     }
     if (url.pathname === '/' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      res.end(statusPageHtml(this.options.port, this.options.token))
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+      res.end(statusPageHtml(this.options.port))
       return
     }
-    this.respondJson(res, 404, { ok: false, error: `no route: ${req.method} ${url.pathname}` }, { cors: false })
+    this.respondJson(res, 404, { ok: false, error: `no route: ${req.method} ${url.pathname}` })
   }
 
   /**
-   * 常量时间比较 token，避免逐字符泄露。token 为空表示不校验（向后兼容）。
-   * @returns 请求携带的 token 是否匹配。
+   * 请求是否携带桥的 token —— 与 WebSocket 升级同一个凭据。接受三种形式：
+   * `Authorization: Bearer <token>`、`X-Token` / `X-DSH-Token: <token>`、`?token=<token>`
+   * （查询串形式留给 curl 与状态页）。
+   *
+   * 空 token 视为不校验：配置显式关掉 token 时保持旧行为（本仓库相对上游的差异点）。
+   * @returns 凭据是否有效。
    */
-  private tokenOk(req: http.IncomingMessage, url: URL): boolean {
-    const expected = this.options.token ?? ''
-    if (expected.length === 0) return true
-    const provided = url.searchParams.get('token') ?? String(req.headers['x-dsh-token'] ?? '')
-    if (provided.length !== expected.length) return false
-    let diff = 0
-    for (let i = 0; i < expected.length; i += 1) diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i)
-    return diff === 0
+  private authorized(req: http.IncomingMessage, url: URL): boolean {
+    const authorization = req.headers.authorization
+    const header = typeof authorization === 'string' && /^bearer\s+/i.test(authorization)
+      ? authorization.replace(/^bearer\s+/i, '')
+      : typeof req.headers['x-token'] === 'string'
+        ? (req.headers['x-token'] as string)
+        : typeof req.headers['x-dsh-token'] === 'string'
+          ? (req.headers['x-dsh-token'] as string)
+          : ''
+    const presented = header.length > 0 ? header : (url.searchParams.get('token') ?? '')
+    return tokenMatches(presented, this.options.token ?? '')
   }
 
-  private respondJson(res: http.ServerResponse, statusCode: number, body: unknown, options: { cors?: boolean } = {}): void {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8' }
-    // 只读的 /api/status 仍保留 `*`（扩展探测与状态页依赖它）；写类端点一律不发 CORS 头。
-    if (options.cors !== false) headers['Access-Control-Allow-Origin'] = '*'
+  private rejectUnauthenticated(res: http.ServerResponse, route: string): void {
+    this.log(`http ${route}: rejected (missing or wrong token)`)
+    this.respondJson(res, 401, {
+      ok: false,
+      error: 'unauthorized: pass the bridge token as "Authorization: Bearer <token>", "X-Token: <token>" or ?token=<token>',
+    })
+  }
+
+  /**
+   * 唯一的 JSON 出口。默认**不发任何 CORS 头**；只有显式给出 `corsOrigin`
+   * （只在 `/api/status` 且来源是回环时）才回显该来源。
+   */
+  private respondJson(
+    res: http.ServerResponse,
+    statusCode: number,
+    body: unknown,
+    options: { corsOrigin?: string | undefined } = {},
+  ): void {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    }
+    if (options.corsOrigin !== undefined && options.corsOrigin.length > 0) {
+      headers['Access-Control-Allow-Origin'] = options.corsOrigin
+      headers.Vary = 'Origin'
+    }
     res.writeHead(statusCode, headers)
     res.end(JSON.stringify(body))
   }
@@ -369,7 +418,7 @@ export class BridgeServer {
       if (size > MAX_HTTP_BODY_BYTES) {
         aborted = true
         chunks.length = 0
-        this.respondJson(res, 413, { ok: false, error: 'body too large' }, { cors: false })
+        this.respondJson(res, 413, { ok: false, error: 'body too large' })
         req.resume()
         return
       }
@@ -381,11 +430,11 @@ export class BridgeServer {
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as typeof parsed
       } catch (error) {
-        this.respondJson(res, 400, { ok: false, error: `invalid JSON body: ${errorMessage(error)}` }, { cors: false })
+        this.respondJson(res, 400, { ok: false, error: `invalid JSON body: ${errorMessage(error)}` })
         return
       }
       if (typeof parsed.command !== 'string' || parsed.command.length === 0) {
-        this.respondJson(res, 400, { ok: false, error: 'body must be {"command": "...", "params": {...}}' }, { cors: false })
+        this.respondJson(res, 400, { ok: false, error: 'body must be {"command": "...", "params": {...}}' })
         return
       }
       const timeoutMs = typeof parsed.timeoutMs === 'number' ? parsed.timeoutMs : undefined
@@ -399,26 +448,26 @@ export class BridgeServer {
           .then((reason) => {
             if (typeof reason === 'string' && reason.length > 0) {
               this.log(`[bridge] /api/command 被策略拒绝：${parsed.command} — ${reason}`)
-              this.respondJson(res, 403, { ok: false, error: `blocked: ${reason}` }, { cors: false })
+              this.respondJson(res, 403, { ok: false, error: `blocked: ${reason}` })
               return
             }
             this.execute(parsed.command as string, params, timeoutMs === undefined ? {} : { timeoutMs }).then(
-              (result) => this.respondJson(res, 200, { ok: true, result }, { cors: false }),
+              (result) => this.respondJson(res, 200, { ok: true, result }),
               (error) => {
                 const message = errorMessage(error)
                 const code = message.startsWith('no browser extension') ? 503 : 502
-                this.respondJson(res, code, { ok: false, error: message }, { cors: false })
+                this.respondJson(res, code, { ok: false, error: message })
               },
             )
           })
         return
       }
       this.execute(parsed.command, params, timeoutMs === undefined ? {} : { timeoutMs }).then(
-        (result) => this.respondJson(res, 200, { ok: true, result }, { cors: false }),
+        (result) => this.respondJson(res, 200, { ok: true, result }),
         (error) => {
           const message = errorMessage(error)
           const code = message.startsWith('no browser extension') ? 503 : 502
-          this.respondJson(res, code, { ok: false, error: message }, { cors: false })
+          this.respondJson(res, code, { ok: false, error: message })
         },
       )
     })
@@ -433,9 +482,25 @@ export class BridgeServer {
       socket.destroy()
       return
     }
-    if ((url.searchParams.get('token') ?? '') !== this.options.token) {
+    if (!tokenMatches(url.searchParams.get('token') ?? '', this.options.token ?? '')) {
       this.log('websocket rejected: bad token')
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    // 2026-10-10（上游 v1.0.8）：WS 握手不受 CORS 约束 —— 网页只要拿到 token 就能直接
+    // 拨 127.0.0.1。`Host` 必须是回环（挡 DNS-rebinding：公网域名解析回 127.0.0.1），
+    // `Origin` 必须不是网页来源（扩展 scheme 与不带 Origin 的本机客户端放行）。
+    if (!isLoopbackHost(String(req.headers.host ?? ''))) {
+      this.log(`websocket rejected: host ${String(req.headers.host ?? '')}`)
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    const upgradeOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+    if (!isTrustedUpgradeOrigin(upgradeOrigin)) {
+      this.log(`websocket rejected: origin ${upgradeOrigin}`)
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
       socket.destroy()
       return
     }
@@ -574,8 +639,67 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Minimal self-refreshing status page with the cleanup action. */
-function statusPageHtml(port: number, token = ''): string {
+/**
+ * 常量时间比较 token：只有"长度不同"会泄露。空 `expected` 视为不校验 —— 配置显式
+ * 关掉 token 时保留旧行为（本仓库相对上游 v1.0.8 的差异点；上游则一律要求相等）。
+ * @param presented - 请求携带的凭据。
+ * @param expected - 配置里的 token。
+ * @returns 是否匹配。
+ */
+function tokenMatches(presented: string, expected: string): boolean {
+  if (expected.length === 0) return true
+  const a = Buffer.from(presented, 'utf8')
+  const b = Buffer.from(expected, 'utf8')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+/** Token 是内置默认值或短于 16 字符 ⇒ 状态面标红、启动时告警（不拒绝启动）。 */
+function isWeakToken(token: string): boolean {
+  return token === 'dsh-local' || token.length < 16
+}
+
+/**
+ * `Host` 必须指向本机回环地址。这是挡 DNS-rebinding 的那一半：公网域名解析回
+ * 127.0.0.1 时，浏览器发来的 `Host` 是那个域名而不是回环名。
+ * @param host - 请求的 `Host` 头（含端口）。
+ * @returns 是否为回环主机名。
+ */
+function isLoopbackHost(host: string): boolean {
+  const withoutPort = host.replace(/:\d+$/, '')
+  return withoutPort === '127.0.0.1' || withoutPort === 'localhost' || withoutPort === '[::1]' || withoutPort === '::1'
+}
+
+/**
+ * WebSocket 握手不受 CORS 约束，所以"来源是不是网页"必须在这里判：网页 scheme 一律拒
+ * （`http(s)://` 只放行回环，供本机自研客户端），扩展 scheme 与**不带 Origin** 的
+ * 本机客户端（扩展在部分版本不发送 Origin、curl/测试台也不发）放行。
+ * @param origin - 请求的 `Origin` 头，缺失时为空串。
+ * @returns 是否可信。
+ */
+function isTrustedUpgradeOrigin(origin: string): boolean {
+  if (origin === '') return true
+  if (/^(?:chrome|moz|ms|safari)-extension:\/\//.test(origin)) return true
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(origin)
+}
+
+/**
+ * 只对**回环来源**回显 CORS：DSH 控制页（`http://127.0.0.1:<port>`）的设置分区要读
+ * `/api/status` 做端口/扩展探测。其余来源（含任意公网网页）一律不回 ACAO。
+ * @param origin - 请求的 `Origin` 头。
+ * @returns 可回显的来源，或 undefined 表示不回。
+ */
+function loopbackCorsOrigin(origin: string): string | undefined {
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(origin) ? origin : undefined
+}
+
+/**
+ * 最小状态页（自刷新 + 清理按钮）。**不再把 token 内嵌进 HTML**（上游 v1.0.8 口径）：
+ * 内嵌等于任何能 GET `/` 的本机程序都能读到唯一凭据，把 token 边界变成摆设。
+ * @param port - 监听端口，只用于页脚展示。
+ * @returns 完整 HTML 文本。
+ */
+function statusPageHtml(port: number): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -604,6 +728,9 @@ function statusPageHtml(port: number, token = ''): string {
        color:var(--text);font-size:12px;cursor:pointer}.btn:hover{background:#334155}
   .btn.danger{border-color:var(--red);color:var(--red)}.btn.danger:hover{background:var(--red-bg)}
   .hint{color:var(--dim);font-size:11px;padding:4px 24px 8px}
+  .tok{padding:0 24px 8px;display:flex;gap:8px;align-items:center}
+  .tok input{flex:1;min-width:0;padding:6px 10px;border:1px solid var(--border);border-radius:9px;
+       background:var(--bg);color:var(--text);font-size:12px}
   .pre{background:var(--bg);border-top:1px solid var(--border);padding:12px 24px}
   .pre code{color:var(--dim);font-size:11px;white-space:pre-wrap;word-break:break-all}
   .foot{text-align:center;padding:12px;font-size:11px;color:var(--dim)}
@@ -620,12 +747,17 @@ function statusPageHtml(port: number, token = ''): string {
     <button class="btn" onclick="refresh()">刷新</button>
     <button class="btn danger" id="cleanup">🧹 清理截图 + 脚本草稿</button>
   </div>
-  <div class="hint">清理会删除截图目录下的全部文件，以及工作目录顶层的 __ 开头草稿脚本。</div>
+  <div class="tok">
+    <input id="token" type="password" autocomplete="off" placeholder="桥接 Token（仅本页会话内存，不写盘）">
+  </div>
+  <div class="hint">
+    清理会删除截图目录下的全部文件，以及工作目录顶层的 __ 开头草稿脚本；<b>需要 Token</b>。
+    Token 不在本页内嵌（内嵌＝任何本机程序 GET / 就能拿到），只在 sessionStorage 里留到关页。
+  </div>
   <div class="pre"><code id="raw"> </code></div>
   <div class="foot">DSH Browser Bridge · 127.0.0.1:${port}</div>
 </div>
 <script>
-const TOKEN=${JSON.stringify(token)};
 async function refresh(){
   try{
     const r=await fetch('/api/status');const j=await r.json();
@@ -642,14 +774,24 @@ async function refresh(){
       ['等待命令',String(j.pendingCommands??0)],
       ['连接时间',j.connectedAt?new Date(j.connectedAt).toLocaleString():'—'],
       ['截图目录',j.shotsDir||'—'],
+      ['令牌强度',j.insecureToken?'<span class="badge off">默认/过短，建议改了</span>':'<span class="badge on">已自定义</span>'],
     ];
     document.getElementById('rows').innerHTML=rows.map(([k,v])=>'<div class="row"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>').join('');
     document.getElementById('raw').textContent=JSON.stringify(j,null,2);
   }catch(e){document.getElementById('sub').textContent='连接失败: '+e.message}
 }
+function bridgeToken(){
+  const el=document.getElementById('token');
+  let t=(el.value||'').trim()||sessionStorage.getItem('dshBridgeToken')||'';
+  if(!t){ t=(prompt('桥接 Token（在 profile 的 browser-bridge 配置里，token 字段）')||'').trim(); el.value=t; }
+  if(t) sessionStorage.setItem('dshBridgeToken',t);
+  return t;
+}
 document.getElementById('cleanup').onclick=async()=>{
   if(!confirm('确认清理截图与临时脚本？'))return;
-  const r=await fetch('/api/cleanup'+(TOKEN?'?token='+encodeURIComponent(TOKEN):''),{method:'POST'});const j=await r.json();
+  const r=await fetch('/api/cleanup',{method:'POST',headers:{'Authorization':'Bearer '+bridgeToken()}});
+  const j=await r.json();
+  if(r.status===401){alert('Token 不对，清理没有执行。');return;}
   alert(j.ok?('已删除 '+j.shotsRemoved+' 个截图，'+j.scratchRemoved.length+' 个草稿'):('失败：'+j.error));
   refresh();
 };

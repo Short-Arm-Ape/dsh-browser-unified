@@ -4,11 +4,13 @@
  * it. The Settings-managed `enabled` flag starts and stops the listener live
  * through dsh-settings' change hook — no reload needed.
  *
- * We deliberately bypass the higher-level `installSettingsSection` helper and
- * talk to the lower-level `sctx.settings.register` API directly: that API
- * predates the helper and is the one stable across every dsh-settings build a
- * consumer is realistically pinned to. Importing the helper on a build that
- * does not export it crashes the whole plugin at module load.
+ * Settings integration is feature-detected, never assumed. The plugin bypasses the
+ * higher-level `installSettingsSection` helper (importing it on a build that does not
+ * export it crashes the plugin at module load) and calls the lower-level
+ * `sctx.settings.register` only when the host actually has it — dsh-settings up to
+ * 0.1.2-rc.1. 0.1.7-rc.2 and 0.2.x export `SettingsForms` with no `register`, so there
+ * the bridge converges from the profile config alone and the host projects this
+ * plugin's own `Config` schema into the settings page.
  *
  * Tools stay mounted whenever the plugin does; calling one while the bridge
  * is disabled or the extension is offline fails with a message naming the
@@ -109,7 +111,7 @@ class BridgeController {
     async execute(command, params, signal) {
         const server = this.server;
         if (server === undefined) {
-            throw new Error(this.lastError ?? '浏览器控制未启用 —— 到 dsh 设置 → 插件 → DSH 浏览器控制 打开开关');
+            throw new Error(this.lastError ?? '浏览器控制未启用 —— 在 profile 的 cordis.patch.yml 里给 browser-bridge 配 enabled: true（dsh 0.1.7+ 的宿主也会在设置 → 插件 自动列出本插件开关；0.1.2 及更早的宿主没有这张卡片，只能改配置文件）');
         }
         return server.execute(command, params, { signal });
     }
@@ -174,6 +176,34 @@ async function saveScreenshot(controller, payload) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const random = Math.random().toString(36).slice(2, 6);
     const file = path.join(dir, `${stamp}-${random}.${payload.format === 'jpeg' ? 'jpg' : 'png'}`);
+    const buffer = Buffer.from(payload.base64, 'base64');
+    await writeFile(file, buffer);
+    return {
+        file,
+        bytes: buffer.length,
+        tabId: payload.tabId,
+        title: payload.tabTitle,
+        url: payload.tabUrl,
+    };
+}
+/** Write one PDF payload to `path` (absolute or relative to `controller.shotsDir`)
+ *  and return the absolute path + size. Mirrors saveScreenshot's contract. */
+async function savePdf(controller, payload, requestedPath) {
+    const dir = controller.shotsDir;
+    if (dir === undefined)
+        throw new Error('browser-bridge is not configured yet');
+    let file;
+    if (requestedPath && path.isAbsolute(requestedPath)) {
+        file = requestedPath;
+        await mkdir(path.dirname(file), { recursive: true });
+    }
+    else {
+        await mkdir(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const random = Math.random().toString(36).slice(2, 6);
+        const name = requestedPath ? path.basename(requestedPath) : `${stamp}-${random}.pdf`;
+        file = path.join(dir, name);
+    }
     const buffer = Buffer.from(payload.base64, 'base64');
     await writeFile(file, buffer);
     return {
@@ -533,6 +563,230 @@ function applyBrowserTools(ctx, controller) {
             return { shotsRemoved: result.shotsRemoved, scratchRemoved: Array.from(result.scratchRemoved) };
         },
     }));
+    // v1.0.7: console + network capture, PDF export, device emulation.
+    ctx.tools.register(defineTool({
+        name: 'browser_console_log',
+        description: 'Read the captured `console.log/info/warn/error` entries for a tab. Set `clear:true` to also empty the buffer so the next call shows only entries recorded after this one. Useful for "what did the page log after I clicked submit".',
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            levels: { type: 'array', items: { type: 'string' }, description: 'Filter to one or more of: log, info, warn, error, debug.' },
+            pattern: { type: 'string', description: 'Regex (case-insensitive) matched against the formatted text.' },
+            limit: { type: 'number', description: 'Maximum entries to return; default 100, capped at 500.' },
+            clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    count: { type: 'number', required: true },
+                    total: { type: 'number', required: true },
+                    entries: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {} } },
+                },
+            },
+            render: (_args, value) => [{
+                    type: 'text',
+                    text: `Tab ${value.tabId}: ${value.count} of ${value.total} console entries`,
+                }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Read browser console', kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (Array.isArray(args.levels))
+                params.levels = args.levels;
+            if (typeof args.pattern === 'string')
+                params.pattern = args.pattern;
+            if (typeof args.limit === 'number')
+                params.limit = args.limit;
+            if (args.clear === true)
+                params.clear = true;
+            return await controller.execute('console.log', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_network_log',
+        description: 'Read captured HTTP request/response pairs for a tab. `includeStatic:true` adds images / fonts / stylesheets / scripts (filtered by default — they dominate the buffer). `methodPattern` / `urlPattern` / `status` filter server-side results; `clear:true` empties the buffer.',
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            includeStatic: { type: 'boolean', description: 'Include images / fonts / stylesheets / scripts. Default false.' },
+            methodPattern: { type: 'string', description: 'Regex (case-insensitive) matched against the HTTP method.' },
+            urlPattern: { type: 'string', description: 'Regex (case-insensitive) matched against the URL.' },
+            status: { type: 'string', description: 'One of: 2xx, 3xx, 4xx, 5xx, failed, pending.' },
+            limit: { type: 'number', description: 'Maximum entries to return; default 200, capped at 1000.' },
+            clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    count: { type: 'number', required: true },
+                    total: { type: 'number', required: true },
+                    requests: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {} } },
+                },
+            },
+            render: (_args, value) => [{
+                    type: 'text',
+                    text: `Tab ${value.tabId}: ${value.count} of ${value.total} network requests`,
+                }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Read browser network log', kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.includeStatic === true)
+                params.includeStatic = true;
+            if (typeof args.methodPattern === 'string')
+                params.methodPattern = args.methodPattern;
+            if (typeof args.urlPattern === 'string')
+                params.urlPattern = args.urlPattern;
+            if (typeof args.status === 'string')
+                params.status = args.status;
+            if (typeof args.limit === 'number')
+                params.limit = args.limit;
+            if (args.clear === true)
+                params.clear = true;
+            return await controller.execute('network.log', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_network_clear',
+        description: 'Empty the per-tab network capture buffer without returning the rows.',
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    cleared: { type: 'boolean', required: true },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: `Tab ${value.tabId}: network log cleared` }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Clear browser network log', kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            return await controller.execute('network.clear', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_pdf',
+        description: 'Export the current page to a PDF. `path` may be absolute (saved there) or omitted (saved under the configured shotsDir). Returns the absolute path + size; the PDF preserves text (selectable, searchable) and print-media CSS.',
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            path: { type: 'string', description: 'Absolute path. Omit to save under the configured shotsDir with a timestamped name.' },
+            landscape: { type: 'boolean', description: 'Use landscape orientation.' },
+            printBackground: { type: 'boolean', description: 'Render CSS backgrounds. Default true.' },
+            paperWidth: { type: 'number', description: 'Paper width in inches.' },
+            paperHeight: { type: 'number', description: 'Paper height in inches.' },
+            scale: { type: 'number', description: 'Page scale (0.1–2.0).' },
+            pageRanges: { type: 'string', description: 'Sub-range, e.g. "1-3" or "1,4-6".' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    file: { type: 'string', required: true },
+                    bytes: { type: 'number', required: true },
+                    tabId: { type: 'number', required: true },
+                },
+            },
+            render: (_args, value) => [{
+                    type: 'text',
+                    text: `PDF written to ${value.file} (${(value.bytes / 1024).toFixed(1)} KB)`,
+                }],
+        },
+        presentCall: args => ({ card: 'generic', title: `Save PDF${args.path ? ' → ' + args.path : ''}`, kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.landscape === true)
+                params.landscape = true;
+            if (args.printBackground === false)
+                params.printBackground = false;
+            if (typeof args.paperWidth === 'number')
+                params.paperWidth = args.paperWidth;
+            if (typeof args.paperHeight === 'number')
+                params.paperHeight = args.paperHeight;
+            if (typeof args.scale === 'number')
+                params.scale = args.scale;
+            if (typeof args.pageRanges === 'string')
+                params.pageRanges = args.pageRanges;
+            const payload = await controller.execute('pdf', params, exec.signal);
+            return await savePdf(controller, payload, typeof args.path === 'string' ? args.path : undefined);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_emulate',
+        description: 'Switch the tab into a device viewport (mobile / tablet / desktop) for responsive-UI testing. `device:"reset"` restores the user\'s actual viewport. Custom `width`/`height`/`deviceScaleFactor`/`isMobile`/`hasTouch` override any preset field.',
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            device: { type: 'string', description: 'Preset: desktop | mobile-iphone-13 | mobile-pixel-7 | tablet-ipad | reset. Or pass custom width/height below.' },
+            width: { type: 'number', description: 'Custom viewport width in CSS px.' },
+            height: { type: 'number', description: 'Custom viewport height in CSS px.' },
+            deviceScaleFactor: { type: 'number', description: 'Custom DPR (1 = standard, 2 = retina, 3 = super-retina).' },
+            isMobile: { type: 'boolean', description: 'Pass as mobile to the page (affects responsive meta).' },
+            hasTouch: { type: 'boolean', description: 'Enable touch event dispatch.' },
+            userAgent: { type: 'string', description: 'Custom User-Agent string. Empty string clears.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    reset: { type: 'boolean' },
+                    width: { type: 'number' },
+                    height: { type: 'number' },
+                    deviceScaleFactor: { type: 'number' },
+                    isMobile: { type: 'boolean' },
+                    hasTouch: { type: 'boolean' },
+                    userAgent: { type: 'string' },
+                },
+            },
+            render: (_args, value) => {
+                if (value.reset)
+                    return [{ type: 'text', text: `Tab ${value.tabId}: emulation reset to default` }];
+                return [{
+                        type: 'text',
+                        text: `Tab ${value.tabId}: ${value.width || '?'}×${value.height || '?'} DPR=${value.deviceScaleFactor ?? '?'} mobile=${value.isMobile ?? false} touch=${value.hasTouch ?? false}`,
+                    }];
+            },
+        },
+        presentCall: args => ({ card: 'generic', title: `Emulate${args.device ? ' ' + args.device : ' device'}`, kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (typeof args.device === 'string')
+                params.device = args.device;
+            if (typeof args.width === 'number')
+                params.width = args.width;
+            if (typeof args.height === 'number')
+                params.height = args.height;
+            if (typeof args.deviceScaleFactor === 'number')
+                params.deviceScaleFactor = args.deviceScaleFactor;
+            if (typeof args.isMobile === 'boolean')
+                params.isMobile = args.isMobile;
+            if (typeof args.hasTouch === 'boolean')
+                params.hasTouch = args.hasTouch;
+            if (typeof args.userAgent === 'string')
+                params.userAgent = args.userAgent;
+            return await controller.execute('emulate', params, exec.signal);
+        },
+    }));
 }
 /** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */
 export function apply(ctx, config) {
@@ -542,19 +796,54 @@ export function apply(ctx, config) {
     }
     const controller = new BridgeController(line => ctx.logger.info(line));
     let current = () => resolved;
-    // Equivalent of @deepseek-ai/dsh-settings' `installSettingsSection`, inlined so
-    // the plugin still loads on dsh-settings builds that predate the helper. The
-    // underlying `sctx.settings.register` API is the one stable across every
-    // dsh-settings version a consumer is realistically pinned to.
+    // Settings wiring, feature-detected. `sctx.settings.register` exists on
+    // dsh-settings up to 0.1.2-rc.1; 0.1.7-rc.2 and 0.2.x export `SettingsForms`
+    // instead, whose surface is configure/describe/update/replace/mutate — calling
+    // `register` there throws a TypeError in the middle of this callback and used to
+    // skip the reconcile/watch below (issue #8).
     ctx.inject(['settings'], (sctx) => {
-        const scope = sctx.settings.register(BROWSER_BRIDGE_SETTINGS_NAMESPACE, Config, {
-            base: config,
-            validate: (value) => {
-                if (value.enabled && (value.token ?? '').trim().length === 0) {
-                    throw new Error('browser-bridge: token must be a non-empty string when enabled');
+        const settings = sctx.settings;
+        /** Converge without a namespace: the profile config stays authoritative. */
+        const withoutNamespace = (why) => {
+            current = () => resolved;
+            ctx.logger.info(`browser-bridge: settings integration skipped (${why})`);
+            // A failed start is recorded on the controller so every tool call reports it,
+            // instead of throwing out of a callback the host never awaits.
+            void controller.reconcile(current());
+        };
+        const register = settings.register;
+        if (typeof register !== 'function') {
+            // dsh-settings 0.1.7+ / 0.2.x: the host projects this plugin's own `Config`
+            // schema into an auto settings page, and editing that page re-applies the
+            // entry, so the `config` handed to apply() is already the live value.
+            const configure = settings.configure;
+            if (typeof configure === 'function') {
+                try {
+                    ctx.effect(() => configure({ auto: true }), 'browser-bridge: settings presentation');
                 }
-            },
-        });
+                catch (error) {
+                    ctx.logger.info(`browser-bridge: settings presentation skipped: ${errorMessage(error)}`);
+                }
+            }
+            withoutNamespace('no settings.register on this dsh-settings build');
+            return;
+        }
+        let scope;
+        try {
+            scope = register(BROWSER_BRIDGE_SETTINGS_NAMESPACE, Config, {
+                base: config,
+                validate: (value) => {
+                    if (value.enabled && (value.token ?? '').trim().length === 0) {
+                        throw new Error('browser-bridge: token must be a non-empty string when enabled');
+                    }
+                },
+            });
+        }
+        catch (error) {
+            ctx.logger.info(`browser-bridge: settings namespace failed: ${errorMessage(error)}`);
+            withoutNamespace('register threw');
+            return;
+        }
         current = () => scope.get();
         ctx.effect(() => () => {
             // Mirror `isUnloading` from dsh-settings (private): the fiber's own

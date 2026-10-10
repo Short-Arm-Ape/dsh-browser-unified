@@ -1,6 +1,6 @@
 {
   "name": "browser-unified-core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Merge prototype (AGPL-3.0): unified URL policy (public|intranet) + approval-gate decision table + instance registry + vendored caob23 bridge (RFC 6455 codec + local WS/HTTP BridgeServer) wrapped by GuardedBridge.",
   "type": "module",

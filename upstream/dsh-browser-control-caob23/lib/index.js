@@ -3,7 +3,7 @@ import path from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import http from "node:http";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 /**
 * Incremental frame parser over arbitrary TCP chunks. `drain` parses every
 * complete frame currently buffered and keeps the remainder; an oversized or
@@ -101,17 +101,30 @@ function encodeCloseFrame(code, reason) {
 * native-messaging host or registry setup exists; dsh drives commands through
 * {@link BridgeServer.execute} and reads link state through {@link BridgeServer.status}.
 * A small HTTP face (`/api/status`, `/api/command`, `/api/cleanup`, `/`) keeps
-* the bridge usable from curl while the server runs.
+* the bridge usable from curl while the server runs. `/api/command` and
+* `/api/cleanup` demand the same token as the WebSocket upgrade; `/` and
+* `/api/status` stay readable because the status page needs them and they only
+* report link state. No response carries `Access-Control-Allow-Origin`, and the
+* upgrade checks `Host` plus `Origin` so neither a web page nor a rebound
+* hostname can attach.
 *
 * Wire protocol (text frames, one JSON object each):
 * - extension → server: `{type:'hello',…}`, `{type:'pong',t}`, `{type:'result',id,ok,result?|error}`
 * - server → extension: `{type:'ping',t}`, `{type:'command',id,command,params}`
+*
+* Command names (sent in `command`) include: `ping`, `browser.info`, `tabs.list/open/close/activate`,
+* `nav`, `eval`, `content`, `find`, `click`, `input`, `press`, `scroll`, `snapshot`, `screenshot`,
+* `wait`, `dialog`, `console.log`, `network.log`, `network.clear`, `pdf`, `emulate`.
 * @module @deepseek-ai/dsh-browser-bridge/server
 */
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /** Hard ceiling accepted from callers; longer waits cannot be expressed. */
 const MAX_COMMAND_TIMEOUT_MS = 3e5;
 const MAX_HTTP_BODY_BYTES = 2097152;
+/** The published default. It ships in README and `cordis.patch.yml`, so it is public knowledge. */
+const DEFAULT_TOKEN = "dsh-local";
+/** Tokens shorter than this cannot be brute-forced meaningfully; the bridge warns at start. */
+const MIN_RECOMMENDED_TOKEN_LENGTH = 16;
 /** Agent scratch-file convention: `__name.mjs`-style temp artifacts at the top level only. */
 const SCRATCH_FILE_PATTERN = /^__[^/\\]+\.(mjs|cjs|js|png|jpg|jpeg)$/i;
 /**
@@ -171,8 +184,12 @@ var BridgeServer = class {
 			connectedAt: this.connectedAt?.toISOString(),
 			hello: this.hello,
 			pendingCommands: this.pending.size,
-			lastError: this.lastError
+			lastError: this.lastError,
+			insecureToken: this.insecureToken
 		};
+	}
+	get insecureToken() {
+		return this.options.token === DEFAULT_TOKEN || this.options.token.trim().length < MIN_RECOMMENDED_TOKEN_LENGTH;
 	}
 	/** Bind `127.0.0.1:<port>` and start accepting the extension plus HTTP calls. */
 	async start() {
@@ -213,6 +230,7 @@ var BridgeServer = class {
 		});
 		this.httpServer = server;
 		this.log(`listening on ws://127.0.0.1:${this.options.port}/ws`);
+		if (this.insecureToken) this.log(`insecure token (${this.options.token === DEFAULT_TOKEN ? "the published default" : "shorter than 16 chars"}) — any local process can present it; set a longer \`token\` in the browser-bridge config`);
 	}
 	/** Close the extension link, fail every pending command, and release the port. Idempotent. */
 	async stop() {
@@ -287,14 +305,27 @@ var BridgeServer = class {
 	log(line) {
 		this.options.log?.(line);
 	}
+	/**
+	* Whether a request carries the bridge token, the same credential the WebSocket
+	* upgrade checks. Accepted forms: `Authorization: Bearer <token>`, `X-Token: <token>`
+	* and `?token=<token>` (the query form exists for curl and for the status page).
+	*/
+	authorized(req, url) {
+		const authorization = req.headers.authorization;
+		const header = typeof authorization === "string" && /^bearer\s+/i.test(authorization) ? authorization.replace(/^bearer\s+/i, "") : typeof req.headers["x-token"] === "string" ? req.headers["x-token"] : "";
+		return tokenMatches(header.length > 0 ? header : url.searchParams.get("token") ?? "", this.options.token);
+	}
+	rejectUnauthenticated(res, route) {
+		this.log(`http ${route}: rejected (missing or wrong token)`);
+		this.respondJson(res, 401, {
+			ok: false,
+			error: "unauthorized: pass the bridge token as \"Authorization: Bearer <token>\", \"X-Token: <token>\" or ?token=<token>"
+		});
+	}
 	handleHttp(req, res) {
 		const url = new URL(req.url ?? "/", "http://localhost");
 		if (req.method === "OPTIONS") {
-			res.writeHead(204, {
-				"Access-Control-Allow-Origin": "*",
-				"Access-Control-Allow-Methods": "GET, POST",
-				"Access-Control-Allow-Headers": "Content-Type"
-			});
+			res.writeHead(204);
 			res.end();
 			return;
 		}
@@ -308,6 +339,10 @@ var BridgeServer = class {
 			return;
 		}
 		if (url.pathname === "/api/cleanup" && req.method === "POST") {
+			if (!this.authorized(req, url)) {
+				this.rejectUnauthenticated(res, "POST /api/cleanup");
+				return;
+			}
 			this.cleanup().then((result) => this.respondJson(res, 200, {
 				ok: true,
 				...result
@@ -318,6 +353,10 @@ var BridgeServer = class {
 			return;
 		}
 		if (url.pathname === "/api/command" && req.method === "POST") {
+			if (!this.authorized(req, url)) {
+				this.rejectUnauthenticated(res, "POST /api/command");
+				return;
+			}
 			this.handleCommandRequest(req, res);
 			return;
 		}
@@ -334,7 +373,7 @@ var BridgeServer = class {
 	respondJson(res, statusCode, body) {
 		res.writeHead(statusCode, {
 			"Content-Type": "application/json; charset=utf-8",
-			"Access-Control-Allow-Origin": "*"
+			"Cache-Control": "no-store"
 		});
 		res.end(JSON.stringify(body));
 	}
@@ -397,9 +436,22 @@ var BridgeServer = class {
 			socket.destroy();
 			return;
 		}
-		if ((url.searchParams.get("token") ?? "") !== this.options.token) {
+		if (!tokenMatches(url.searchParams.get("token") ?? "", this.options.token)) {
 			this.log("websocket rejected: bad token");
 			socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+		if (!isLoopbackHost(String(req.headers.host ?? ""))) {
+			this.log(`websocket rejected: host ${req.headers.host}`);
+			socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+		const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+		if (!isTrustedUpgradeOrigin(origin)) {
+			this.log(`websocket rejected: origin ${origin}`);
+			socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
 			socket.destroy();
 			return;
 		}
@@ -529,6 +581,32 @@ Sec-WebSocket-Accept: ${accept}\r\n\r
 function errorMessage$1(error) {
 	return error instanceof Error ? error.message : String(error);
 }
+/** Constant-time token comparison; a length mismatch is the only thing leaked. */
+function tokenMatches(presented, expected) {
+	const a = Buffer.from(presented, "utf8");
+	const b = Buffer.from(expected, "utf8");
+	if (a.length !== b.length) return false;
+	return timingSafeEqual(a, b);
+}
+/**
+* `Host` must name the loopback address this server binds. Rejecting anything else is
+* what stops a rebinding setup (a public hostname resolving to 127.0.0.1) from reaching
+* the bridge through the browser.
+*/
+function isLoopbackHost(host) {
+	const withoutPort = host.replace(/:\d+$/, "");
+	return withoutPort === "127.0.0.1" || withoutPort === "localhost" || withoutPort === "[::1]" || withoutPort === "::1";
+}
+/**
+* An `Origin` of a web scheme means a page opened the socket — WebSocket handshakes are
+* not covered by CORS, so that has to be refused here. Extension schemes (`chrome-extension:`
+* etc.) and non-browser clients that send no Origin at all are accepted.
+*/
+function isTrustedUpgradeOrigin(origin) {
+	if (origin === "") return true;
+	if (/^(?:chrome|moz|ms|safari)-extension:\/\//.test(origin)) return true;
+	return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(origin);
+}
 /** Minimal self-refreshing status page with the cleanup action. */
 function statusPageHtml(port) {
 	return `<!doctype html>
@@ -558,6 +636,8 @@ function statusPageHtml(port) {
   .btn{padding:7px 14px;border:1px solid var(--border);border-radius:9px;background:var(--card);
        color:var(--text);font-size:12px;cursor:pointer}.btn:hover{background:#334155}
   .btn.danger{border-color:var(--red);color:var(--red)}.btn.danger:hover{background:var(--red-bg)}
+  .tok{flex:1;min-width:150px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;
+       background:var(--bg);color:var(--text);font-size:12px}
   .hint{color:var(--dim);font-size:11px;padding:4px 24px 8px}
   .pre{background:var(--bg);border-top:1px solid var(--border);padding:12px 24px}
   .pre code{color:var(--dim);font-size:11px;white-space:pre-wrap;word-break:break-all}
@@ -572,10 +652,11 @@ function statusPageHtml(port) {
   </div>
   <div class="rows" id="rows"></div>
   <div class="actions">
+    <input class="tok" id="token" type="password" placeholder="桥接 Token（清理按钮需要）" autocomplete="off">
     <button class="btn" onclick="refresh()">刷新</button>
     <button class="btn danger" id="cleanup">🧹 清理截图 + 脚本草稿</button>
   </div>
-  <div class="hint">清理会删除截图目录下的全部文件，以及工作目录顶层的 __ 开头草稿脚本。</div>
+  <div class="hint">Token 只保存在本次浏览器会话（sessionStorage），不写盘；留空则点按钮时询问。/api/command 与 /api/cleanup 现在都要求带 Token。</div>
   <div class="pre"><code id="raw"> </code></div>
   <div class="foot">DSH Browser Bridge · 127.0.0.1:${port}</div>
 </div>
@@ -596,14 +677,24 @@ async function refresh(){
       ['等待命令',String(j.pendingCommands??0)],
       ['连接时间',j.connectedAt?new Date(j.connectedAt).toLocaleString():'—'],
       ['截图目录',j.shotsDir||'—'],
+      ['令牌强度',j.insecureToken?'<span class="badge off">默认/过短，建议改了</span>':'<span class="badge on">已自定义</span>'],
     ];
     document.getElementById('rows').innerHTML=rows.map(([k,v])=>'<div class="row"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>').join('');
     document.getElementById('raw').textContent=JSON.stringify(j,null,2);
   }catch(e){document.getElementById('sub').textContent='连接失败: '+e.message}
 }
+function bridgeToken(){
+  const el=document.getElementById('token');
+  let t=(el.value||'').trim()||sessionStorage.getItem('dshBridgeToken')||'';
+  if(!t){ t=(prompt('桥接 Token（在 profile 的 browser-bridge 配置里，token 字段）')||'').trim(); el.value=t; }
+  if(t) sessionStorage.setItem('dshBridgeToken',t);
+  return t;
+}
 document.getElementById('cleanup').onclick=async()=>{
   if(!confirm('确认清理截图与临时脚本？'))return;
-  const r=await fetch('/api/cleanup',{method:'POST'});const j=await r.json();
+  const r=await fetch('/api/cleanup',{method:'POST',headers:{'Authorization':'Bearer '+bridgeToken()}});
+  const j=await r.json();
+  if(r.status===401){alert('Token 不对，清理没有执行。');return;}
   alert(j.ok?('已删除 '+j.shotsRemoved+' 个截图，'+j.scratchRemoved.length+' 个草稿'):('失败：'+j.error));
   refresh();
 };
@@ -619,11 +710,13 @@ refresh();setInterval(refresh,2000);
 * it. The Settings-managed `enabled` flag starts and stops the listener live
 * through dsh-settings' change hook — no reload needed.
 *
-* We deliberately bypass the higher-level `installSettingsSection` helper and
-* talk to the lower-level `sctx.settings.register` API directly: that API
-* predates the helper and is the one stable across every dsh-settings build a
-* consumer is realistically pinned to. Importing the helper on a build that
-* does not export it crashes the whole plugin at module load.
+* Settings integration is feature-detected, never assumed. The plugin bypasses the
+* higher-level `installSettingsSection` helper (importing it on a build that does not
+* export it crashes the plugin at module load) and calls the lower-level
+* `sctx.settings.register` only when the host actually has it — dsh-settings up to
+* 0.1.2-rc.1. 0.1.7-rc.2 and 0.2.x export `SettingsForms` with no `register`, so there
+* the bridge converges from the profile config alone and the host projects this
+* plugin's own `Config` schema into the settings page.
 *
 * Tools stay mounted whenever the plugin does; calling one while the bridge
 * is disabled or the extension is offline fails with a message naming the
@@ -719,7 +812,7 @@ var BridgeController = class {
 	*/
 	async execute(command, params, signal) {
 		const server = this.server;
-		if (server === void 0) throw new Error(this.lastError ?? "浏览器控制未启用 —— 到 dsh 设置 → 插件 → DSH 浏览器控制 打开开关");
+		if (server === void 0) throw new Error(this.lastError ?? "浏览器控制未启用 —— 在 profile 的 cordis.patch.yml 里给 browser-bridge 配 enabled: true（dsh 0.1.7+ 的宿主也会在设置 → 插件 自动列出本插件开关；0.1.2 及更早的宿主没有这张卡片，只能改配置文件）");
 		return server.execute(command, params, { signal });
 	}
 	/**
@@ -781,6 +874,32 @@ async function saveScreenshot(controller, payload) {
 	const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
 	const random = Math.random().toString(36).slice(2, 6);
 	const file = path.join(dir, `${stamp}-${random}.${payload.format === "jpeg" ? "jpg" : "png"}`);
+	const buffer = Buffer.from(payload.base64, "base64");
+	await writeFile(file, buffer);
+	return {
+		file,
+		bytes: buffer.length,
+		tabId: payload.tabId,
+		title: payload.tabTitle,
+		url: payload.tabUrl
+	};
+}
+/** Write one PDF payload to `path` (absolute or relative to `controller.shotsDir`)
+*  and return the absolute path + size. Mirrors saveScreenshot's contract. */
+async function savePdf(controller, payload, requestedPath) {
+	const dir = controller.shotsDir;
+	if (dir === void 0) throw new Error("browser-bridge is not configured yet");
+	let file;
+	if (requestedPath && path.isAbsolute(requestedPath)) {
+		file = requestedPath;
+		await mkdir(path.dirname(file), { recursive: true });
+	} else {
+		await mkdir(dir, { recursive: true });
+		const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+		const random = Math.random().toString(36).slice(2, 6);
+		const name = requestedPath ? path.basename(requestedPath) : `${stamp}-${random}.pdf`;
+		file = path.join(dir, name);
+	}
 	const buffer = Buffer.from(payload.base64, "base64");
 	await writeFile(file, buffer);
 	return {
@@ -1372,6 +1491,363 @@ function applyBrowserTools(ctx, controller) {
 			};
 		}
 	}));
+	ctx.tools.register(defineTool({
+		name: "browser_console_log",
+		description: "Read the captured `console.log/info/warn/error` entries for a tab. Set `clear:true` to also empty the buffer so the next call shows only entries recorded after this one. Useful for \"what did the page log after I clicked submit\".",
+		parameters: {
+			tabId: {
+				type: "number",
+				description: "Target tab; defaults to the active tab."
+			},
+			levels: {
+				type: "array",
+				items: { type: "string" },
+				description: "Filter to one or more of: log, info, warn, error, debug."
+			},
+			pattern: {
+				type: "string",
+				description: "Regex (case-insensitive) matched against the formatted text."
+			},
+			limit: {
+				type: "number",
+				description: "Maximum entries to return; default 100, capped at 500."
+			},
+			clear: {
+				type: "boolean",
+				description: "Empty the buffer after reading."
+			}
+		},
+		output: {
+			schema: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					tabId: {
+						type: "number",
+						required: true
+					},
+					count: {
+						type: "number",
+						required: true
+					},
+					total: {
+						type: "number",
+						required: true
+					},
+					entries: {
+						type: "array",
+						required: true,
+						items: {
+							type: "object",
+							additionalProperties: false,
+							properties: {}
+						}
+					}
+				}
+			},
+			render: (_args, value) => [{
+				type: "text",
+				text: `Tab ${value.tabId}: ${value.count} of ${value.total} console entries`
+			}]
+		},
+		presentCall: () => ({
+			card: "generic",
+			title: "Read browser console",
+			kind: "other"
+		}),
+		async execute(args, exec) {
+			const params = {};
+			if (args.tabId !== void 0) params.tabId = args.tabId;
+			if (Array.isArray(args.levels)) params.levels = args.levels;
+			if (typeof args.pattern === "string") params.pattern = args.pattern;
+			if (typeof args.limit === "number") params.limit = args.limit;
+			if (args.clear === true) params.clear = true;
+			return await controller.execute("console.log", params, exec.signal);
+		}
+	}));
+	ctx.tools.register(defineTool({
+		name: "browser_network_log",
+		description: "Read captured HTTP request/response pairs for a tab. `includeStatic:true` adds images / fonts / stylesheets / scripts (filtered by default — they dominate the buffer). `methodPattern` / `urlPattern` / `status` filter server-side results; `clear:true` empties the buffer.",
+		parameters: {
+			tabId: {
+				type: "number",
+				description: "Target tab; defaults to the active tab."
+			},
+			includeStatic: {
+				type: "boolean",
+				description: "Include images / fonts / stylesheets / scripts. Default false."
+			},
+			methodPattern: {
+				type: "string",
+				description: "Regex (case-insensitive) matched against the HTTP method."
+			},
+			urlPattern: {
+				type: "string",
+				description: "Regex (case-insensitive) matched against the URL."
+			},
+			status: {
+				type: "string",
+				description: "One of: 2xx, 3xx, 4xx, 5xx, failed, pending."
+			},
+			limit: {
+				type: "number",
+				description: "Maximum entries to return; default 200, capped at 1000."
+			},
+			clear: {
+				type: "boolean",
+				description: "Empty the buffer after reading."
+			}
+		},
+		output: {
+			schema: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					tabId: {
+						type: "number",
+						required: true
+					},
+					count: {
+						type: "number",
+						required: true
+					},
+					total: {
+						type: "number",
+						required: true
+					},
+					requests: {
+						type: "array",
+						required: true,
+						items: {
+							type: "object",
+							additionalProperties: false,
+							properties: {}
+						}
+					}
+				}
+			},
+			render: (_args, value) => [{
+				type: "text",
+				text: `Tab ${value.tabId}: ${value.count} of ${value.total} network requests`
+			}]
+		},
+		presentCall: () => ({
+			card: "generic",
+			title: "Read browser network log",
+			kind: "other"
+		}),
+		async execute(args, exec) {
+			const params = {};
+			if (args.tabId !== void 0) params.tabId = args.tabId;
+			if (args.includeStatic === true) params.includeStatic = true;
+			if (typeof args.methodPattern === "string") params.methodPattern = args.methodPattern;
+			if (typeof args.urlPattern === "string") params.urlPattern = args.urlPattern;
+			if (typeof args.status === "string") params.status = args.status;
+			if (typeof args.limit === "number") params.limit = args.limit;
+			if (args.clear === true) params.clear = true;
+			return await controller.execute("network.log", params, exec.signal);
+		}
+	}));
+	ctx.tools.register(defineTool({
+		name: "browser_network_clear",
+		description: "Empty the per-tab network capture buffer without returning the rows.",
+		parameters: { tabId: {
+			type: "number",
+			description: "Target tab; defaults to the active tab."
+		} },
+		output: {
+			schema: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					tabId: {
+						type: "number",
+						required: true
+					},
+					cleared: {
+						type: "boolean",
+						required: true
+					}
+				}
+			},
+			render: (_args, value) => [{
+				type: "text",
+				text: `Tab ${value.tabId}: network log cleared`
+			}]
+		},
+		presentCall: () => ({
+			card: "generic",
+			title: "Clear browser network log",
+			kind: "other"
+		}),
+		async execute(args, exec) {
+			const params = {};
+			if (args.tabId !== void 0) params.tabId = args.tabId;
+			return await controller.execute("network.clear", params, exec.signal);
+		}
+	}));
+	ctx.tools.register(defineTool({
+		name: "browser_pdf",
+		description: "Export the current page to a PDF. `path` may be absolute (saved there) or omitted (saved under the configured shotsDir). Returns the absolute path + size; the PDF preserves text (selectable, searchable) and print-media CSS.",
+		parameters: {
+			tabId: {
+				type: "number",
+				description: "Target tab; defaults to the active tab."
+			},
+			path: {
+				type: "string",
+				description: "Absolute path. Omit to save under the configured shotsDir with a timestamped name."
+			},
+			landscape: {
+				type: "boolean",
+				description: "Use landscape orientation."
+			},
+			printBackground: {
+				type: "boolean",
+				description: "Render CSS backgrounds. Default true."
+			},
+			paperWidth: {
+				type: "number",
+				description: "Paper width in inches."
+			},
+			paperHeight: {
+				type: "number",
+				description: "Paper height in inches."
+			},
+			scale: {
+				type: "number",
+				description: "Page scale (0.1–2.0)."
+			},
+			pageRanges: {
+				type: "string",
+				description: "Sub-range, e.g. \"1-3\" or \"1,4-6\"."
+			}
+		},
+		output: {
+			schema: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					file: {
+						type: "string",
+						required: true
+					},
+					bytes: {
+						type: "number",
+						required: true
+					},
+					tabId: {
+						type: "number",
+						required: true
+					}
+				}
+			},
+			render: (_args, value) => [{
+				type: "text",
+				text: `PDF written to ${value.file} (${(value.bytes / 1024).toFixed(1)} KB)`
+			}]
+		},
+		presentCall: (args) => ({
+			card: "generic",
+			title: `Save PDF${args.path ? " → " + args.path : ""}`,
+			kind: "other"
+		}),
+		async execute(args, exec) {
+			const params = {};
+			if (args.tabId !== void 0) params.tabId = args.tabId;
+			if (args.landscape === true) params.landscape = true;
+			if (args.printBackground === false) params.printBackground = false;
+			if (typeof args.paperWidth === "number") params.paperWidth = args.paperWidth;
+			if (typeof args.paperHeight === "number") params.paperHeight = args.paperHeight;
+			if (typeof args.scale === "number") params.scale = args.scale;
+			if (typeof args.pageRanges === "string") params.pageRanges = args.pageRanges;
+			return await savePdf(controller, await controller.execute("pdf", params, exec.signal), typeof args.path === "string" ? args.path : void 0);
+		}
+	}));
+	ctx.tools.register(defineTool({
+		name: "browser_emulate",
+		description: "Switch the tab into a device viewport (mobile / tablet / desktop) for responsive-UI testing. `device:\"reset\"` restores the user's actual viewport. Custom `width`/`height`/`deviceScaleFactor`/`isMobile`/`hasTouch` override any preset field.",
+		parameters: {
+			tabId: {
+				type: "number",
+				description: "Target tab; defaults to the active tab."
+			},
+			device: {
+				type: "string",
+				description: "Preset: desktop | mobile-iphone-13 | mobile-pixel-7 | tablet-ipad | reset. Or pass custom width/height below."
+			},
+			width: {
+				type: "number",
+				description: "Custom viewport width in CSS px."
+			},
+			height: {
+				type: "number",
+				description: "Custom viewport height in CSS px."
+			},
+			deviceScaleFactor: {
+				type: "number",
+				description: "Custom DPR (1 = standard, 2 = retina, 3 = super-retina)."
+			},
+			isMobile: {
+				type: "boolean",
+				description: "Pass as mobile to the page (affects responsive meta)."
+			},
+			hasTouch: {
+				type: "boolean",
+				description: "Enable touch event dispatch."
+			},
+			userAgent: {
+				type: "string",
+				description: "Custom User-Agent string. Empty string clears."
+			}
+		},
+		output: {
+			schema: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					tabId: {
+						type: "number",
+						required: true
+					},
+					reset: { type: "boolean" },
+					width: { type: "number" },
+					height: { type: "number" },
+					deviceScaleFactor: { type: "number" },
+					isMobile: { type: "boolean" },
+					hasTouch: { type: "boolean" },
+					userAgent: { type: "string" }
+				}
+			},
+			render: (_args, value) => {
+				if (value.reset) return [{
+					type: "text",
+					text: `Tab ${value.tabId}: emulation reset to default`
+				}];
+				return [{
+					type: "text",
+					text: `Tab ${value.tabId}: ${value.width || "?"}×${value.height || "?"} DPR=${value.deviceScaleFactor ?? "?"} mobile=${value.isMobile ?? false} touch=${value.hasTouch ?? false}`
+				}];
+			}
+		},
+		presentCall: (args) => ({
+			card: "generic",
+			title: `Emulate${args.device ? " " + args.device : " device"}`,
+			kind: "other"
+		}),
+		async execute(args, exec) {
+			const params = {};
+			if (args.tabId !== void 0) params.tabId = args.tabId;
+			if (typeof args.device === "string") params.device = args.device;
+			if (typeof args.width === "number") params.width = args.width;
+			if (typeof args.height === "number") params.height = args.height;
+			if (typeof args.deviceScaleFactor === "number") params.deviceScaleFactor = args.deviceScaleFactor;
+			if (typeof args.isMobile === "boolean") params.isMobile = args.isMobile;
+			if (typeof args.hasTouch === "boolean") params.hasTouch = args.hasTouch;
+			if (typeof args.userAgent === "string") params.userAgent = args.userAgent;
+			return await controller.execute("emulate", params, exec.signal);
+		}
+	}));
 }
 /** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */
 function apply(ctx, config) {
@@ -1380,12 +1856,37 @@ function apply(ctx, config) {
 	const controller = new BridgeController((line) => ctx.logger.info(line));
 	let current = () => resolved;
 	ctx.inject(["settings"], (sctx) => {
-		const scope = sctx.settings.register(BROWSER_BRIDGE_SETTINGS_NAMESPACE, Config, {
-			base: config,
-			validate: (value) => {
-				if (value.enabled && (value.token ?? "").trim().length === 0) throw new Error("browser-bridge: token must be a non-empty string when enabled");
+		const settings = sctx.settings;
+		/** Converge without a namespace: the profile config stays authoritative. */
+		const withoutNamespace = (why) => {
+			current = () => resolved;
+			ctx.logger.info(`browser-bridge: settings integration skipped (${why})`);
+			controller.reconcile(current());
+		};
+		const register = settings.register;
+		if (typeof register !== "function") {
+			const configure = settings.configure;
+			if (typeof configure === "function") try {
+				ctx.effect(() => configure({ auto: true }), "browser-bridge: settings presentation");
+			} catch (error) {
+				ctx.logger.info(`browser-bridge: settings presentation skipped: ${errorMessage(error)}`);
 			}
-		});
+			withoutNamespace("no settings.register on this dsh-settings build");
+			return;
+		}
+		let scope;
+		try {
+			scope = register(BROWSER_BRIDGE_SETTINGS_NAMESPACE, Config, {
+				base: config,
+				validate: (value) => {
+					if (value.enabled && (value.token ?? "").trim().length === 0) throw new Error("browser-bridge: token must be a non-empty string when enabled");
+				}
+			});
+		} catch (error) {
+			ctx.logger.info(`browser-bridge: settings namespace failed: ${errorMessage(error)}`);
+			withoutNamespace("register threw");
+			return;
+		}
 		current = () => scope.get();
 		ctx.effect(() => () => {
 			if (ctx.fiber.state === 4 || ctx.fiber.state === 5) return;

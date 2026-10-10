@@ -56,7 +56,7 @@ Chrome 扩展（CDP 驱动）
 | 环境依赖 | 无需 Node / npx / Python | 需要 npx 或 uvx 运行时 |
 | 接入方式 | 加载扩展 + 设置页开关 | 编辑 MCP 客户端 JSON 配置 |
 | 磁盘占用 | 复用现有 Chrome，零新增 | 额外下载数百 MB 浏览器 |
-| 集成深度 | dsh 原生插件（设置卡片 / 状态页 / 清理按钮） | 通用 MCP server |
+| 集成深度 | dsh 原生插件（状态页 / 清理按钮；设置页卡片由宿主版本决定，见下） | 通用 MCP server |
 
 一句话：**要 AI 用"你自己的"浏览器干活（已登录的 B 站、知乎、淘宝后台），用本项目；要做跨浏览器、跨应用的通用自动化测试，用 MCP。**
 
@@ -64,8 +64,8 @@ Chrome 扩展（CDP 驱动）
 
 | 文件 | 说明 |
 |---|---|
-| [DSH-Browser-Control-1.0.7.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.7/DSH-Browser-Control-1.0.7.zip) | Chrome 扩展（解压后加载） |
-| [dsh-browser-control-plugin-v1.0.7.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.7/dsh-browser-control-plugin-v1.0.7.zip) | dsh 插件（离线兜底，在线装直接用方式 A/B） |
+| [DSH-Browser-Control-v1.0.8.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.8/DSH-Browser-Control-v1.0.8.zip) | Chrome 扩展（解压后加载；标准 zip 头，资源管理器可直接展开） |
+| [dsh-browser-control-plugin-v1.0.8.zip](https://github.com/caob23/dsh-browser-control/releases/download/v1.0.8/dsh-browser-control-plugin-v1.0.8.zip) | dsh 插件（离线兜底，在线装直接用方式 A/B） |
 
 ## 安装 Chrome 扩展（30 秒）
 
@@ -96,7 +96,7 @@ npm install @caob23/dsh-browser-control
 
 ```bash
 # 直接从 GitHub 安装
-dsh plugin --profile web add "github:caob23/dsh-browser-control#v1.0.7"
+dsh plugin --profile web add "github:caob23/dsh-browser-control#v1.0.8"
 
 # 本地目录调试（注意：必须显式 file: 前缀）
 dsh plugin --profile web add "file:D:\path\to\dsh-browser-control"
@@ -113,7 +113,10 @@ dsh plugin --profile web remove @caob23/dsh-browser-control
 
 安装并重启后，桥接默认开启（v1.0.6+），不需要再去设置里手动启用。状态页 http://127.0.0.1:9777/ 可看到服务已监听。
 
-> 想关掉默认开启：在 `~/.dsh/settings.yml` 的 `browser-bridge.config` 下写 `enabled: false` 即可。
+> 想关掉默认开启：在你的 profile 覆盖层 `$DSH_HOME/profiles/<名字>/cordis.patch.yml` 里写
+> `- id: browser-bridge` + `config: { enabled: false }` 即可（写法见 [dsh-config/README.md](dsh-config/README.md)）。
+> 注意包内 `cordis.patch.yml` 里那份 `enabled: true` 不要改回 false —— 那会盖掉 schema 默认值，
+> 表现为装上后 9777 无人监听（issue #4）。
 
 ### 方式 C：复制进 harness 源码树（旧方式，v1.0.2 及以前）
 
@@ -151,15 +154,39 @@ git checkout v1.0.2   # 旧布局在 v1.0.2 tag
 { "path": "./packages/web/browser-bridge" }
 ```
 
-重启 dsh → 设置页出现「DSH 浏览器控制」→ 开启即可。详细说明见 [dsh-config/README.md](dsh-config/README.md)。
+重启 dsh。详细说明见 [dsh-config/README.md](dsh-config/README.md)（注意这一条路径针对 v1.0.2 及以前的旧布局，当时的默认就是 `enabled: false`）。
 
 ## 使用
 
-1. dsh 设置 → 插件 → DSH 浏览器控制 → 开启
+1. 装好即默认开启（v1.0.6+），不需要手动启用
 2. Chrome 扩展自动连接（端口 9777，Token 默认 dsh-local）
 3. 对话说自然语言，Agent 自动操控浏览器
 
+### 「设置 → 插件」里有没有这张卡片，取决于宿主版本（issue #5）
+
+npm 发布的 bundle 只含宿主侧 `lib/index.js`，没有浏览器端模块，所以卡片不是插件自己画的：
+
+| 宿主 | 设置页 | 改配置的办法 |
+|---|---|---|
+| dsh 0.1.7+ / 0.2.x（dsh-settings 0.1.7-rc.2 起） | 有——宿主按插件自身 `Config` schema 自动投影出这一节 | 设置页，或 profile 覆盖层 |
+| dsh 0.1.2 及更早 | 没有条目（没有客户端半区认领命名空间，宿主就不渲染） | 只能改 profile 覆盖层 `$DSH_HOME/profiles/<名字>/cordis.patch.yml` |
+
+两边都能改的就是配置文件，写法见 [dsh-config/README.md](dsh-config/README.md)。
+
 访问 `http://127.0.0.1:9777/` 查看连接状态。
+
+### 用脚本直连 HTTP（curl 等）
+
+`/api/command` 与 `/api/cleanup` 现在要求 Token，用的就是扩展连 WS 时那个值：
+
+```bash
+curl -X POST http://127.0.0.1:9777/api/command \
+  -H 'Authorization: Bearer <你的 token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"nav","params":{"url":"https://example.com"}}'
+```
+
+也可以写 `?token=<你的 token>` 或 `X-Token: <你的 token>`。不带、或带错，一律 401；`/` 与 `/api/status` 仍是免鉴权的只读信息。之前「不带 Token 也能调通命令面」的行为已经失效（issue #3 / #6）。状态页上的清理按钮会要求你把 Token 输一次，只记在浏览器会话里。
 
 ## 工具清单
 
@@ -193,19 +220,21 @@ Chrome 浏览器
 
 **关键设计：**
 - 扩展主动外连桥（不需要 native messaging host）
-- 默认关闭，设置页手动开启
+- 默认开启（v1.0.6+），装上即监听，不需要手动启用
 - 持久 debugger 附着——控制期间横幅始终显示
-- 仅监听 127.0.0.1，token 认证
+- 仅监听 127.0.0.1；命令面（WS 与 HTTP）共用同一个 Token，跨源一律不放行
 
 ## 已验证
 
 | 场景 | 结果 |
 |---|---|
-| 百度搜索 → 提取结果标题 | ✅ |
-| B 站搜索用户 → 发私信 | ✅ |
-| B 站搜索 → 统计视频卡片 + 截图 | ✅ |
-| 单元测试 29/29 | ✅ |
-| 类型检查（host + client） | ✅ |
+| 百度搜索 → 提取结果标题 | ✅（1.0.x 时期实机） |
+| B 站搜索用户 → 发私信 | ✅（1.0.x 时期实机） |
+| B 站搜索 → 统计视频卡片 + 截图 | ✅（1.0.x 时期实机） |
+| 实测台 `npm run verify`：配置解析、三种宿主形状、HTTP 鉴权与升级来源、发布产物行为 | ✅ 2026-10-10，见 [verify/README.md](verify/README.md) |
+| `tsc --noEmit` + `publint` | ✅ 2026-10-10 |
+
+仓库自 v1.0.4 起不再有单测目录，上面三条浏览器场景是历史实机记录，本版未重跑；本版结论都来自 `verify/` 里可重复执行的实测台。
 
 ## 更新日志
 
