@@ -1,7 +1,17 @@
 {
   "sessionId": "session-8eff7cfc-623b-428a-88de-f6f5fe12af50",
-  "updatedAt": "2026-09-08T13:59:06.605Z",
+  "updatedAt": "2026-09-08T14:03:05.874Z",
   "turns": [
+    {
+      "turn": null,
+      "startAt": "2026-09-08T14:01:44.185Z",
+      "endAt": null,
+      "eventCount": 2,
+      "toolCalls": 0,
+      "errors": 0,
+      "estTokens": 0,
+      "contextChars": 0
+    },
     {
       "turn": 2,
       "startAt": "2026-09-07T14:29:33.780Z",
@@ -199,6 +209,17 @@
       "estTokens": 539,
       "contextChars": 0,
       "steps": 11
+    },
+    {
+      "turn": 78,
+      "startAt": "2026-09-08T14:02:17.634Z",
+      "endAt": "2026-09-08T14:03:05.874Z",
+      "eventCount": 3858,
+      "toolCalls": 9,
+      "errors": 0,
+      "estTokens": 648,
+      "contextChars": 0,
+      "steps": 7
     }
   ],
   "notify": {
@@ -207,5 +228,5 @@
     "notifiedCount": 0
   },
   "hint": 0,
-  "segment": 67
+  "segment": 77
 }
