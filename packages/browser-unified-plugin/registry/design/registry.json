@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-10T10:06:00.000Z",
+  "lastUpdated": "2026-10-10T10:30:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -261,7 +261,7 @@
       "status": "applied",
       "decidedBy": "user",
       "createdAt": "2026-09-05",
-      "updatedAt": "2026-09-05",
+      "updatedAt": "2026-10-10",
       "scope": "packages/browser-unified-plugin（dsh-browser-unified@0.2.0）装入 web profile；@caob23 移除",
       "affectedModules": [
         "plugin/bridge",
@@ -273,6 +273,10 @@
         {
           "at": "2026-09-05",
           "what": "created (source=user, agent-executed milestone log)"
+        },
+        {
+          "at": "2026-10-10T10:30:00.000Z",
+          "what": "包内 cordis.patch.yml 的 `enabled` 由 false 改为 true（用户 2026-10-10 明示「可以」）。动因=上游 v1.0.8 的 issue #4：包内 patch 的显式值覆盖 schema 默认值，导致「装上即用」变成「9777 没人监听、扩展 ERR_CONNECTION_REFUSED」。关掉的正确位置是 profile 层或设置页（优先级更高），不再靠改包内 patch。插件 0.11.20。"
         }
       ]
     },

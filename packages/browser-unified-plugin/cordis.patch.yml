@@ -1,12 +1,18 @@
-# dsh-browser-unified: mounts disabled by default (same instance id and settings
-# namespace as the upstream @caob23/dsh-browser-control it replaces, so the
-# existing profile enable row and Settings UI keep working).
-# Enable via Settings -> Plugins -> DSH Browser Control, or the profile cordis.patch.yml.
+# dsh-browser-unified: the bridge starts ON by default — same instance id and
+# settings namespace as the upstream @caob23/dsh-browser-control it replaces, so
+# an existing profile enable row and the Settings UI keep working.
+#
+# 2026-10-10：这里原本写死 `enabled: false`。上游 v1.0.8 修 issue #4 时给出了同一个诊断
+# —— 包内 patch 的显式值会**覆盖** schema 默认值（我们的默认本来就是 true），于是
+# 「装上即用」变成「装上没监听 9777、扩展报 ERR_CONNECTION_REFUSED」，而包内 patch 与
+# 用户设置谁赢不直观。现在与上游和 schema 默认对齐：默认开。
+# 想关掉：在 **profile 层**（profile 的 cordis.patch.yml，按 id 覆盖 config）或设置页里关，
+# 那里优先级最高；不要在包内 patch 上改（改了会被下次安装覆盖）。
 - insert:
     - id: browser-bridge
       name: 'dsh-browser-unified'
       config:
-        enabled: false
+        enabled: true
         port: 9777
         token: dsh-local
         urlMode: public
