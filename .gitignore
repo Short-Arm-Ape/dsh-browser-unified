@@ -14,3 +14,10 @@ Thumbs.db
 .DS_Store
 # keep upstream archive backups out of the repo (de-035, 2026-10-10)
 upstream/*.bak-*
+
+# mit 包也会留下 npm 缓存（2026-10-10）
+packages/browser-unified-mit/.npm-cache/
+
+# 发布产物（scripts/build-release.mjs 输出；2026-10-10）
+dist-release/
+packages/browser-unified-core/*.tgz

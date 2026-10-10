@@ -9,22 +9,36 @@
 
 ## 安装
 
-1. **浏览器扩展**：装 DSH Browser Control（Chrome/Edge 请从上游
-   [caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control/releases) 下载，与
-   @caob23 版同扩展、同实例 id，无需换扩展）。
-2. **插件**：
+> 一条命令产出全部 Release 资产（含自检闸门）：`node scripts/build-release.mjs`
+> → 产物在 `dist-release/`（三个包的 tgz + 扩展 zip + 兼容旧名的干净 zip + `.sha256` + `INSTALL.md`）。
 
-   从Releases下载 `browser-unified-plugin.zip`，解压，然后在解压后的目录执行：
+1. **浏览器扩展**（**必须用本仓库这版**，不能用上游 caob23 版）：
+
+   从本仓库 Releases 下载 `DSH-Browser-Control-v1.0.19.zip` → 解压到任意目录 →
+   `edge://extensions`（Chrome 为 `chrome://extensions`）开「开发者模式」→「加载解压缩的扩展」。
+   扩展源码就在本仓库 [`extension/`](extension/)，与插件同协议但多了 frames / 自建窗口 /
+   端口自动发现 / 导航完成判定 / div 化 SPA 元素识别等改动 —— 换回上游扩展这些能力会失效。
+2. **插件**（两个包一起装）：从 Releases 下载 `browser-unified-core-<ver>.tgz` 与
+   `dsh-browser-unified-<ver>.tgz`，然后：
 
    ```bash
-   pnpm add ./dsh-browser-unified-0.7.3.tgz        # 或 pnpm add dsh-browser-unified@file:<path>
+   # 推荐：由 CLI 落到 profile 的 vendor/ 并改好 package.json
+   dsh plugin --profile <profile> add file:<path>/browser-unified-core-<ver>.tgz \
+                                      file:<path>/dsh-browser-unified-<ver>.tgz
+   ```
+
+   等价的手工写法：
+
+   ```bash
+   pnpm add <path>/browser-unified-core-<ver>.tgz <path>/dsh-browser-unified-<ver>.tgz
    # package.json:
-   #   dependencies:        "dsh-browser-unified": "file:dsh-browser-unified-0.7.3.tgz"
-   #                        "browser-unified-core": "file:<abs path to packages/browser-unified-core>"
+   #   dependencies:        "browser-unified-core": "file:<...>/browser-unified-core-<ver>.tgz"
+   #                        "dsh-browser-unified": "file:<...>/dsh-browser-unified-<ver>.tgz"
    #   dsh.profile.bundles: 加入 "dsh-browser-unified"
    ```
 
    重启 dsh web 后生效（宿主新代码与 GUI client 半区都需要重启加载）。
+   包内 patch 已默认 `enabled: true`（装上即监听 9777）；要关就在 **profile 层**按 id 覆盖 config。
 
 > 想要 MIT 许可、不含 caob23 派生代码的版本，用同仓库的 MIT 版 `dsh-browser-unified-mit`
 > （不带浏览器桥与 `browser_*` 工具，仅 URL 策略 / 审批 / 自更新等模块）。

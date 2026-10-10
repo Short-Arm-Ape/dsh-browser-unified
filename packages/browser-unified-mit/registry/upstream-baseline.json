@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "note": "开发基线：upstream/ 归档快照所对应的上游 commit SHA。scripts/check-upstream.ps1 以本清单为基准比对上游是否有新提交。任何「重新归档 / 吸收上游新提交 / 合并源码」的动作之后，必须同步把对应 repos[].pinnedSha 推进到新基线并更新 pinnedAt（-UpdateBaseline 开关只做这一件事，不碰源码）。",
-  "pinnedAt": "2026-09-05 11:32 +08:00",
+  "pinnedAt": "2026-10-10 18:20 +08:00",
   "repos": [
     {
       "id": "xylt369-dsh-browser",
@@ -19,11 +19,12 @@
       "url": "https://github.com/Short-Arm-Ape/dsh-intranet-browser",
       "branch": "main",
       "archivedPath": "upstream/dsh-intranet-browser-short-arm-ape",
-      "pinnedSha": "d3f63d4765647dacca829dc7edc6c8b43b4fd39e",
-      "pinnedVersion": "0.1.0",
+      "pinnedSha": "81df0d5422293a3ab6665e6691b64458c6136948",
+      "pinnedVersion": "0.1.0（README 停维护横幅）",
       "license": "MIT",
       "mergedIntoCore": true,
-      "baselineVerifiedFileDiff": 0
+      "baselineVerifiedFileDiff": 0,
+      "note": "2026-10-10 归档刷新：d3f63d4 → 81df0d5（2 提交 / 1 文件 = README.md：本仓库停维护横幅 + 指向 dsh-browser-unified 的价值并入说明）。源码面与 0.1.0 归档一致，合并语义无变化 —— 未并入的只有逐请求 route 拦截（de-005）。旧快照备份：F:\\Work\\Objects\\__archive-backups\\dsh-intranet-browser-short-arm-ape-d3f63d4-20261010"
     },
     {
       "id": "kyo615-browser-control",
@@ -41,23 +42,24 @@
       "url": "https://github.com/caob23/dsh-browser-control",
       "branch": "main",
       "archivedPath": "upstream/dsh-browser-control-caob23",
-      "pinnedSha": "27631487aaf7fddf2ce2e51926ad8849bb4feed4",
-      "pinnedVersion": "1.0.7",
+      "pinnedSha": "43e6325e9ca4b61787afc075b1bf36b1a1cbe17a",
+      "pinnedVersion": "1.0.8",
       "license": "AGPL-3.0",
       "mergedIntoCore": true,
-      "baselineVerifiedFileDiff": 0
+      "baselineVerifiedFileDiff": 0,
+      "note": "2026-10-10 归档刷新：v1.0.7 (2763148) → v1.0.8 (43e6325)，9 提交 / 27 文件（+524/−23 计 lib 产物）。其中两条是安全强化 —— HTTP 命令面/清理端点要求 Token（Authorization: Bearer / X-Token / ?token=，timingSafeEqual）、全部移除 `Access-Control-Allow-Origin: *`、WebSocket 升级加 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与网页拨号）；另修 settings.register 特性探测(#8)、lib 落后 src（v1.0.7 的 npm 包只注册 11/16 工具）、包内 patch 的 enabled 覆盖(#4)、发布资产 zip 前言(#2)、文档口径(#5)。本轮已把 Host/Origin 校验与 token 形式并入 browser-unified-core 的 bridge/server.ts（保留 guardCommand 与回环 CORS 回显两处差异，见 NOTICE.md）。旧快照备份：F:\\Work\\Objects\\__archive-backups\\dsh-browser-control-caob23-2763148-20261010"
     },
     {
       "id": "webops-dsh-agent-webops",
       "url": "https://github.com/jonah791/dsh-agent-webops",
       "branch": "main",
       "archivedPath": "upstream/dsh-agent-webops",
-      "pinnedSha": "8603a0a8528ee6899f4acc6980396342f6f51700",
-      "pinnedVersion": "0.1.0",
+      "pinnedSha": "31e5c17aabd1e4ed770f5b5deb286e54712755da",
+      "pinnedVersion": "0.2.2",
       "license": "MIT",
       "mergedIntoCore": false,
       "baselineVerifiedFileDiff": 0,
-      "note": "headless Edge(CDP) 独立实例路线（open/read/click/type/eval/shot/close + 临时 user-data-dir），与 de-013/17 相关的参考上游；2026-09-07 采纳为第 5 上游"
+      "note": "headless Edge(CDP) 独立实例路线 + attach 外部 CDP 端点 + wait 谓词轮询 + console 缓冲；0.2.x 另含 src/pure.ts 纯逻辑层与 337 例离线测试、docs/semantic.md（含可证伪验收 A1–A20）、dsh-plugin.json Fabric 骨架（自陈不可运行，别当契约）。仍未并入 core。（2026-10-10 归档刷新：8603a0a → 31e5c17，13 提交 +1275/−142）"
     }
   ]
 }
