@@ -3,9 +3,9 @@
  *
  * Registers one "浏览器" section in the DSH Settings shell (settings.section)
  * and edits the `browser-bridge` settings namespace through the shared
- * settings-scope transport (ctx.settingsScope). Every write lands in the Host
- * settings document; the host plugin's scope.watch then reconciles the bridge
- * live — the metadata endpoint lists apply without restarting the listener.
+ * config-forms transport (ctx.configForms). Every write lands in the Host
+ * settings document; the host plugin then reconciles the bridge live — the
+ * metadata endpoint lists apply without restarting the listener.
  *
  * Styling follows the DSH native theme tokens (--dsw-alias-*): the section
  * adapts to light/dark automatically and never hardcodes theme colors.
@@ -41,15 +41,37 @@ window.__ModuleLoader__.load({
 				general: '常规',
 				enabled: '启用浏览器桥',
 				enabledDesc: '关闭后工具仍挂载，但每次调用会提示如何重新开启。',
-				urlMode: '网络预设（默认可达范围）',
-				urlModePublic: '公网预设：默认仅外网放行，局域网/本机默认拒绝（可逐域覆盖）',
-				urlModeIntranet: '内网预设：外网/局域网/本机默认放行（仍拦截云元数据端点）',
-				presetPublic: '公网（默认仅外网）',
-				presetIntranet: '内网（默认放行本地/局域网）',
-				realmPresetOpt: '沿用预设（默认）',
+				// 2026-09-28 收敛：网络预设整行砍掉 —— 三档分域（外网/局域网/本机）才是真控制面，
+				// 预设只是它们的默认值。urlMode 键仍在 schema 里（老设置继续生效），只是不再露出。
+				probeLabel: '本地桥',
+				probeLoading: '正在探测…',
+				probeRemote: '页面不在本机，跳过探测',
+				probeNone: '未发现（候选端口上都没有 /api/status）',
+				probeNoneHint: '浏览器没开或桥没起来：打开装有扩展的浏览器后点「重新探测」。',
+				probeRetry: '重新探测',
+				probeExtOn: '扩展已连接',
+				probeExtOff: '扩展未连接',
+				probeShifted: '（配置端口被占，已自动顺延）',
+				realmTemp: '允许临时授权',
+				advanced: '高级',
+				advancedSub: '日常不用动：临时实例、受限态策略、目录与路径',
+				autoLaunchCard: '自动拉起浏览器',
+				autoLaunchCardSub: '断线看门狗与「模型调用时唤醒」共用同一套目标配置（可执行文件 / profile）',
+				wakeOnToolUse: '模型调用时自动拉起',
+				wakeOnToolUseDesc: '任何 browser_* 调用发现扩展未连接时，先唤醒浏览器、等它连上再执行本次调用。默认关。',
+				wakeWait: '拉起后最多等待（毫秒）',
+				wakeWaitDesc: '默认 8000。太小会在扩展还没连上时就放行，于是第一次调用照样失败。',
+				wakeShareHint: '以上两行由本插件自己执行（同伴件 dsh-browser-buddy 已于 2026-10-10 合并进来），目标配置就是本卡上面的 exe / profile —— 只有一份。',
+				toolSurfaceCard: '工具面',
+				toolSurfaceCardSub: '模型每轮看到哪些 browser_* 工具（同伴件合并进来后，这两行也归本分区）',
+				layeredTools: '工具面分层',
+				layeredToolsDesc: '只把常驻白名单与「已展开组」的工具交给模型；未展开的组对模型不可见，需要时让它调 browser_tools enable <组>。默认开。',
+				enabledGroups: '启动时已展开的组',
+				enabledGroupsDesc: '可填 interact / debug / session / frames / registry；留空=只给常驻工具（默认）。',
 				transport: '监听与路径',
-				transportSub: '端口、令牌与目录（改动会重启本地桥）',
-				port: '端口',
+				transportSub: '起始端口与令牌（改动会重启本地桥；目录类设置移到了「高级」）',
+				port: '起始端口',
+				portDesc: '被占则自动顺延（+1…+9）；扩展与上面的「本地桥」都会自动探测，不必和扩展里填的一致。',
 				token: '令牌（扩展连接用）',
 				shotsDir: '截图目录',
 				registryDir: 'registry 目录（留空用包内副本）',
@@ -104,15 +126,17 @@ window.__ModuleLoader__.load({
 				modeAsk: '需审批',
 				modeDeny: '拒绝',
 				dshItem: '允许访问本 DSH 页面',
-				dshItemDesc: '已录入的控制页地址在关闭（默认）时会被拒绝、开启后放行（即使 public 档也放行并跳过域审批）。先录地址即可生效拦截，开启需二次确认。',
+				dshItemDesc: '本机控制页地址由宿主自动识别（端口变了也跟着变）；关闭（默认）时它会被拒绝，开启后放行（即使 public 档也放行并跳过域审批）。额外地址可先登记再生效；开启需二次确认。',
 				dshConfirmTitle: '二次确认：允许模型访问本 DSH 控制页',
 				dshConfirmBody: '模型能操作浏览器，若它也访问本控制页，理论上可自行与页面交互（含你的会话内容与审批界面）。请仅在需要模型调试 DSH 自身时开启；开启后仍受 denyHosts/元数据等红线约束。',
 				dshConfirmOk: '仍然开启（我已了解风险）',
 				dshCancel: '取消',
 				dshDetected: '检测到本页面地址：',
 				dshEnableDetected: '填入该地址并开启',
-				dshOriginsLabel: 'DSH 页面地址',
-				dshAddOrigin: '添加 DSH 页面地址…',
+				dshAutoOrigin: '本机控制页地址（宿主自动识别，无需登记）：',
+				dshAutoOriginNote: '宿主从 web 服务端口推导它（端口变了会跟着变），下面的列表只用于**额外**地址：局域网 IP、自定义域名、反向代理。',
+				dshOriginsLabel: '额外地址',
+				dshAddOrigin: '添加额外地址（如 http://192.168.1.9:3080）…',
 				allowHosts: '白名单（需审批的域里免批准）',
 				allowHostsHint: '支持精确主机/IP 与 *.suffix 通配',
 				denyHosts: '黑名单（任何模式都拦截）',
@@ -127,12 +151,35 @@ window.__ModuleLoader__.load({
 				general: 'General',
 				enabled: 'Enable browser bridge',
 				enabledDesc: 'When off, tools stay mounted but every call explains how to turn it back on.',
-				urlMode: 'Network preset (default reach)',
-				urlModePublic: 'Public preset: default allow internet only; LAN/local denied unless overridden',
-				urlModeIntranet: 'Intranet preset: internet/LAN/local default allow (cloud-metadata endpoints still blocked)',
+				probeLabel: 'Local bridge',
+				probeLoading: 'probing\u2026',
+				probeRemote: 'page is not on this machine — probe skipped',
+				probeNone: 'not found (no /api/status on any candidate port)',
+				probeNoneHint: 'The browser or the bridge is not up: open the browser that has the extension, then probe again.',
+				probeRetry: 'Probe again',
+				probeExtOn: 'extension connected',
+				probeExtOff: 'extension not connected',
+				probeShifted: '(configured port was busy; shifted automatically)',
+				realmTemp: 'allow temp grants',
+				advanced: 'Advanced',
+				advancedSub: 'Rarely touched: temp instance, restricted-state policy, directories and paths',
+				autoLaunchCard: 'Auto-launch the browser',
+				autoLaunchCardSub: 'The disconnect watchdog and "wake on model call" share one target config (executable / profile)',
+				wakeOnToolUse: 'Wake on model tool call',
+				wakeOnToolUseDesc: 'When a browser_* call finds the extension disconnected, wake the browser first and wait for it to link before running the call. Off by default.',
+				wakeWait: 'Max wait after waking (ms)',
+				wakeWaitDesc: 'Default 8000. Too small and the call proceeds before the extension links, so the first call fails anyway.',
+				wakeShareHint: 'The two rows above are executed by this plugin itself (the companion dsh-browser-buddy was merged in on 2026-10-10) using the exe / profile configured above \u2014 one copy only.',
+				toolSurfaceCard: 'Tool surface',
+				toolSurfaceCardSub: 'Which browser_* tools the model sees each turn (these two rows moved here with the companion merge)',
+				layeredTools: 'Layer the tool surface',
+				layeredToolsDesc: 'Expose only the resident allowlist plus expanded groups. Default on.',
+				enabledGroups: 'Groups expanded at startup',
+				enabledGroupsDesc: 'interact / debug / session / frames / registry; empty = resident tools only (default).',
 				transport: 'Listener & paths',
-				transportSub: 'Port, token and directories (changing restarts the local bridge)',
-				port: 'Port',
+				transportSub: 'Starting port and token (changing restarts the local bridge; directory settings moved to Advanced)',
+				port: 'Starting port',
+				portDesc: 'Shifted automatically when busy (+1\u2026+9). The extension and the “Local bridge” line above both auto-probe, so it need not match the value in the extension.',
 				token: 'Token (presented by the extension)',
 				shotsDir: 'Screenshots directory',
 				registryDir: 'Registry directory (empty = package copies)',
@@ -192,15 +239,17 @@ window.__ModuleLoader__.load({
 				modeAsk: 'Ask',
 				modeDeny: 'Deny',
 				dshItem: 'Allow access to this DSH page',
-				dshItemDesc: 'Recorded control-page origins are refused while this is OFF (default) and allowed once ON (even under public mode, skipping realm approvals). List first, then the interception applies; enabling needs a second confirmation.',
+				dshItemDesc: 'The local control page is identified automatically by the host (it follows a port change); it is refused while this is OFF (default) and allowed once ON (even under public mode, skipping realm approvals). Extra addresses can be listed before they take effect; enabling needs a second confirmation.',
 				dshConfirmTitle: 'Second confirmation: let the model access this DSH control page',
 				dshConfirmBody: 'The model drives this browser; if it can also visit this control page it may in theory interact with the page itself, including your session content and approval surfaces. Turn this on only to debug DSH itself; denyHosts / metadata red lines still apply.',
 				dshConfirmOk: 'Enable anyway (I understand the risk)',
 				dshCancel: 'Cancel',
 				dshDetected: 'Detected this page:',
 				dshEnableDetected: 'Fill in and enable',
-				dshOriginsLabel: 'DSH page origins',
-				dshAddOrigin: 'Add DSH page origin…',
+				dshAutoOrigin: 'Local control-page address (identified automatically by the host): ',
+				dshAutoOriginNote: 'The host derives it from the web service port (so it follows a port change); the list below is only for EXTRA addresses: LAN IPs, custom domains, reverse proxies.',
+				dshOriginsLabel: 'Extra addresses',
+				dshAddOrigin: 'Add an extra address (e.g. http://192.168.1.9:3080)\u2026',
 				allowHosts: 'Allow list (skips ask in ask realms)',
 				allowHostsHint: 'Exact hosts/IPs or *.suffix wildcards',
 				denyHosts: 'Deny list (always blocked, every mode)',
@@ -496,22 +545,139 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		// One realm selector row.
-		function realmSelectRow(title, current, key, setField, unset) {
-			var effective = current === undefined || current === null ? 'preset' : current
-			return createElement(Row, { title: title, desc: t('realmDesc') },
-				createElement('select', {
-					value: String(effective),
-					onChange: function (e) {
-						if (e.target.value === 'preset') { unset(key) } else { setField(key, e.target.value) }
+		// One realm row: access selector + that realm's temp-grant toggle.
+		//
+		// 2026-09-28 收敛：原来「访问控制」卡里是 3 个域选择 + 3 个临时授权开关（6 行），
+		// 外加「常规」卡里一个网络预设。预设砍掉后（它本来就是各域的默认值），
+		// 每个域一行、临时授权跟在同一行 —— 6 行变 3 行，且「这个域的授权与临时授权」
+		// 在同一处看得见。未显式设置过的域显示它**当前生效**的值（来自内置默认），
+		// 选择即写入显式覆盖。
+		function presetRealmAccess(urlMode, realm) {
+			if (String(urlMode || 'public') === 'intranet') return 'allow'
+			return realm === 'internet' ? 'allow' : 'deny'
+		}
+
+		function realmRow(props) {
+			var value = props.value
+			var current = value[props.key]
+			var effective = current === undefined || current === null
+				? presetRealmAccess(value.urlMode, props.realm)
+				: String(current)
+			var tempOn = value[props.tempKey] !== false
+			return createElement(Row, { title: props.title, desc: t('realmDesc') },
+				createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } },
+					createElement('select', {
+						value: effective,
+						onChange: function (e) { props.setField(props.key, e.target.value) },
+						style: selectStyle,
 					},
-					style: selectStyle,
-				},
-					createElement('option', { value: 'preset' }, t('realmPresetOpt')),
-					createElement('option', { value: 'allow' }, t('modeAllow')),
-					createElement('option', { value: 'ask' }, t('modeAsk')),
-					createElement('option', { value: 'deny' }, t('modeDeny')),
+						createElement('option', { value: 'allow' }, t('modeAllow')),
+						createElement('option', { value: 'ask' }, t('modeAsk')),
+						createElement('option', { value: 'deny' }, t('modeDeny')),
+					),
+					createElement('label', {
+						title: t('tempHint'),
+						style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: T.label3, whiteSpace: 'nowrap', cursor: 'pointer' },
+					},
+						createElement(Switch, {
+							checked: tempOn,
+							onChange: function (on) { props.setField(props.tempKey, on) },
+						}),
+						t('realmTemp'),
+					),
 				),
+			)
+		}
+
+		// ---- live bridge probe (page-side, read-only) --------------------------------
+		// `/api/status` 是唯一带 CORS 的只读端点（写类端点自 2026-09-25 起不发 CORS 头），
+		// 所以设置页可以直接探测本机桥：不经宿主、不需要新通道，也不碰安全边界。
+		// 这替代了「让人手填端口、还得和扩展里填的一致」那种笨办法 —— 与扩展一样自动探测。
+		var PROBE_COUNT = 10
+		var PROBE_TIMEOUT_MS = 400
+
+		function pageIsLocal() {
+			try {
+				var h = window.location.hostname
+				return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]'
+			} catch (e) { return false }
+		}
+
+		function probeOne(port) {
+			var controller = typeof AbortController === 'function' ? new AbortController() : null
+			var timer = window.setTimeout(function () { if (controller) controller.abort() }, PROBE_TIMEOUT_MS)
+			var done = function (out) { window.clearTimeout(timer); return out }
+			return fetch('http://127.0.0.1:' + port + '/api/status', {
+				cache: 'no-store',
+				signal: controller ? controller.signal : undefined,
+			}).then(function (res) {
+				return res.ok ? res.json() : null
+			}).then(function (body) {
+				if (!body || body.ok !== true || typeof body.wsUrl !== 'string') return done(null)
+				return done({
+					port: port,
+					extensionConnected: body.extensionConnected === true,
+					extensionVersion: body.hello && typeof body.hello.version === 'string' ? body.hello.version : null,
+				})
+			}, function () { return done(null) })
+		}
+
+		/** 并行探 10 个候选端口（起始端口 +0..+9，与插件/扩展同构），返回命中的桥或 null。 */
+		function probeBridge(basePort) {
+			var jobs = []
+			for (var i = 0; i < PROBE_COUNT; i += 1) jobs.push(probeOne(basePort + i))
+			return Promise.all(jobs).then(function (results) {
+				for (var j = 0; j < results.length; j += 1) if (results[j]) return results[j]
+				return null
+			})
+		}
+
+		/** 「本地桥」状态行：探测结果 + 重新探测。只读，不改任何设置。 */
+		function BridgeStatus(props) {
+			var state = useState({ phase: 'loading', found: null, nonce: 0 })
+			var snap = state[0]
+			var setSnap = state[1]
+			React.useEffect(function () {
+				if (!pageIsLocal()) {
+					setSnap({ phase: 'remote', found: null, nonce: snap.nonce })
+					return undefined
+				}
+				var cancelled = false
+				setSnap({ phase: 'loading', found: null, nonce: snap.nonce })
+				probeBridge(props.basePort).then(function (found) {
+					if (!cancelled) setSnap({ phase: 'ready', found: found, nonce: snap.nonce })
+				})
+				return function () { cancelled = true }
+			}, [props.basePort, snap.nonce])
+
+			var text = t('probeLabel') + '：'
+			var color = T.label3
+			if (snap.phase === 'remote') {
+				text += t('probeRemote')
+			} else if (snap.phase === 'loading') {
+				text += t('probeLoading')
+			} else if (snap.found === null) {
+				text += t('probeNone')
+				color = T.warn
+			} else {
+				var f = snap.found
+				text += '127.0.0.1:' + f.port + ' · '
+					+ (f.extensionConnected ? t('probeExtOn') : t('probeExtOff'))
+					+ (f.extensionVersion ? '（' + f.extensionVersion + '）' : '')
+					+ (f.port !== props.basePort ? ' ' + t('probeShifted') : '')
+				color = f.extensionConnected ? T.success : T.warn
+			}
+			return createElement('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '10px', margin: '0 0 10px' } },
+				createElement('div', { style: { flex: '1', minWidth: 0 } },
+					createElement('div', { style: { fontSize: '12px', lineHeight: '18px', color: color } }, text),
+					snap.phase === 'ready' && snap.found === null
+						? createElement('div', { style: { marginTop: '2px', fontSize: '12px', lineHeight: '16px', color: T.label3 } }, t('probeNoneHint'))
+						: null,
+				),
+				createElement('button', {
+					onClick: function () { setSnap({ phase: snap.phase, found: snap.found, nonce: snap.nonce + 1 }) },
+					style: btnBase,
+				}, t('probeRetry')),
 			)
 		}
 
@@ -560,6 +726,10 @@ window.__ModuleLoader__.load({
 						}),
 					),
 				createElement('div', { style: { padding: '4px 2px 0' } },
+					createElement('div', { style: rowTitleStyle }, t('dshAutoOrigin') + (SELF_ORIGIN || '（未知）')),
+					createElement('div', { style: rowDescStyle }, t('dshAutoOriginNote')),
+				),
+				createElement('div', { style: { padding: '10px 2px 0' } },
 					createElement('div', { style: rowTitleStyle }, t('dshOriginsLabel')),
 					createElement(StringListEditor, {
 						value: origins,
@@ -595,10 +765,11 @@ window.__ModuleLoader__.load({
 				return createElement('div', { style: cardSubStyle }, t('loading'))
 			}
 			var value = snapshot.value || {}
-			var setField = function (field, next) {
+
+			var runWrite = function (target, field, next) {
 				writeBusy.current = true
 				setBusy('saving')
-				var done = scope.set(field, next)
+				var done = target.set(field, next)
 				if (done && typeof done.then === 'function') {
 					done.then(
 						function () {
@@ -620,10 +791,12 @@ window.__ModuleLoader__.load({
 					window.setTimeout(function () { setBusy(null) }, 1400)
 				}
 			}
+			var setField = function (field, next) { runWrite(scope, field, next) }
 			var noop = function () {}
 
 			var metaHosts = Array.isArray(value.metadataHostnames) ? value.metadataHostnames : []
 			var metaIps = Array.isArray(value.metadataIps) ? value.metadataIps : []
+			var basePort = typeof value.port === 'number' ? value.port : 9777
 
 			var statusRow = null
 			if (busy !== null) {
@@ -641,6 +814,7 @@ window.__ModuleLoader__.load({
 				{ style: sectionStyle },
 				createElement('p', { style: introStyle }, t('intro')),
 				createElement('span', { style: pillStyle }, t('idBadge')),
+				createElement(BridgeStatus, { basePort: basePort }),
 				createElement(FoldCard, { id: 'general', title: t('general') },
 					createElement(Row, {
 						title: t('enabled'),
@@ -651,45 +825,12 @@ window.__ModuleLoader__.load({
 							onChange: function (on) { setField('enabled', on) },
 						}),
 					),
-					createElement(Row, {
-						title: t('urlMode'),
-						desc: value.urlMode === 'intranet' ? t('urlModeIntranet') : t('urlModePublic'),
-					},
-						createElement('select', {
-							value: String(value.urlMode || 'public'),
-							onChange: function (e) { setField('urlMode', e.target.value) },
-							style: selectStyle,
-						},
-							createElement('option', { value: 'public' }, t('presetPublic')),
-							createElement('option', { value: 'intranet' }, t('presetIntranet')),
-						),
-					),
 				),
 				createElement(FoldCard, { id: 'access', title: t('access'), subtitle: t('accessSub') },
-					realmSelectRow(t('realmInternet'), value.internetAccess, 'internetAccess', setField, function (k) { scope.unset(k).then(noop, noop) }),
-					realmSelectRow(t('realmLan'), value.lanAccess, 'lanAccess', setField, function (k) { scope.unset(k).then(noop, noop) }),
-					realmSelectRow(t('realmLocal'), value.localAccess, 'localAccess', setField, function (k) { scope.unset(k).then(noop, noop) }),
+					realmRow({ title: t('realmInternet'), key: 'internetAccess', tempKey: 'internetTemp', realm: 'internet', value: value, setField: setField }),
+					realmRow({ title: t('realmLan'), key: 'lanAccess', tempKey: 'lanTemp', realm: 'lan', value: value, setField: setField }),
+					realmRow({ title: t('realmLocal'), key: 'localAccess', tempKey: 'localTemp', realm: 'local', value: value, setField: setField }),
 					createElement('div', { style: rowDescStyle }, t('realmDesc')),
-					createElement(Row, { title: t('tempInternet'), desc: t('tempHint') },
-						createElement(Switch, { checked: value.internetTemp !== false, onChange: function (on) { setField('internetTemp', on) } }),
-					),
-					createElement(Row, { title: t('tempLan'), desc: t('tempHint') },
-						createElement(Switch, { checked: value.lanTemp !== false, onChange: function (on) { setField('lanTemp', on) } }),
-					),
-					createElement(Row, { title: t('tempLocal'), desc: t('tempHint') },
-						createElement(Switch, { checked: value.localTemp !== false, onChange: function (on) { setField('localTemp', on) } }),
-					),
-					createElement(Row, { title: t('askMode'), desc: t('askModeDesc') },
-						createElement('select', {
-							value: String(value.askMode || 'inherit'),
-							onChange: function (e) { setField('askMode', e.target.value) },
-							style: selectStyle,
-						},
-							createElement('option', { value: 'inherit' }, t('askModeInherit')),
-							createElement('option', { value: 'allow' }, t('askModeAllow')),
-							createElement('option', { value: 'deny' }, t('askModeDeny')),
-						),
-					),
 					createElement(DshEnableRow, {
 						enabled: value.dshAccessEnabled === true,
 						origins: Array.isArray(value.dshOrigins) ? value.dshOrigins : [],
@@ -718,27 +859,23 @@ window.__ModuleLoader__.load({
 						}),
 					),
 				),
-				createElement(FoldCard, { id: 'transport', title: t('transport'), subtitle: t('transportSub'), open: false },
-					createElement(Row, { title: t('port') },
-						createElement('input', {
-							type: 'number', min: 1024, max: 65535, step: 1,
-							value: typeof value.port === 'number' ? value.port : 9777,
-							onChange: function (e) {
-								var n = parseInt(e.target.value, 10)
-								setField('port', isNaN(n) ? 1024 : n)
-							},
-							style: numberStyle,
-						}),
-					),
-					createElement(Row, { title: t('token') },
-						createElement(TextInput, { value: value.token, password: true, onChange: function (v) { setField('token', v) } }),
-					),
-					createElement(Row, { title: t('shotsDir') },
-						createElement(TextInput, { value: value.shotsDir, onChange: function (v) { setField('shotsDir', v) } }),
-					),
-					createElement(Row, { title: t('registryDir') },
-						createElement(TextInput, { value: value.registryDir, onChange: function (v) { setField('registryDir', v) } }),
-					),
+				createElement(FoldCard, { id: 'toolsurface', title: t('toolSurfaceCard'), subtitle: t('toolSurfaceCardSub'), open: false },
+				createElement(Row, { title: t('layeredTools'), desc: t('layeredToolsDesc') },
+					createElement(Switch, {
+						checked: value.layeredTools !== false,
+						onChange: function (on) { setField('layeredTools', on) },
+					}),
+				),
+				createElement(Row, { title: t('enabledGroups'), desc: t('enabledGroupsDesc') },
+					createElement(StringListEditor, {
+						value: Array.isArray(value.enabledGroups) ? value.enabledGroups : [],
+						placeholder: 'frames',
+						onChange: function (next) { setField('enabledGroups', next) },
+						onReset: function () { setField('enabledGroups', []) },
+					}),
+				),
+			),
+			createElement(FoldCard, { id: 'autolaunch', title: t('autoLaunchCard'), subtitle: t('autoLaunchCardSub'), open: false },
 					createElement(Row, { title: t('autoLaunch'), desc: t('autoLaunchDesc') },
 						createElement(Switch, {
 							checked: value.autoLaunchEnabled === true,
@@ -756,23 +893,45 @@ window.__ModuleLoader__.load({
 							style: numberStyle,
 						}),
 					),
+					createElement(Row, { title: t('wakeOnToolUse'), desc: t('wakeOnToolUseDesc') },
+						createElement(Switch, {
+							checked: value.autoLaunchOnToolUse === true,
+							onChange: function (on) { setField('autoLaunchOnToolUse', on) },
+						}),
+					),
+					createElement(Row, { title: t('wakeWait'), desc: t('wakeWaitDesc') },
+						createElement('input', {
+							type: 'number', min: 0, max: 60_000, step: 500,
+							value: typeof value.autoLaunchWaitMs === 'number' ? value.autoLaunchWaitMs : 8000,
+							onChange: function (e) {
+								var n = parseInt(e.target.value, 10)
+								setField('autoLaunchWaitMs', isNaN(n) ? 8000 : n)
+							},
+							style: numberStyle,
+						}),
+					),
 					createElement(Row, { title: t('autoExe') },
 						createElement(TextInput, { value: value.autoLaunchBrowserExe, onChange: function (v) { setField('autoLaunchBrowserExe', v) } }),
 					),
 					createElement(Row, { title: t('autoProfile') },
 						createElement(TextInput, { value: value.autoLaunchProfileDir, onChange: function (v) { setField('autoLaunchProfileDir', v) } }),
 					),
-					createElement(Row, { title: t('autoProfileName') },
-						createElement(TextInput, { value: value.autoLaunchProfileName, onChange: function (v) { setField('autoLaunchProfileName', v) } }),
-					),
-					createElement(Row, { title: t('autoTemp') },
-						createElement(Switch, {
-							checked: value.autoLaunchTempProfile === true,
-							onChange: function (on) { setField('autoLaunchTempProfile', on) },
+					createElement('div', { style: Object.assign({}, cardSubStyle, { marginTop: '8px' }) }, t('wakeShareHint')),
+				),
+				createElement(FoldCard, { id: 'transport', title: t('transport'), subtitle: t('transportSub'), open: false },
+					createElement(Row, { title: t('port'), desc: t('portDesc') },
+						createElement('input', {
+							type: 'number', min: 1024, max: 65535, step: 1,
+							value: typeof value.port === 'number' ? value.port : 9777,
+							onChange: function (e) {
+								var n = parseInt(e.target.value, 10)
+								setField('port', isNaN(n) ? 1024 : n)
+							},
+							style: numberStyle,
 						}),
 					),
-					createElement(Row, { title: t('autoExt') },
-						createElement(TextInput, { value: value.autoLaunchExtensionDir, onChange: function (v) { setField('autoLaunchExtensionDir', v) } }),
+					createElement(Row, { title: t('token') },
+						createElement(TextInput, { value: value.token, password: true, onChange: function (v) { setField('token', v) } }),
 					),
 				),
 				createElement(FoldCard, { id: 'metadata', title: t('metadata'), subtitle: t('metadataSub') },
@@ -806,6 +965,37 @@ window.__ModuleLoader__.load({
 						}),
 					),
 					createElement('div', { style: Object.assign({}, cardSubStyle, { marginTop: '8px' }) }, t('defaultsHint')),
+				),
+				createElement(FoldCard, { id: 'advanced', title: t('advanced'), subtitle: t('advancedSub'), open: false },
+					createElement(Row, { title: t('askMode'), desc: t('askModeDesc') },
+						createElement('select', {
+							value: String(value.askMode || 'inherit'),
+							onChange: function (e) { setField('askMode', e.target.value) },
+							style: selectStyle,
+						},
+							createElement('option', { value: 'inherit' }, t('askModeInherit')),
+							createElement('option', { value: 'allow' }, t('askModeAllow')),
+							createElement('option', { value: 'deny' }, t('askModeDeny')),
+						),
+					),
+					createElement(Row, { title: t('autoProfileName') },
+						createElement(TextInput, { value: value.autoLaunchProfileName, onChange: function (v) { setField('autoLaunchProfileName', v) } }),
+					),
+					createElement(Row, { title: t('autoTemp') },
+						createElement(Switch, {
+							checked: value.autoLaunchTempProfile === true,
+							onChange: function (on) { setField('autoLaunchTempProfile', on) },
+						}),
+					),
+					createElement(Row, { title: t('autoExt') },
+						createElement(TextInput, { value: value.autoLaunchExtensionDir, onChange: function (v) { setField('autoLaunchExtensionDir', v) } }),
+					),
+					createElement(Row, { title: t('shotsDir') },
+						createElement(TextInput, { value: value.shotsDir, onChange: function (v) { setField('shotsDir', v) } }),
+					),
+					createElement(Row, { title: t('registryDir') },
+						createElement(TextInput, { value: value.registryDir, onChange: function (v) { setField('registryDir', v) } }),
+					),
 				),
 				statusRow,
 			)
@@ -845,10 +1035,10 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			try {
 				var slots = ctx.slots
-				var settings = ctx.settingsScope
+				var settings = ctx.configForms
 				if (!slots || !settings) return
-				// Bind once per activation on THIS fiber (the binder binds to the caller).
-				var scope = settings.bind({ namespace: 'browser-bridge' })
+				// One resident form per namespace, addressed by loader entry id.
+				var scope = settings.get('browser-bridge')
 				ctx.slots.inject('settings.section', function () {
 					return ctx.slots.register({
 						name: 'settings.section',
@@ -869,7 +1059,7 @@ window.__ModuleLoader__.load({
 			}
 		}
 
-		var inject = ['slots', 'settingsScope']
+		var inject = ['slots', 'configForms']
 		exports.apply = apply
 		exports.inject = inject
 		return module.exports

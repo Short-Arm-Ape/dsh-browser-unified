@@ -1,14 +1,14 @@
 /**
  * Browser-bridge plugin: one local WebSocket endpoint the DSH Browser Control
  * extension connects to, plus the model-facing `browser_*` tools that drive
- * it. The Settings-managed `enabled` flag starts and stops the listener live
- * through dsh-settings' change hook — no reload needed.
+ * The Settings-managed `enabled` flag starts and stops the listener live —
+ * no reload needed beyond the config recomposition 0.2.0 performs on a write.
  *
- * We deliberately bypass the higher-level `installSettingsSection` helper and
- * talk to the lower-level `sctx.settings.register` API directly: that API
- * predates the helper and is the one stable across every dsh-settings build a
- * consumer is realistically pinned to. Importing the helper on a build that
- * does not export it crashes the whole plugin at module load.
+ * Since DSH 0.2.0 the Host is the single source of truth for settings: the
+ * user layer is folded into this plugin's loader-entry config, so `apply(ctx,
+ * config)` already receives the effective values and no `settings.register`
+ * call is involved. Fields must be declared `.volatile()` in `Config` or the
+ * namespace is skipped by `describe()` and never reaches the Settings UI.
  *
  * Tools stay mounted whenever the plugin does; calling one while the bridge
  * is disabled or the extension is offline fails with a message naming the
@@ -17,6 +17,7 @@
  */
 import { type Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { readPermissionStore, type PermissionReading } from './permissions.js';
 /** Cordis plugin name used by loader diagnostics. */
 export declare const name = "browser-bridge";
 /** The tool registry this plugin contributes `browser_*` tools to. */
@@ -80,9 +81,10 @@ export interface Config {
      * allow list. `prompt` (default) shows the host approval (under an
      * approval policy of never the request is auto-rejected and the model gets
      * NEED_AUTHORIZATION guidance); `allow` grants the host for this session
-     * without prompting — explicit red lines (denyHosts, metadata, DSH-page
-     * access being off, credentials) still apply because they are enforced
-     * before this branch; `deny` refuses without asking.
+     * without prompting —— **注意它连用户名单一起忽略**（allowHosts/denyHosts
+     * 都不再拦，de-016/de-018 的"放行"档语义）；`deny` refuses without asking。
+     * 三种档位都不影响**硬红线**（云元数据、内嵌凭据、DSH 控制页关闭时的拦截、路由档），
+     * 红线在分域判定之前就已生效。
      */
     askMode?: string;
     /**
@@ -101,9 +103,11 @@ export interface Config {
      */
     allowHosts?: string[];
     /**
-     * Hosts always denied — regardless of urlMode, realm or authorization. Exact
-     * hostnames/IPs or `*.suffix` wildcards. Hard blocks (metadata endpoints,
-     * embedded credentials, routing stance) apply in addition to this list.
+     * Hosts the user wants denied —— **用户名单（L3），不是红线**。Exact hostnames/IPs 或
+     * `*.suffix` 通配。在 deny/allow 分域、以及 `ask` 分域都生效，**唯一例外**是
+     * `askMode === 'allow'`（受限态"放行"档 = 连黑白名单一起忽略，de-016/de-018）。
+     * 硬红线（云元数据、内嵌凭据、DSH 控制页关闭时的拦截、路由档）**不受本列表与 askMode 影响**。
+     * （旧注释曾写"always denied — regardless of …"，与实现不符，已按实现订正。）
      */
     denyHosts?: string[];
     /**
@@ -126,7 +130,43 @@ export interface Config {
     autoLaunchTempProfile?: boolean;
     /** When using a temporary profile: path to an UNPACKED extension dir to sideload (`--load-extension`). */
     autoLaunchExtensionDir?: string;
+    /** 工具面分层：只把常驻白名单 + 已展开组的 `browser_*` 交给模型（关掉=全部暴露）。默认 true。 */
+    layeredTools?: boolean;
+    /** 模型调用 `browser_*` 而扩展未连接时，先自动拉起浏览器再放行。默认 false（避免你没预期时弹窗口）。 */
+    autoLaunchOnToolUse?: boolean;
+    /** 自动拉起后等扩展连上的上限（毫秒）。默认 8000。 */
+    autoLaunchWaitMs?: number;
+    /** 启动时就展开的工具组（interact/debug/session/frames/registry）。默认 []。 */
+    enabledGroups?: string[];
 }
 export declare const Config: z<Config>;
+/** Register every `browser_*` tool; each is a thin adapter over one extension command. */
+/**
+ * 权限现状 → 给模型看的文本（`browser_permissions` 的全部载荷都拼在这里）。
+ *
+ * 措辞原则：**说清"谁能点"**。浏览器 chrome 自己的权限气泡（LNA 等）扩展既看不见也答不了，
+ * 唯一能做的是把它读出来、并明确「需要用户本人处理」，避免模型把"有人在等人点"误诊成"页面卡了"。
+ */
+/**
+ * `denyHosts` 的状态行（X14）。抽成纯函数是为了能被离线测试钉住 —— 关键点：
+ * **名单存在 ≠ 名单生效**，`askMode=allow` 时它对策略没有作用（允许名单也一样被忽略），
+ * 只有硬红线仍然生效。状态面藏着这件事，模型与用户就会按一份"其实不生效"的名单推理。
+ * @param shown 已经截断/格式化好的名单文本（空时传 '（空）'）。
+ * @param ignored 生效策略是否忽略了这份名单（askMode=allow）。
+ */
+export declare function denyHostsStatusLine(shown: string, ignored: boolean): string;
+export declare function permissionReport(input: {
+    origin: string;
+    tabId: number | undefined;
+    store: ReturnType<typeof readPermissionStore>;
+    readings: PermissionReading[];
+    pendingLocal: ReadonlyArray<{
+        url: string;
+        ageSeconds?: number;
+    }>;
+    requestedClass: string | undefined;
+    /** 读取时的形态转换说明（bi-013）：非空时在报告头上写一行，别让"静默换路径"发生。 */
+    storeNote?: string;
+}): string;
 /** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */
 export declare function apply(ctx: Context, config: Config): void;

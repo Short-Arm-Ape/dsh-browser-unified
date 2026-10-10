@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -73,5 +73,53 @@ try {
   }
 } catch { /* best-effort cleanup */ }
 
+// 备份文件**绝不能**随包发出去（2026-10-09 实撞：`registry/issues/issues.json.bak-…` 被 npm pack
+// 打进了 0.11.9）。这里 fail-closed：发现包目录里有 *.bak* 就停，并告诉人去哪儿放。
+{
+  const strays = []
+  const walk = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '.npm-cache' || entry.name === '.git') continue
+      const abs = path.join(dir, entry.name)
+      const shown = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (entry.isDirectory()) walk(abs, shown)
+      else if (/\.bak($|[-.])/i.test(entry.name)) strays.push(shown)
+    }
+  }
+  try { walk(pkgDir, '') } catch { /* 目录不可读就不挡路 */ }
+  if (strays.length > 0) {
+    console.error('\n[build-pack] 拒绝打包：包目录里还有备份文件（它们会被 npm pack 带进产物）：')
+    for (const f of strays) console.error('  - ' + f)
+    console.error('把它们挪到仓库的 backups/ 下（例如 backups/registry-issues-<日期>/），再重新打包。')
+    process.exit(1)
+  }
+}
+
 run(npm, ['pack', '--pack-destination', pkgDir, `--cache=${cacheDir}`])
+
+// X17：包内 `registry/` 是**唯一真源**；仓库根那两份（`design/registry.json`、
+// `upstream-baseline.json`）在每次打包后同步成同一内容，防止再出现"根目录 20 条、
+// 包内 34 条"这种两份互相矛盾的状态。测试 tests/registry-consistency.mjs 会钉住一致性。
+{
+  const repoRoot = path.resolve(pkgDir, '..', '..')
+  const mirrors = [
+    [path.join(pkgDir, 'registry', 'design', 'registry.json'), path.join(repoRoot, 'design', 'registry.json')],
+    [path.join(pkgDir, 'registry', 'upstream-baseline.json'), path.join(repoRoot, 'upstream-baseline.json')],
+  ]
+  for (const [from, to] of mirrors) {
+    try {
+      if (!existsSync(from)) continue
+      const body = readFileSync(from)
+      const changed = !existsSync(to) || !readFileSync(to).equals(body)
+      if (changed) {
+        mkdirSync(path.dirname(to), { recursive: true })
+        writeFileSync(to, body)
+        console.log(`[build-pack] 同步镜像 ${path.relative(repoRoot, to)} ← ${path.relative(repoRoot, from)}`)
+      }
+    } catch (error) {
+      console.warn(`[build-pack] 镜像同步失败（不影响产物）：${path.relative(repoRoot, to)} — ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
 console.log('\n[build-pack] done — artifact in', pkgDir)

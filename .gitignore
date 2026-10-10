@@ -12,3 +12,5 @@ packages/browser-unified-plugin/*.tgz
 # OS
 Thumbs.db
 .DS_Store
+# keep upstream archive backups out of the repo (de-035, 2026-10-10)
+upstream/*.bak-*

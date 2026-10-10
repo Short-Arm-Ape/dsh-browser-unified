@@ -41,6 +41,14 @@ export interface BridgeHello {
   readonly client: string
   readonly version: string
   readonly browser: { readonly name: string; readonly version: string; readonly ua: string }
+  /**
+   * Extension id (`chrome.runtime.id`), when the extension reports it.
+   *
+   * 这是桥唯一能拿到"扩展是谁"的稳定标识 —— 浏览器侧没有"我在哪个 profile"的接口，
+   * 更读不了 `edge://version`（scheme 被拦），所以插件要拿这个 id 去磁盘上
+   * 反查"哪个 profile 装了它"。旧版扩展不带此字段，故可选。
+   */
+  readonly extensionId?: string
 }
 
 /** Snapshot of the link and in-flight work, served verbatim on `/api/status`. */
@@ -87,6 +95,16 @@ export interface BridgeServerOptions {
   readonly scratchDir?: string
   /** Optional line logger for lifecycle diagnostics. */
   readonly log?: (line: string) => void
+  /**
+   * Optional policy hook for the HTTP command face (`POST /api/command`).
+   *
+   * 为什么需要它（X18，2026-10-10）：WS 面向扩展；宿主工具走 `GuardedBridge`（导航过
+   * `UrlPolicy`）＋工具层的"已开标签页红线"；而 **HTTP 命令面**是第三条通道
+   * （同伴件的 browser_frames / browser_frame_eval 就走它），它此前**完全不过策略** ——
+   * 等于"带 token 就能对任意标签页 eval / nav"。这个钩子让宿主把策略接回来。
+   * @returns 拒绝原因（非空字符串即拒绝 → HTTP 403）；undefined 表示放行。
+   */
+  readonly guardCommand?: (command: string, params: Record<string, unknown>) => string | undefined | Promise<string | undefined>
 }
 
 /** Agent scratch-file convention: `__name.mjs`-style temp artifacts at the top level only. */
@@ -270,11 +288,18 @@ export class BridgeServer {
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://localhost')
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
+      // 安全（2026-09-25）：以前无条件回 `Access-Control-Allow-Origin: *`，于是**任意网页**
+      // 都能通过预检并 POST /api/command 驱动用户已登录的浏览器（实测复现）。
+      // 现在只对扩展来源回显，且写类端点不再发 CORS 头。
+      const origin = String(req.headers.origin ?? '')
+      const headers: Record<string, string> = {
         'Access-Control-Allow-Methods': 'GET, POST',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
+        'Access-Control-Allow-Headers': 'Content-Type, X-DSH-Token',
+      }
+      if (origin.startsWith('chrome-extension://') || origin.startsWith('extension://')) {
+        headers['Access-Control-Allow-Origin'] = origin
+      }
+      res.writeHead(204, headers)
       res.end()
       return
     }
@@ -283,29 +308,54 @@ export class BridgeServer {
       return
     }
     if (url.pathname === '/api/cleanup' && req.method === 'POST') {
+      // 安全（2026-09-25）：写操作必须带 token（以前任意网页都能触发清理）。
+      if (!this.tokenOk(req, url)) {
+        this.respondJson(res, 401, { ok: false, error: 'unauthorized: /api/cleanup requires ?token=' }, { cors: false })
+        return
+      }
       void this.cleanup().then(
-        (result) => this.respondJson(res, 200, { ok: true, ...result }),
-        (error) => this.respondJson(res, 500, { ok: false, error: errorMessage(error) }),
+        (result) => this.respondJson(res, 200, { ok: true, ...result }, { cors: false }),
+        (error) => this.respondJson(res, 500, { ok: false, error: errorMessage(error) }, { cors: false }),
       )
       return
     }
     if (url.pathname === '/api/command' && req.method === 'POST') {
+      // 安全（2026-09-25，重要）：该端点能执行任意桥命令（含 eval），以前既不校验 token
+      // 又回 `ACAO: *` ⇒ 任意网页都能驱动这台已登录的浏览器。两道一起收。
+      if (!this.tokenOk(req, url)) {
+        this.respondJson(res, 401, { ok: false, error: 'unauthorized: /api/command requires ?token=' }, { cors: false })
+        return
+      }
       this.handleCommandRequest(req, res)
       return
     }
     if (url.pathname === '/' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      res.end(statusPageHtml(this.options.port))
+      res.end(statusPageHtml(this.options.port, this.options.token))
       return
     }
-    this.respondJson(res, 404, { ok: false, error: `no route: ${req.method} ${url.pathname}` })
+    this.respondJson(res, 404, { ok: false, error: `no route: ${req.method} ${url.pathname}` }, { cors: false })
   }
 
-  private respondJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
-    res.writeHead(statusCode, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-    })
+  /**
+   * 常量时间比较 token，避免逐字符泄露。token 为空表示不校验（向后兼容）。
+   * @returns 请求携带的 token 是否匹配。
+   */
+  private tokenOk(req: http.IncomingMessage, url: URL): boolean {
+    const expected = this.options.token ?? ''
+    if (expected.length === 0) return true
+    const provided = url.searchParams.get('token') ?? String(req.headers['x-dsh-token'] ?? '')
+    if (provided.length !== expected.length) return false
+    let diff = 0
+    for (let i = 0; i < expected.length; i += 1) diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i)
+    return diff === 0
+  }
+
+  private respondJson(res: http.ServerResponse, statusCode: number, body: unknown, options: { cors?: boolean } = {}): void {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8' }
+    // 只读的 /api/status 仍保留 `*`（扩展探测与状态页依赖它）；写类端点一律不发 CORS 头。
+    if (options.cors !== false) headers['Access-Control-Allow-Origin'] = '*'
+    res.writeHead(statusCode, headers)
     res.end(JSON.stringify(body))
   }
 
@@ -319,7 +369,7 @@ export class BridgeServer {
       if (size > MAX_HTTP_BODY_BYTES) {
         aborted = true
         chunks.length = 0
-        this.respondJson(res, 413, { ok: false, error: 'body too large' })
+        this.respondJson(res, 413, { ok: false, error: 'body too large' }, { cors: false })
         req.resume()
         return
       }
@@ -331,20 +381,44 @@ export class BridgeServer {
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as typeof parsed
       } catch (error) {
-        this.respondJson(res, 400, { ok: false, error: `invalid JSON body: ${errorMessage(error)}` })
+        this.respondJson(res, 400, { ok: false, error: `invalid JSON body: ${errorMessage(error)}` }, { cors: false })
         return
       }
       if (typeof parsed.command !== 'string' || parsed.command.length === 0) {
-        this.respondJson(res, 400, { ok: false, error: 'body must be {"command": "...", "params": {...}}' })
+        this.respondJson(res, 400, { ok: false, error: 'body must be {"command": "...", "params": {...}}' }, { cors: false })
         return
       }
       const timeoutMs = typeof parsed.timeoutMs === 'number' ? parsed.timeoutMs : undefined
-      this.execute(parsed.command, (parsed.params ?? {}) as Record<string, unknown>, timeoutMs === undefined ? {} : { timeoutMs }).then(
-        (result) => this.respondJson(res, 200, { ok: true, result }),
+      const params = (parsed.params ?? {}) as Record<string, unknown>
+      // X18：HTTP 命令面也要过宿主策略（hook 由插件注入；缺省=不拦，保持旧行为）。
+      const guard = this.options.guardCommand
+      if (guard !== undefined) {
+        void Promise.resolve()
+          .then(() => guard(parsed.command as string, params))
+          .catch((error: unknown) => `guardCommand 抛错：${errorMessage(error)}`)
+          .then((reason) => {
+            if (typeof reason === 'string' && reason.length > 0) {
+              this.log(`[bridge] /api/command 被策略拒绝：${parsed.command} — ${reason}`)
+              this.respondJson(res, 403, { ok: false, error: `blocked: ${reason}` }, { cors: false })
+              return
+            }
+            this.execute(parsed.command as string, params, timeoutMs === undefined ? {} : { timeoutMs }).then(
+              (result) => this.respondJson(res, 200, { ok: true, result }, { cors: false }),
+              (error) => {
+                const message = errorMessage(error)
+                const code = message.startsWith('no browser extension') ? 503 : 502
+                this.respondJson(res, code, { ok: false, error: message }, { cors: false })
+              },
+            )
+          })
+        return
+      }
+      this.execute(parsed.command, params, timeoutMs === undefined ? {} : { timeoutMs }).then(
+        (result) => this.respondJson(res, 200, { ok: true, result }, { cors: false }),
         (error) => {
           const message = errorMessage(error)
           const code = message.startsWith('no browser extension') ? 503 : 502
-          this.respondJson(res, code, { ok: false, error: message })
+          this.respondJson(res, code, { ok: false, error: message }, { cors: false })
         },
       )
     })
@@ -433,7 +507,7 @@ export class BridgeServer {
     const full = this.continuationRemainder
     this.continuationRemainder = ''
     this.continuationOpen = false
-    let msg: { type?: unknown; id?: unknown; ok?: unknown; result?: unknown; error?: unknown; t?: unknown; client?: unknown; version?: unknown; browser?: unknown }
+    let msg: { type?: unknown; id?: unknown; ok?: unknown; result?: unknown; error?: unknown; t?: unknown; client?: unknown; version?: unknown; browser?: unknown; extensionId?: unknown }
     try {
       msg = JSON.parse(full) as typeof msg
     } catch {
@@ -445,8 +519,10 @@ export class BridgeServer {
         client: typeof msg.client === 'string' ? msg.client : 'unknown',
         version: typeof msg.version === 'string' ? msg.version : 'unknown',
         browser: (msg.browser ?? { name: 'unknown', version: 'unknown', ua: '' }) as BridgeHello['browser'],
+        ...(typeof msg.extensionId === 'string' && msg.extensionId.length > 0 ? { extensionId: msg.extensionId } : {}),
       }
-      this.log(`hello: client=${this.hello.client} v${this.hello.version} browser=${this.hello.browser.name} ${this.hello.browser.version}`)
+      this.log(`hello: client=${this.hello.client} v${this.hello.version} browser=${this.hello.browser.name} ${this.hello.browser.version}`
+        + `${this.hello.extensionId !== undefined ? ` id=${this.hello.extensionId}` : ''}`)
       return
     }
     if (msg.type === 'pong') return
@@ -499,7 +575,7 @@ function errorMessage(error: unknown): string {
 }
 
 /** Minimal self-refreshing status page with the cleanup action. */
-function statusPageHtml(port: number): string {
+function statusPageHtml(port: number, token = ''): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -549,6 +625,7 @@ function statusPageHtml(port: number): string {
   <div class="foot">DSH Browser Bridge · 127.0.0.1:${port}</div>
 </div>
 <script>
+const TOKEN=${JSON.stringify(token)};
 async function refresh(){
   try{
     const r=await fetch('/api/status');const j=await r.json();
@@ -572,7 +649,7 @@ async function refresh(){
 }
 document.getElementById('cleanup').onclick=async()=>{
   if(!confirm('确认清理截图与临时脚本？'))return;
-  const r=await fetch('/api/cleanup',{method:'POST'});const j=await r.json();
+  const r=await fetch('/api/cleanup'+(TOKEN?'?token='+encodeURIComponent(TOKEN):''),{method:'POST'});const j=await r.json();
   alert(j.ok?('已删除 '+j.shotsRemoved+' 个截图，'+j.scratchRemoved.length+' 个草稿'):('失败：'+j.error));
   refresh();
 };

@@ -10,7 +10,7 @@
 | 2   | `dsh-intranet-browser-short-arm-ape/` | dsh-intranet-browser（Short-Arm-Ape） | https://github.com/Short-Arm-Ape/dsh-intranet-browser | 0.1.0                               | MIT          | ✅ 是（url-policy 元数据黑名单/归一化、approval 决策表语义）                                             |
 | 3   | `dsh-browser-control-kyo615/`         | dsh-browser-control（kyo615）         | https://github.com/kyo615/dsh-browser-control         | 1.0.0                               | MIT          | ⚠️ 暂未并入（其价值=GUI 实时画面，属集成层；原型阶段未取用）                                                    |
 | 4   | `dsh-browser-control-caob23/`         | @caob23/dsh-browser-control         | https://github.com/caob23/dsh-browser-control         | 1.0.7                               | **AGPL-3.0** | ✅ 是（bridge/ws.ts + bridge/server.ts 收编进 core，整包为 AGPL-3.0-only） |
-| 5   | `dsh-agent-webops/`                    | dsh-agent-webops（jonah791）         | https://github.com/jonah791/dsh-agent-webops         | 0.1.0                               | MIT          | ➖ 归档参考（de-019；headless Edge(CDP) 独立实例 + 临时 profile，供 de-013/017 并入参考） |
+| 5   | `dsh-agent-webops/`                    | dsh-agent-webops（jonah791）         | https://github.com/jonah791/dsh-agent-webops         | **0.2.2**（原 0.1.0）                | MIT          | ➖ 归档参考（de-019；de-035 于 2026-10-10 刷新到 `31e5c17`）。headless Edge(CDP) 独立实例 + **attach 外部 CDP 端点** + wait 谓词轮询 + 纯逻辑层/离线测试；Fabric 骨架自陈不可运行，不当契约 |
 
 ## 各归档内自带的第三方声明
 
@@ -35,11 +35,14 @@ AGPL-3.0-only**（其 LICENSE 文件为完整 AGPL-3.0 文本），并把 `@caob
 4. kyo615 版（MIT，行 3）尚未并入；若将来并入，仍保持整包 AGPL-3.0（许可兼容），
    归属在本表登记。
 
-## 开发基线 / 上游自检（2026-09-05；webops 加入于 2026-09-07）
+## 开发基线 / 上游自检（2026-09-05；webops 加入于 2026-09-07；**webops 归档刷新于 2026-10-10**）
 
 - `upstream-baseline.json` 将五个上游 **main 分支归档当日 commit SHA** 固化为机器可读基线
   （xylt369 `2f1adee`、short-arm-ape `d3f63d4`、kyo615 `9c10f2c`、caob23 `2763148`、
-  webops `8603a0a`；前四个当日实测归档快照与上游 main 逐文件 0 差异，webops 归档于 2026-09-07）。
+  webops **`31e5c17`（0.2.2，2026-10-10 刷新；旧快照 `8603a0a` 备份为
+  `upstream/dsh-agent-webops.bak-20261010`）**；前四个当日实测归档快照与上游 main 逐文件 0 差异，
+  webops 归档于 2026-09-07、刷新于 2026-10-10）。
+  > 归档快照与这份 pin **必须同一步更新**：只改一处会让 `check-upstream` 误报或漏报。
 - `design/registry.json` 是设计意图/工具命名/鉴权策略/设计条目与 **impactRules（单一事实源）**
   的注册表；`design/README.md` 记录了工具契约（browser_check_update / browser_design_show /
   browser_design_edit）、LLM 触发描述模板与威胁模型。人工或经工具（审批门控）均可维护。

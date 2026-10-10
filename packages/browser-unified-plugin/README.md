@@ -11,14 +11,14 @@ settings namespace (`browser-bridge`) as the upstream plugin it replaces.
 | 版本 | 0.7.3 |
 | 许可证 | **AGPL-3.0-only**（含 caob23 收编代码；归属与合规见 NOTICE.md） |
 | 实例 id / 设置命名空间 | `browser-bridge`（与 @caob23 一致，便于迁移） |
-| 提供 | 16 个 `browser_*` 驱动工具、`GuardedBridge` URL 策略守卫、自更新三件套、GUI「浏览器」设置分区 |
+| 提供 | 24 个 `browser_*` 驱动工具、`GuardedBridge` URL 策略守卫、自更新三件套、GUI「浏览器」设置分区 |
 
 > 不含 caob23 派生代码、希望 MIT 许可的请用同仓库的 MIT 版 `dsh-browser-unified-mit`
 > （`packages/browser-unified-mit`）——但它不带浏览器桥与 `browser_*` 驱动工具。
 
 ## 功能
 
-- **浏览器驱动**：桥接 DSH Browser Control 扩展（CDP），16 个 `browser_*` 工具
+- **浏览器驱动**：桥接 DSH Browser Control 扩展（CDP），27 个 `browser_*` 工具（含 `browser_wait` 等待原语，以及 2026-10-10 从同伴件 `dsh-browser-buddy` 合并进来的 `browser_tools` / `browser_frames` / `browser_frame_eval`）
   （navigate/read/snapshot/click/type/press/scroll/tabs/evaluate/screenshot/cleanup/
   console_log/network_log/network_clear/pdf/emulate）。
 - **URL 策略守卫（GuardedBridge）**：`nav` / `tabs.open` 先过统一 `UrlPolicy` 再发给扩展。
