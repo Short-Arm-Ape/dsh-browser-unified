@@ -20,6 +20,7 @@
  * @module browser-unified-core
  */
 
+export * from './errors.js'
 export * from './url-policy.js'
 export * from './approval.js'
 export * from './instance.js'

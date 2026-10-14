@@ -80,4 +80,16 @@ export declare function applyBuddyFeatures(options: any): {
     probeBridge: (force?: boolean) => Promise<any>;
     wakeBrowser: (trigger: any, landingUrl: any) => Promise<any>;
     bridgeCommand: (command: any, params: any) => Promise<any>;
+    refreshConfig: (raw: any) => void;
+    getCfg: () => {
+        layeredTools: boolean;
+        scanBase: any;
+        scanCount: any;
+        autoLaunchOnToolUse: boolean;
+        autoLaunchCooldownMs: any;
+        autoLaunchWaitMs: any;
+        residentTools: string[];
+        groups: any;
+        bridgeCommandTimeoutMs: any;
+    };
 };

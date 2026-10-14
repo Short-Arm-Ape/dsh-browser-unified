@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-10T10:30:00.000Z",
+  "lastUpdated": "2026-10-14T14:50:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -965,6 +965,137 @@
         {
           "at": "2026-10-10T10:06:00.000Z",
           "what": "created + status -> applied（core 0.1.3→0.1.4、插件 0.11.16→0.11.17 已装机。验收：tests/bridge-http-auth.mjs 32/32；探针实例 exit=124、stderr 0 行、0 跳过；9797 实测 —— 无 Origin 不回 ACAO、回环来源回显、公网来源不回收、OPTIONS 204 且无 CORS、无 token 401 / 带 token 503（阳性对照）、WS Host 非回环 403、网页 Origin 403、扩展 scheme 与无 Origin 101）"
+        }
+      ]
+    },
+    {
+      "id": "de-038",
+      "title": "通用指针手势能力（拖拽/按住-移动-松开）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-10-10",
+      "updatedAt": "2026-10-10",
+      "scope": "extension：新增 `drag` 命令（from/to + steps + 每步 delay），或给 click 加 `dragTo`；工具层暴露 `browser_drag` 或扩展 `browser_click` 的参数",
+      "affectedModules": [
+        "extension",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user）：把\"通用拖拽能力\"记为待办（2026-10-10 用浏览器插件试注册 GitHub 账号时撞到 DataDome 滑块，确认现有 click 只能同坐标点击）。动机是**通用交互能力**：滑块控件、看板拖拽、拖放上传都需要\"按住—移动—松开\"，且 CDP 的 `Input.dispatchMouseEvent` 支持中间若干 mouseMoved 步进（比合成事件更接近真实输入）。**边界（必须写进设计与描述）**：该能力用于正常 UI 交互；**人机校验/反机器人挑战一律交回真人**，不得作为绕过手段（也不应把\"能否过校验\"当作能力指标）。",
+      "notes": [
+        "实测数据：`extension/background.js:1332-1334` 为同坐标三连；COMMANDS 表无 drag。",
+        "上游 caob23 的扩展同样没有该能力（同源代码血统），故这也是一个可提给上游的 feature 候选。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-10T14:35:00.000Z",
+          "what": "created（source=user，agent-executed direct edit；状态 proposed，本会话不实现）"
+        }
+      ]
+    },
+    {
+      "id": "de-039",
+      "title": "上游清单加 role 分档（merge / reference），并把前身 `dsh-intranet-browser` 除名",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-13",
+      "updatedAt": "2026-10-13",
+      "scope": "upstream-baseline.json（根 / plugin / mit 三副本）+ scripts/check-upstream.ps1（只查 role=merge）+ 插件 browser_check_update（同规则，跳过时点名）+ NOTICE.md / README.md 口径 + tests/registry-consistency.mjs 新增 [5] 段",
+      "affectedModules": [
+        "registry",
+        "tooling/self-update",
+        "docs"
+      ],
+      "summary": "用户明示（source=user，2026-10-13）：① 其余上游\"还有维护的必要吗\"；② \"可以把内网插件从上游里除名了\"；③ 归属口径更正 —— \"我自己的仓库应该没必要这么麻烦\"，内网插件是本插件的**上一代**（且它本身又是 xylt369 那条线的后代/含其 stealth 拷贝），不是需要对外归属的第三方上游。据此把基线里每个来源标注 `role`：`merge`（持续合并源，唯一参与漂移自检）= caob23；`reference`（只在决定接线某功能时翻归档取用，不做定时自检）= xylt369 / kyo615 / webops。**前身 `short-arm-ape-intranet` 从 `repos[]` 除名**（它在 GitHub 上已是 archived 只读、README 挂停维护横幅，且已并入的部分只有 url-policy 的 intranet 档与 approval 决策表，未并入的只剩 de-005）。条目 5 → 4。`check-upstream.ps1` 与 `-UpdateBaseline` 都只对 `merge` 生效；`browser_check_update` 默认只查 merge、被跳过的 reference 在报告里**点名**（显式传 `repos:[<id>]` 仍可单独查）。`role` 缺省视为 `merge`，老基线行为不变。",
+      "notes": [
+        "实测（Windows PowerShell 5.1，本机 github.com 不可达）：三个 reference 档各回一行 `SKIP …（参考档：只在决定接线/取用时翻归档，不做定时漂移自检）`，caob23 走到 clone 并按预期报 `UNREACHABLE`。",
+        "`design/registry.json` 的 `impactRules` 仍保留 `short-arm-ape-intranet` 一行 —— 除名的是\"上游自检清单\"，不是来源记录：de-005（逐请求 route 拦截）还指着那份归档当语义基准。",
+        "反面经验（写进技能）：我一开始按\"第三方归属链\"要求给前身保留归属记录，被用户纠正 —— **自己的仓库没有对外归属义务**，当归档的正当理由只有两个：语义基准与取用出处。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13T02:00:00.000Z",
+          "what": "created + status -> applied（插件 0.11.21 / core 0.1.5；tests/registry-consistency.mjs 新增 [5] 段 5 条断言，全量 8 套 207 项全绿）"
+        }
+      ]
+    },
+    {
+      "id": "de-040",
+      "title": "吸收上游第二段：browser_wait 保留自研版；browser_snapshot 增 mode:ax（两个都留）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-13",
+      "updatedAt": "2026-10-13",
+      "scope": "packages/browser-unified-plugin/src/index.ts（snapshot 的参数/schema/render/execute + 新增导出纯函数 snapshotModeOf + wait 的描述）+ extension/background.js（snapshotViaAx / AX_ACTIONABLE_ROLES / AX_STAMP_FN / cmdSnapshot 的 ax 分支）+ tests/tool-render.mjs 的 [10] 段",
+      "affectedModules": [
+        "tooling/tools",
+        "extension",
+        "tooling/tests"
+      ],
+      "summary": "用户明示（source=user，2026-10-13）：「按你倾向做」。两处语义冲突的处理：① `browser_wait` —— 我们 2026-09 的自研版（selector/text/fn 三选一、明确的超时与中止语义、siteUnreachable 兜底）**保留**，只把上游 v1.0.9 描述里「SPA 路由与懒渲染：navigate 不会等它们」那半句并进我们的描述；上游那版（返回原始 JSON）不采纳。② `browser_snapshot` —— 上游 v1.0.11 的 `mode:ax`（无障碍树 role + 可访问名）**作为可选参数加进来**，默认仍是我们的 DOM 判据（含 why=cursor 的 div 化 SPA 识别），两个判据并存。移植时保持**我们的 ref 契约**：AX 模式也把 `data-dsh-ref` 打到真实 DOM 节点上（DOM.resolveNode + Runtime.callFunctionOn 盖章），因此 browser_click ref=… 在两种模式下都照旧可用。另采纳上游 v1.0.15 的教训：**旧扩展会静默忽略 mode:ax**，插件必须自己把降级说出来 —— 抽成导出纯函数 snapshotModeOf(rawMode, rawFallback, wantAx)，可单测。",
+      "notes": [
+        "真机核对（rig：真 Edge 155 + 真扩展 1.0.93 + 假桥）：seg2-contract.mjs **12/12** —— dom 老行为不变；ax 回 mode=ax 且 3 条带 role（input→textbox、button→button + 可访问名 go）；[data-dsh-ref] 属性数 == items 数；**按 ax 给的 ref（经属性选择器）点得动**，/press 的表单 submit=1。",
+        "渲染没沿用上游的 JSON.stringify(value)：ax 条目打印 [role] 可访问名，并在头部标明这是 a11y 树；落回 dom 时把原因写进模型可见文本。",
+        "why=ax 在渲染里不再当成 cursor 兜底打印（否则会误导成「这是靠样式边界猜出来的元素」）。",
+        "扩展侧 AX 实现移植自上游 v1.0.11（AGPL-3.0，同许可），文件内已注明来源与角色白名单的取舍（GenericContainer/StaticText 会把额度吃光）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13T12:45:00.000Z",
+          "what": "created + status -> applied（插件侧 + 扩展侧同时落地；测试 9 套 255 项全绿，rig 契约 12/12；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-041",
+      "title": "吸收上游第三段（扩展侧四件）：手工挑，不重做 re-vendor",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-13",
+      "updatedAt": "2026-10-13",
+      "scope": "extension/background.js（协议声明 / parseKeySpec + 未知键报错 / 标签归组 6 个函数 / tabs.closeMany + tabStillThere / withBudget+landsAt 与 nav 探针预算）+ extension/manifest.json（tabGroups 权限）+ packages/browser-unified-plugin/src/index.ts（browser_tabs 的 group|ungroup|closeMany 接线与渲染）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools"
+      ],
+      "summary": "用户先问「上游欠账补完后就是路线问题了」，随后「开始」。先把**净差量出来**再决定怎么补：命令表对比 = 上游多 tabs.group/tabs.ungroup/tabs.closeMany，我们多 content.debug/window.ensure；函数表对比 = 上游独有的只有 6 个归组函数 + parseKeySpec + closeMany + 四个通用小助手，我们独有的是端口自动发现（3 函数）、frames（cmdFrames/buildContentScript）、content.debug、window.ensure、弹窗策略等。结论：**手工挑比 re-vendor 更划算** —— ① 本段补完后上游独有面几乎清零，re-vendor 换不来新能力；② re-vendor 会把我们 8 处独有改动全部变成需要重新打补丁的对象，风险大于收益；③ 我们这条线每一步都有 rig 真机取证，re-vendor 等于把已验证的基线推倒重来。因此按上游语义逐件移植，并在需要处**明确保留我们的差异**（host_permissions、端口发现、frames、cmdTabsOpen 的无窗口自愈分支）。",
+      "notes": [
+        "四件：① hello 声明 protocol=1（与 core 0.1.5 的桥协议协商配对）；② parseKeySpec（Ctrl+A 写法）+ 未知键/未知修饰键**明确报错**（以前静默发 undefined keyCode 却回成功）；③ 标签归组（tabGroups 权限 + DSH 蓝色组 + 50/150/400ms 退避最多 4 枪 + groupId 只存内存并按标题反查重建 + ungroup 只解除归属不关标签）；④ tabs.closeMany（**我们提给上游的 PR #11** 搬回自己的扩展线）+ 通用 withBudget/landsAt/failureText/sleep。",
+        "顺带修掉 bi-036（nav 探针无预算），以及一个同类正确性问题：waitForNavigationComplete 现在带 expectedUrl，用 landsAt 区分「新文档快到没采样到 loading」与「根本没导航过去」（链接变下载、同 URL 空操作）—— 后者以前会被判成 settled。",
+        "插件侧：browser_tabs 增 group/ungroup 两个动作、open 支持 group:false；批量关闭改为**匹配在插件侧、关闭走扩展的 tabs.closeMany**（一条命令 + 逐 id 交代 closed/alreadyGone/failed），比原来的逐个关、失败即停既快又不丢账。",
+        "真机核对（rig：真 Edge 155 + 真扩展 1.0.94 + 假桥）：seg3-contract.mjs **16/16** —— hello.protocol=1；开标签自动归组（created=true, groupId）→ ungroup 解散（groups=1）且**标签页数不变**、再拆一次幂等；tabs.group 对已有标签有效；Ctrl+A 页面收到 ctrlKey=true（modifiers 数组写法同样有效）；未知键/未知修饰键各自报错并给出可用值；closeMany requested=3 → closed=2 + alreadyGone=1；**/hang 下 nav 从 25s 无回答变成 5.7s 返回**且 loadPending=true/pendingUrl=…/hang。",
+        "扩展版本 1.0.20 → **1.0.21**（三处副本同步、sha256 一致）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13T13:05:00.000Z",
+          "what": "created + status -> applied（测试 9 套 260 项全绿，rig 契约 16/16；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-042",
+      "title": "设置页的改动反馈：胶囊取代自夸文案（「配置已保存」1 秒，后弹覆盖前弹）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-14",
+      "updatedAt": "2026-10-14",
+      "scope": "packages/browser-unified-plugin/client/client.js（intro 去掉「保存即时生效」；新增胶囊状态/定时器/样式与 writeOutcome、validHostEntry 两个纯函数；runWrite 成功改由胶囊回报 + 写完复验快照；unset 走 runUnset；主机列表写入前自查）",
+      "affectedModules": [
+        "tooling/client-ui",
+        "tooling/tools"
+      ],
+      "summary": "用户口径（原话）：「与其写『保存即时生效』，不如配置真改了后显示 1 秒的『配置已保存』（后来的胶囊会直接覆盖之前的胶囊），让人知道这真改了，要是没改也能看出来。」⇒ 页面不再做任何「即时生效」的自我声明，改成行为反馈：写完轮询快照复验，只有新值已落盘且与写之前不同，才弹绿色「配置已保存」1 秒；选了个一模一样的值判为 noop（不打扰）；1.5s 内没看到新值弹琥珀「配置尚未生效（字段）」；写失败弹红「保存失败：原因」（原内联错误行保留）。多条胶囊共用一个元素：新的一来先清旧定时器再挂，即后弹覆盖前弹。",
+      "notes": [
+        "判定逻辑抽成纯函数 writeOutcome(before, next, seen, timedOut) → saved/noop/pending/wait，并由 exports.__test 暴露给单测（render-settings-pages 增 13 项）。",
+        "顺手把主机列表这类可被 UI 写坏的字段前置自查（与插件 assertHostList 同一条规则：主机名/IP 或 *.suffix，禁空白与 / \\ @ ? #）：格式不对只在本地弹琥珀「格式不对，没保存」，不发出去。",
+        "为什么不是写完就弹：宿主存下来 ≠ 插件已生效（bi-038 就是这么骗过设置页的）。复验快照能在旧版插件上如实显示「还没看到生效」—— 用户要的「没改也能看出来」正是这一格。",
+        "诚实边界：胶囊是 client 半区，随包更新 —— 要先装上 0.11.22 并重启一次才会出现在眼前。",
+        "英文同步（Saved / Submitted, but not applied yet / Save failed / Invalid format — not saved）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-14T14:50:00.000Z",
+          "what": "created + status -> applied（测试 10 套 284 项全绿；未发布未装机）"
         }
       ]
     }

@@ -34,6 +34,20 @@ export interface RepoPin {
   pinnedVersion?: string
   license?: string
   mergedIntoCore?: boolean
+  /**
+   * 这份来源怎么被用（2026-10-13 主人定；缺省视为 `merge`，与老基线兼容）：
+   * - `merge`：持续合并源 —— 唯一参与漂移自检的对象；
+   * - `reference`：只在决定接线某功能时翻归档取用，不做定时自检；
+   * - `attribution`：纯来源记录（本项目前身那类，连 `repos[]` 都不进）。
+   */
+  role?: RepoRole
+}
+
+export type RepoRole = 'merge' | 'reference' | 'attribution'
+
+/** 缺省 `merge`：老基线没有 role 字段时行为不变。 */
+export function repoRole(repo: RepoPin): RepoRole {
+  return repo.role ?? 'merge'
 }
 
 export interface BaselineDocument {

@@ -59,7 +59,7 @@ const DEFAULT_RESIDENT = [
 ];
 /** 默认分组：按需展开。registry 组是仓库维护工具，日常不该出现在工具面里。 */
 const DEFAULT_GROUPS = {
-    interact: ['browser_click', 'browser_type', 'browser_press', 'browser_scroll'],
+    interact: ['browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_dialog'],
     debug: [
         'browser_evaluate',
         'browser_console_log',
@@ -67,6 +67,9 @@ const DEFAULT_GROUPS = {
         'browser_network_clear',
         'browser_emulate',
         'browser_pdf',
+        // 上行 v1.0.9 的三件只读诊断件：按需展开，别常驻占 token。
+        'browser_find',
+        'browser_info',
     ],
     session: ['browser_navigate', 'browser_tabs', 'browser_cleanup', 'browser_wait'],
     /** 老式 frameset 管理页专用：列帧结构 + 在指定帧里求值（读正文交给宿主的 browser_read）。 */
@@ -132,19 +135,35 @@ export function applyBuddyFeatures(options) {
     const controller = options.controller ?? null;
     const authorizeTab = typeof options.authorizeTab === 'function' ? options.authorizeTab : null;
     let settings = options.settings;
-    let config = unwrapVolatile(options.config ?? {});
-    const cfg = {
-        layeredTools: config.layeredTools !== false,
-        scanBase: Number.isInteger(config.scanBase) ? config.scanBase : 9777,
-        scanCount: Number.isInteger(config.scanCount) ? config.scanCount : 10,
-        autoLaunchOnToolUse: config.autoLaunchOnToolUse === true,
-        autoLaunchCooldownMs: Number.isInteger(config.autoLaunchCooldownMs) ? config.autoLaunchCooldownMs : 10_000,
-        autoLaunchWaitMs: Number.isInteger(config.autoLaunchWaitMs) ? config.autoLaunchWaitMs : 8_000,
-        residentTools: Array.isArray(config.residentTools) && config.residentTools.length > 0
-            ? config.residentTools.map(String)
-            : DEFAULT_RESIDENT,
-        groups: config.groups && typeof config.groups === 'object' ? config.groups : DEFAULT_GROUPS,
-        bridgeCommandTimeoutMs: Number.isInteger(config.bridgeCommandTimeoutMs) ? config.bridgeCommandTimeoutMs : 20_000,
+    const config = unwrapVolatile(options.config ?? {});
+    /**
+     * 把一份**原始**配置推导成运行态旋钮。抽成函数是为了支持热更新：宿主对 volatile 字段
+     * 只原地提交并发 `loader/volatile-update`，**不会重跑 apply**（见 index.ts 的同名处理），
+     * 所以层化/分组/自动拉起这些旋钮必须能在这里重建 —— 否则设置页勾了「工具面分层」要等重启（bi-038）。
+     */
+    const buildCfg = (raw) => {
+        const config = unwrapVolatile((raw ?? {}));
+        return {
+            layeredTools: config.layeredTools !== false,
+            scanBase: Number.isInteger(config.scanBase) ? config.scanBase : 9777,
+            scanCount: Number.isInteger(config.scanCount) ? config.scanCount : 10,
+            autoLaunchOnToolUse: config.autoLaunchOnToolUse === true,
+            autoLaunchCooldownMs: Number.isInteger(config.autoLaunchCooldownMs) ? config.autoLaunchCooldownMs : 10_000,
+            autoLaunchWaitMs: Number.isInteger(config.autoLaunchWaitMs) ? config.autoLaunchWaitMs : 8_000,
+            residentTools: Array.isArray(config.residentTools) && config.residentTools.length > 0
+                ? config.residentTools.map(String)
+                : DEFAULT_RESIDENT,
+            groups: config.groups && typeof config.groups === 'object' ? config.groups : DEFAULT_GROUPS,
+            bridgeCommandTimeoutMs: Number.isInteger(config.bridgeCommandTimeoutMs) ? config.bridgeCommandTimeoutMs : 20_000,
+        };
+    };
+    let cfg = buildCfg(config);
+    /** 热更新入口：宿主提交了新值之后由 index.ts 调用。`state.enabledGroups` 也跟着重置。 */
+    const refreshConfig = (raw) => {
+        const next = unwrapVolatile((raw ?? {}));
+        cfg = buildCfg(raw);
+        state.enabledGroups = Array.isArray(next.enabledGroups) ? next.enabledGroups.map(String) : [];
+        resident = new Set(cfg.residentTools);
     };
     const state = {
         enabledGroups: Array.isArray(config.enabledGroups) ? config.enabledGroups.map(String) : [],
@@ -252,7 +271,7 @@ export function applyBuddyFeatures(options) {
             return `（写入设置失败：${error instanceof Error ? error.message : String(error)}）`;
         }
     }
-    const resident = new Set(cfg.residentTools);
+    let resident = new Set(cfg.residentTools);
     /** 允许出现在模型工具面里的 browser_* 名单。 */
     function allowedTools() {
         const allow = new Set(resident);
@@ -1026,5 +1045,5 @@ export function applyBuddyFeatures(options) {
         },
     });
     ctx.logger?.info?.(`[browser-bridge] buddy features applied: layered=${cfg.layeredTools}, resident=${resident.size}, groups=${Object.keys(cfg.groups).join(',')}, autoLaunchOnToolUse=${cfg.autoLaunchOnToolUse}`);
-    return { state, cfg, allowedTools, probeBridge, wakeBrowser, bridgeCommand };
+    return { state, cfg, allowedTools, probeBridge, wakeBrowser, bridgeCommand, refreshConfig, getCfg: () => cfg };
 }

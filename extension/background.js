@@ -22,6 +22,11 @@ const EXT_VERSION = chrome.runtime.getManifest().version;
 const HEARTBEAT_MS = 20_000;
 const MAX_BACKOFF_MS = 30_000;
 const DEFAULT_PORT = 9777;
+/**
+ * 帧契约版本（与本扩展的 manifest 版本**无关**）：桥那边用它判断"两边说的是不是同一种帧"。
+ * 来源：上游 v1.0.9 的口径（core 0.1.5 起我们的桥也会协商它）。缺失时旧桥按 v1 兼容处理。
+ */
+const PROTOCOL_VERSION = 1;
 const DEFAULT_TOKEN = 'dsh-local';
 /** 端口发现：在 [DEFAULT_PORT, DEFAULT_PORT+PORT_SCAN_COUNT) 里找桥。 */
 const PORT_SCAN_BASE = DEFAULT_PORT;
@@ -317,7 +322,7 @@ function sendHello() {
 	helloInfo = { name, version: versionMatch ? versionMatch[1] : 'unknown', ua };
 	// extensionId 是桥唯一能拿到的稳定身份：浏览器侧没有"我在哪个 profile"的接口，
 	// 也读不了 edge://version（scheme 被拦）。桥拿这个 id 去磁盘反查 profile。
-	send({ type: 'hello', client: 'dsh-browser-extension', version: EXT_VERSION, browser: helloInfo, extensionId: chrome.runtime.id });
+	send({ type: 'hello', client: 'dsh-browser-extension', version: EXT_VERSION, protocol: PROTOCOL_VERSION, browser: helloInfo, extensionId: chrome.runtime.id });
 }
 
 /* Alarm keeps the SW alive for reconnect even without user events. */
@@ -427,7 +432,37 @@ async function resolveTab(tabId, landingUrl) {
  * 极快页面（缓存/about:blank）可能不产生可观测的 loading 事件，给 1.2s 观察窗口后按完成处理。
  * @returns true=新页面已加载完成；false=超时（仍在加载 —— 调用方应如实报 loadPending）
  */
-function waitForNavigationComplete(tabId, timeoutMs) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 跨 realm 抛来的 Error（`instanceof Error` 为假）也要认出它的 message。 */
+function failureText(error) {
+	if (error instanceof Error) return error.message;
+	if (error !== null && typeof error === 'object' && 'message' in error) return String(error.message);
+	return String(error);
+}
+
+/** 比较目的地与真正落到的地址：忽略 hash 片段与末尾斜杠这类同文档差异。 */
+function landsAt(tabUrl, expectedUrl) {
+	if (typeof expectedUrl !== 'string' || expectedUrl.length === 0) return true;
+	const norm = (u) => String(u ?? '').replace(/#.*$/, '').replace(/\/$/, '');
+	return norm(tabUrl) === norm(expectedUrl);
+}
+
+/**
+ * 等 `promise`，但**不会超过 `ms`**；超时或拒绝都回 `fallback`。
+ *
+ * 为什么必须有它：CDP 在文档"卡在 commit 之前"时**根本不回** `Runtime.evaluate`，
+ * 于是导航后的那些探针能把整条命令拖过调用方的预算（上游实测：15s 的等待预算下，
+ * 无预算的探针让 `nav` 40 多秒没回答；本仓库 2026-10-13 在 rig 上用 `/hang` 复现了同一现象 —— bi-036）。
+ */
+function withBudget(promise, ms, fallback) {
+	return Promise.race([
+		promise.catch(() => fallback),
+		new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+	]);
+}
+
+function waitForNavigationComplete(tabId, timeoutMs, expectedUrl) {
 	const started = Date.now();
 	return new Promise((resolve) => {
 		let sawLoading = false;
@@ -437,8 +472,10 @@ function waitForNavigationComplete(tabId, timeoutMs) {
 				if (tab.status === 'loading') sawLoading = true;
 				else if (tab.status === 'complete') {
 					if (sawLoading) return resolve(true);
-					// 没见过 loading：要么旧文档还在完成态（竞态），要么新页面快到不留痕
-					if (Date.now() - started > 1200) return resolve(true);
+					// 没见过 loading 有两种完全不同的情形：新文档快到没被采样到，和**根本没导航**
+					// （链接变成下载、Chrome 拒绝的目标、同 URL 空操作）。地址能区分它们 ——
+					// 标签不在我们要去的地方，就不能说"已到达"。
+					if (Date.now() - started > 1200) return resolve(landsAt(tab.url, expectedUrl));
 				}
 			}
 			if (Date.now() - started >= timeoutMs) return resolve(false);
@@ -811,6 +848,144 @@ async function cmdBrowserInfo() {
 	return { client: 'dsh-browser-extension', version: EXT_VERSION, browser: helloInfo };
 }
 
+/* ------------------------------------------------------------ 标签归组（DSH 组） */
+
+/**
+ * Agent 自己开的标签会收进当前窗口里一个名叫 `DSH` 的蓝色分组：你扫一眼就知道哪些页面是
+ * 机器开的，事后也能一把拆掉。**只解除归属，不关任何标签页。**
+ *
+ * 来源：移植自上游 caob23 v1.0.10/v1.0.11 的 `extension/background.js`（AGPL-3.0，同许可）。
+ * 三条实测得来的硬约束照搬：① 刚 `tabs.create` 立刻 `tabs.group` 会跟 Chrome 自己的标签簿记
+ * 打架 ⇒ 按 50/150/400ms 退避、最多 4 枪；② `groupId` 只存内存，service worker 重启或用户
+ * 手动拆组后按标题反查重建；③ manifest 要 `tabGroups` 权限（Chrome ≥ 89 的具名权限，
+ * **不涉及读取网页内容**）。我们**没有**顺手加 `host_permissions` 去换这个能力。
+ */
+const AGENT_GROUP_TITLE = 'DSH';
+const AGENT_GROUP_COLOR = 'blue';
+const GROUP_RETRY_DELAYS_MS = [50, 150, 400];
+
+/** windowId -> groupId，service worker 重启后按标题反查重建。 */
+const agentGroupsByWindow = new Map();
+
+function tabGroupsAvailable() {
+	return typeof chrome.tabGroups?.update === 'function' && typeof chrome.tabs?.group === 'function';
+}
+
+async function findAgentGroup(windowId) {
+	const cached = agentGroupsByWindow.get(windowId);
+	if (cached !== undefined) {
+		// 缓存的 id 会在用户手动拆组/关掉组内最后一个标签后失效 —— 用前先问一次。
+		const live = await chrome.tabGroups.get(cached).catch(() => null);
+		if (live !== null) return cached;
+		agentGroupsByWindow.delete(windowId);
+	}
+	const titled = await chrome.tabGroups.query({ title: AGENT_GROUP_TITLE, windowId }).catch(() => []);
+	const found = titled[0]?.id;
+	if (found !== undefined) agentGroupsByWindow.set(windowId, found);
+	return found;
+}
+
+/** 把一个标签放进该窗口的 DSH 组，没有组就建一个。 */
+async function addToAgentGroup(tabId) {
+	if (!tabGroupsAvailable()) {
+		return { grouped: false, reason: 'tabGroups API 不可用（需 Chrome ≥ 89 且已授予 tabGroups 权限）' };
+	}
+	let lastError = 'unknown';
+	for (let attempt = 0; attempt <= GROUP_RETRY_DELAYS_MS.length; attempt += 1) {
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		if (tab === null || tab.windowId === undefined) return { grouped: false, reason: '标签页已不存在' };
+		try {
+			const existing = await findAgentGroup(tab.windowId);
+			if (existing !== undefined) {
+				await chrome.tabs.group({ tabIds: [tabId], groupId: existing });
+				return { grouped: true, groupId: existing, created: false };
+			}
+			const groupId = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } });
+			await chrome.tabGroups.update(groupId, { title: AGENT_GROUP_TITLE, color: AGENT_GROUP_COLOR });
+			agentGroupsByWindow.set(tab.windowId, groupId);
+			return { grouped: true, groupId, created: true };
+		} catch (error) {
+			lastError = failureText(error);
+			agentGroupsByWindow.delete(tab.windowId);
+			const wait = GROUP_RETRY_DELAYS_MS[attempt];
+			if (wait === undefined) break;
+			await sleep(wait);
+		}
+	}
+	return { grouped: false, reason: lastError };
+}
+
+/** 把 DSH 组全部解散（指定窗口，或所有窗口）—— 只解除归属，不关标签页。 */
+async function dissolveAgentGroups(windowId) {
+	if (!tabGroupsAvailable()) return { ungrouped: 0, groups: 0, reason: 'tabGroups API 不可用' };
+	const wanted = windowId === undefined
+		? { title: AGENT_GROUP_TITLE }
+		: { title: AGENT_GROUP_TITLE, windowId: Number(windowId) };
+	const groups = await chrome.tabGroups.query(wanted).catch(() => []);
+	let ungrouped = 0;
+	for (const group of groups) {
+		const tabs = await chrome.tabs.query({ groupId: group.id }).catch(() => []);
+		const ids = tabs.map((t) => t.id).filter((id) => id !== undefined);
+		if (ids.length === 0) continue;
+		try {
+			await chrome.tabs.ungroup(ids);
+			ungrouped += ids.length;
+		} catch { /* 用户可能已经手动拆开了 */ }
+	}
+	agentGroupsByWindow.clear();
+	return { ungrouped, groups: groups.length };
+}
+
+async function cmdTabGroup(params) {
+	if (params?.tabId === undefined) throw new Error('params.tabId is required');
+	const result = await addToAgentGroup(Number(params.tabId));
+	if (result.grouped !== true) throw new Error(`group failed: ${result.reason}`);
+	return { tabId: Number(params.tabId), ...result };
+}
+
+async function cmdTabUngroup(params) {
+	return dissolveAgentGroups(params?.windowId);
+}
+
+/** 这个 id 现在还在不在。关闭前先问一次，是为了不让"已经没了"把整批连坐。 */
+async function tabStillThere(tabId) {
+	try {
+		await chrome.tabs.get(tabId);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 一次关多个标签：**一条命令、一份超时预算**，并且对每个 id 都有交代
+ * （closed / alreadyGone / failed）—— 只报"关闭失败"会让调用方不知道哪几个其实关掉了。
+ * 这套语义就是我们提给上游的 PR #11（已合并进 v1.0.16）；这里把它搬回自己的扩展线。
+ */
+async function cmdTabsCloseMany(params) {
+	const raw = Array.isArray(params.tabIds) ? params.tabIds : [];
+	const ids = [...new Set(raw.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+	if (ids.length === 0) throw new Error('params.tabIds must be a non-empty array of tab ids');
+	const present = [];
+	const alreadyGone = [];
+	for (const id of ids) (await tabStillThere(id)) ? present.push(id) : alreadyGone.push(id);
+	let report = null;
+	if (present.length > 0) {
+		try {
+			await chrome.tabs.remove(present);
+		} catch (error) {
+			report = failureText(error);
+		}
+	}
+	const closed = [];
+	const failed = [];
+	for (const id of present) {
+		if (await tabStillThere(id)) failed.push({ tabId: id, error: report ?? 'tabs.remove resolved but the tab is still open' });
+		else closed.push(id);
+	}
+	return { requested: ids.length, closed, alreadyGone, failed };
+}
+
 async function cmdTabsList(params) {
 	let tabs = [];
 	try {
@@ -876,13 +1051,19 @@ async function cmdTabsOpen(params) {
 	} else {
 		created = await chrome.tabs.create({ url: params.url, active });
 	}
-	const settled = params.wait === false ? true : await waitForNavigationComplete(created.id, Number(params.timeoutMs) || 15_000);
+	const settled = params.wait === false ? true : await waitForNavigationComplete(created.id, Number(params.timeoutMs) || 15_000, params.url);
 	const fresh = await chrome.tabs.get(created.id).catch(() => null);
+	// 还没 commit 的导航在 `url` 里看不见（空串），去处写在 `pendingUrl`。
+	const pendingUrl = fresh?.pendingUrl && fresh.pendingUrl !== fresh.url ? fresh.pendingUrl : undefined;
+	// 归组失败**不该**让"打开标签"这件事失败 —— 只把结果带回去（上游 v1.0.10 的口径）。
+	const group = params.group === false ? { grouped: false, reason: 'group:false' } : await addToAgentGroup(created.id);
 	return {
 		tabId: created.id,
 		url: fresh?.url,
 		title: fresh?.title,
+		...(pendingUrl === undefined ? {} : { pendingUrl }),
 		...(settled === true ? {} : { loadPending: true }),
+		...group,
 	};
 }
 
@@ -904,7 +1085,7 @@ async function cmdNav(params) {
 	const tab = await resolveTab(params.tabId, params.url);
 	const timeoutMs = Number(params.timeoutMs) || 15_000;
 	// 先把"等新导航完成"的轮询挂上，**再**触发导航（顺序反了就会读到旧文档的 complete）。
-	const settling = params.wait === false ? Promise.resolve(true) : waitForNavigationComplete(tab.id, timeoutMs);
+	const settling = params.wait === false ? Promise.resolve(true) : waitForNavigationComplete(tab.id, timeoutMs, params.url);
 	await chrome.tabs.update(tab.id, { url: params.url });
 	const settled = await settling;
 	const fresh = await chrome.tabs.get(tab.id).catch(() => null);
@@ -917,15 +1098,20 @@ async function cmdNav(params) {
 	let landedUrl = '';
 	let errorPageMarker = false;
 	try {
-		const probe = await withCDP(tab.id, (send) => send('Runtime.evaluate', {
+		// bi-036：文档卡在 commit 之前时 CDP **不回** `Runtime.evaluate`，这个探针会把整条
+		// `nav` 拖过调用方的预算（rig 实测：/hang 上 25s 都没回答）。给它一个自己的小预算，
+		// 超时就当作"探不到落地地址"往下走 —— 后面的 loadPending 会如实说"没等完"。
+		const probe = await withBudget(withCDP(tab.id, (send) => send('Runtime.evaluate', {
 			expression: 'JSON.stringify({ href: location.href, mainFrameError: !!document.getElementById("main-frame-error") })',
 			awaitPromise: false, returnByValue: true, userGesture: true,
-		}).then((r) => String(r.result?.value ?? '')));
-		try {
-			const parsed = JSON.parse(probe);
-			landedUrl = typeof parsed.href === 'string' ? parsed.href : '';
-			errorPageMarker = parsed.mainFrameError === true;
-		} catch { landedUrl = probe; }
+		}).then((r) => String(r.result?.value ?? ''))), 2500, null);
+		if (probe !== null) {
+			try {
+				const parsed = JSON.parse(probe);
+				landedUrl = typeof parsed.href === 'string' ? parsed.href : '';
+				errorPageMarker = parsed.mainFrameError === true;
+			} catch { landedUrl = probe; }
+		}
 	} catch { /* no debugger possible (e.g. chrome:// pages) — fall through */ }
 	let siteUnreachable;
 	let loadError;
@@ -957,7 +1143,14 @@ async function cmdNav(params) {
 		...(loadError === undefined ? {} : { error: loadError }),
 		// 如实交代"没等完"：以前超时会静默返回原 url/旧标题，模型就以为页面到位了
 		// （2026-10-10 实测：navigate 秒回 about:blank、12s 后才是错误页）。
-		...(siteUnreachable === undefined && settled !== true ? { loadPending: true } : {}),
+		...(siteUnreachable === undefined && settled !== true
+			? {
+				loadPending: true,
+				// chrome.tabs 的 pendingUrl 只在"有导航在途"时有值；没有就退回调用方要的那个 URL。
+				// 有了它，模型看到的就不是"还在加载"，而是"还在加载**哪个**地址"。
+				pendingUrl: fresh?.pendingUrl ?? params.url,
+			}
+			: {}),
 	};
 }
 
@@ -1466,9 +1659,31 @@ const KEY_CODES = {
 };
 const MODIFIER_BITS = { alt: 1, ctrl: 2, control: 2, meta: 4, command: 4, shift: 8 };
 
+/**
+ * 把 `key` 里写的组合键拆开：`"Ctrl+A"` / `"Shift+ArrowRight"` 与 `modifiers: ["ctrl"]` 等价。
+ * 只有长度 > 1 且含 `+` 才当组合串 —— `+` 与 `=` 本身就是单字符键。
+ * 来源：上游 v1.0.11（我们此前只认 `modifiers` 数组）。
+ */
+function parseKeySpec(key, rawModifiers) {
+	const mods = new Set((Array.isArray(rawModifiers) ? rawModifiers : []).map((m) => String(m).toLowerCase()));
+	const parts = key.length > 1 && key.includes('+') ? key.split('+') : [key];
+	const finalKey = parts.pop();
+	for (const part of parts) {
+		const name = part.trim().toLowerCase();
+		if (!(name in MODIFIER_BITS)) {
+			throw new Error(`unknown modifier "${part.trim()}" in key "${key}". Valid: alt, ctrl/control, meta/command, shift —— 也可以分开写 modifiers: ["ctrl"] + key: "a"。`);
+		}
+		mods.add(name);
+	}
+	return { key: finalKey, modifiers: [...mods] };
+}
+
 async function cmdPress(params) {
-	const key = String(params.key ?? '');
-	if (key.length === 0) throw new Error('params.key is required');
+	const rawKey = String(params.key ?? '');
+	if (rawKey.length === 0) throw new Error('params.key is required');
+	const parsed = parseKeySpec(rawKey, params.modifiers);
+	const key = parsed.key;
+	const modifierNames = parsed.modifiers;
 	const tab = await resolveTab(params.tabId);
 	// Key events need OS focus; a background tab swallows them silently.
 	await activateTabWindow(tab.id);
@@ -1482,16 +1697,22 @@ async function cmdPress(params) {
 	const text = params.text !== undefined
 		? String(params.text)
 		: key === 'Enter' ? '\r' // '\r' makes keyDown perform implicit form submission
-		: key.length === 1 && !(params.modifiers ?? []).some((m) => m in MODIFIER_BITS && m !== 'shift') ? key : undefined;
+		: key.length === 1 && !modifierNames.some((m) => m in MODIFIER_BITS && m !== 'shift') ? key : undefined;
 	let modifiers = 0;
-	for (const m of params.modifiers ?? []) modifiers |= MODIFIER_BITS[String(m).toLowerCase()] ?? 0;
+	for (const m of modifierNames) modifiers |= MODIFIER_BITS[String(m).toLowerCase()] ?? 0;
+	// 未知键名以前会**静默**把 undefined 的 keyCode/code 发出去：Chrome 什么都不做，调用方
+	// 却收到成功 —— 静默失败比失败本身更糟（上游 v1.0.11 的教训）。
+	if (keyCode === undefined) {
+		throw new Error(`unknown key "${rawKey}". 可用 ${Object.keys(KEY_CODES).join(', ')}、单个字符，或 "Ctrl+A" / "Shift+ArrowRight" 这类组合。`);
+	}
 	return withCDP(tab.id, async (send) => {
+		// `type:'keyDown'` 带 `text` 时，Chrome 自己就会补一个 char/keypress —— 这里**不能再显式发
+		// 一条 `char`**（`rawKeyDown` 才是不补 char 的那个）。多发一次的后果是每个字符插两遍：
+		// 输入框里按一次 `x` 得到 `xx`，按一次 `Enter` 表单提交两次（`browser_type` 的
+		// `submit:true` 走同一条通道，也一样）。真机前后对照见 NOTE.md「press 双倍输入」一节。
 		await send('Input.dispatchKeyEvent', {
 			type: 'keyDown', key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, code, text, unmodifiedText: text, modifiers,
 		});
-		if (text) {
-			await send('Input.dispatchKeyEvent', { type: 'char', key, text, unmodifiedText: text, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, code, modifiers });
-		}
 		await send('Input.dispatchKeyEvent', { type: 'keyUp', key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, code, modifiers });
 		return { tabId: tab.id, key };
 	});
@@ -1577,11 +1798,130 @@ const SNAPSHOT_SCAN_SELECTOR = SNAPSHOT_SELECTOR
 	+ ', div, span, li, td, th, p, label, i, b, em, strong, figure, dt, dd, section, article, header, footer, a, h1, h2, h3, h4';
 const SNAPSHOT_SCAN_CAP = 12000;
 
+/* --------------------------------------------------- snapshot：a11y（AX）模式 */
+
+/**
+ * Agent 真能操作的 role 白名单。Chrome 自己算这些角色与**可访问名**，所以它比选择器更抗
+ * DOM 改版；同时这里刻意用允许列表：`GenericContainer` / `StaticText` / `InlineTextBox`
+ * 这类内部节点会把整棵树的额度吃光。
+ *
+ * 来源：移植自上游 caob23 v1.0.11 的 `extension/background.js`（AGPL-3.0，同许可）。
+ */
+const AX_ACTIONABLE_ROLES = new Set([
+	'button', 'link', 'textbox', 'searchbox', 'combobox', 'listbox', 'menuitem',
+	'menuitemcheckbox', 'menuitemradio', 'option', 'radio', 'checkbox', 'switch',
+	'slider', 'spinbutton', 'tab', 'treeitem', 'gridcell', 'columnheader', 'rowheader',
+]);
+
+/**
+ * 在页面里执行：不可见的返回 null（**不占 ref 号、也不留属性**），否则打上 ref 并把
+ * 这个 DOM 节点究竟是什么报回来。每个保留的元素一次往返。
+ */
+const AX_STAMP_FN = 'function(ref){'
+	+ 'var r = this.getBoundingClientRect();'
+	+ 'if (r.width === 0 && r.height === 0) return null;'
+	+ 'this.setAttribute("data-dsh-ref", ref);'
+	+ 'return {'
+	+ ' tag: this.tagName.toLowerCase(),'
+	+ ' type: (this.type ? String(this.type) : undefined),'
+	+ ' href: (this.href ? String(this.href) : undefined),'
+	+ ' value: (this.value === undefined || this.value === null) ? undefined : String(this.value).slice(0, 60),'
+	+ ' rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }'
+	+ '};'
+	+ '}';
+
+/**
+ * AX 模式：读 Chrome 的无障碍树，然后把**同一个** `data-dsh-ref` 属性打到每个可操作 a11y
+ * 节点背后的真实 DOM 节点上 —— ref 契约因此保持不变（`browser_click` / `browser_type` 照样
+ * 按 `[data-dsh-ref="e7"]` 解析），而模型拿到的是 `role` + 可访问名，不是猜出来的选择器。
+ */
+async function snapshotViaAx(send, tab, limit) {
+	await send('DOM.enable').catch(() => {});
+	await send('Accessibility.enable').catch(() => {});
+	// 先清掉上一次快照留下的 ref：陈旧属性会让旧 ref 点到"此刻屏幕上别的东西"。
+	await send('Runtime.evaluate', {
+		expression: 'document.querySelectorAll("[data-dsh-ref]").forEach((el) => el.removeAttribute("data-dsh-ref")); void 0;',
+		returnByValue: true,
+	}).catch(() => {});
+	const tree = await send('Accessibility.getFullAXTree');
+	const nodes = (tree && tree.nodes) || [];
+	if (!Array.isArray(nodes)) throw new Error('Accessibility.getFullAXTree 没有返回 nodes');
+	const candidates = nodes.filter((node) => node
+		&& node.ignored !== true
+		&& node.backendDOMNodeId !== undefined
+		&& AX_ACTIONABLE_ROLES.has(String(node.role && node.role.value || '').toLowerCase()));
+	const items = [];
+	const skipped = { unresolved: 0, invisible: 0 };
+	for (const node of candidates) {
+		if (items.length >= limit) break;
+		const ref = 'e' + (items.length + 1);
+		let resolved = null;
+		try {
+			resolved = await send('DOM.resolveNode', { backendNodeId: node.backendDOMNodeId });
+		} catch {
+			resolved = null;
+		}
+		const objectId = resolved && resolved.object && resolved.object.objectId;
+		if (!objectId) { skipped.unresolved += 1; continue; }
+		let call = null;
+		try {
+			call = await send('Runtime.callFunctionOn', {
+				objectId, functionDeclaration: AX_STAMP_FN, arguments: [{ value: ref }], returnByValue: true,
+			});
+		} catch {
+			skipped.unresolved += 1;
+			continue;
+		}
+		if (call && call.exceptionDetails) { skipped.unresolved += 1; continue; }
+		const geo = call && call.result ? call.result.value : null;
+		if (!geo) { skipped.invisible += 1; continue; }
+		items.push({
+			ref,
+			tag: geo.tag,
+			why: 'ax',
+			role: String(node.role && node.role.value || '').toLowerCase() || undefined,
+			name: String(node.name && node.name.value || '').replace(/\s+/g, ' ').slice(0, 80) || undefined,
+			type: geo.type,
+			href: geo.href,
+			value: geo.value,
+			rect: geo.rect,
+		});
+	}
+	const meta = await send('Runtime.evaluate', {
+		expression: 'JSON.stringify({ title: document.title, url: location.href })',
+		returnByValue: true,
+	}).then((r) => {
+		try { return JSON.parse(String(r.result && r.result.value)); } catch { return {}; }
+	}).catch(() => ({}));
+	return {
+		tabId: tab.id,
+		mode: 'ax',
+		title: meta.title,
+		url: meta.url,
+		total: candidates.length,
+		ax: { nodes: nodes.length, candidates: candidates.length, ...skipped },
+		items,
+	};
+}
+
 async function cmdSnapshot(params) {
 	const tab = await resolveTab(params.tabId);
 	const limit = Math.min(200, Math.max(1, Number(params.limit) || 120));
+	const wantAx = String(params.mode ?? params.source ?? 'dom').toLowerCase() === 'ax';
 	return withCDP(tab.id, async (send) => {
 		await send('Runtime.enable').catch(() => {});
+		// AX 是可选项：页面给不出无障碍树时**不**让整次调用失败，而是落回 DOM 并报明原因
+		// （上游 v1.0.11 的口径；插件侧还会再兜一层"旧扩展静默忽略 mode:ax"）。
+		let axFallback;
+		if (wantAx) {
+			try {
+				const ax = await snapshotViaAx(send, tab, limit);
+				ax.limitedTo = limit;
+				return ax;
+			} catch (error) {
+				axFallback = String((error && error.message) || error);
+			}
+		}
 		const payload = await send('Runtime.evaluate', {
 			expression: `(() => {
 				const ATTR = 'data-dsh-ref';
@@ -1645,6 +1985,8 @@ async function cmdSnapshot(params) {
 			if (res.exceptionDetails) throw new Error(res.exceptionDetails.text);
 			return res.result.value;
 		});
+		payload.mode = 'dom';
+		if (axFallback !== undefined) payload.axFallback = axFallback;
 		payload.limitedTo = limit;
 		return payload;
 	});
@@ -1652,7 +1994,8 @@ async function cmdSnapshot(params) {
 
 const COMMANDS = {
 	ping: cmdPing, 'browser.info': cmdBrowserInfo,
-	'tabs.list': cmdTabsList, 'tabs.open': cmdTabsOpen, 'tabs.close': cmdTabsClose, 'tabs.activate': cmdTabsActivate,
+	'tabs.list': cmdTabsList, 'tabs.open': cmdTabsOpen, 'tabs.close': cmdTabsClose, 'tabs.closeMany': cmdTabsCloseMany, 'tabs.activate': cmdTabsActivate,
+	'tabs.group': cmdTabGroup, 'tabs.ungroup': cmdTabUngroup,
 	nav: cmdNav, eval: cmdEval, content: cmdContent, 'content.debug': cmdContentDebug, find: cmdFind, frames: cmdFrames,
 	click: cmdClick, input: cmdInput, press: cmdPress, scroll: cmdScroll,
 	snapshot: cmdSnapshot, screenshot: cmdScreenshot,

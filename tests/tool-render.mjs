@@ -421,12 +421,126 @@ console.log('\n[8] 2026-10-09 修的模型可见契约（bi-015 / bi-016 / F-1 /
 	}
 
 	// 工具面总数（防止新增工具被分层名单漏掉时无人发现）。
-	// 27 = 原宿主 24 + de-036 从 buddy 合并进来的 3（browser_tools / browser_frames / browser_frame_eval）。
+	// 30 = 27 + 2026-10-13 吸收上游 v1.0.9 的 3 个（browser_find / browser_dialog / browser_info）。
 	const browserTools = [...tools.keys()].filter((n) => n.startsWith('browser_'))
-	check('宿主侧 browser_* 工具数 = 27（含 browser_wait 与合并进来的 3 个）', browserTools.length === 27, `${browserTools.length}: ${browserTools.join(',')}`)
+	check('宿主侧 browser_* 工具数 = 30（含 2026-10-13 新并入的 find/dialog/info）', browserTools.length === 30, `${browserTools.length}: ${browserTools.join(',')}`)
 	for (const merged of ['browser_tools', 'browser_frames', 'browser_frame_eval']) {
 		check(`合并进来的 ${merged} 已注册`, browserTools.includes(merged))
 	}
+}
+
+console.log('\n[9] 2026-10-13 吸收上游：read 窗口 / find / dialog / info / nav 未落地')
+{
+	// read：头部必须说清「这是哪一段、下一段怎么取」——否则长页面只能一次倒进上下文。
+	const longRead = renderText('browser_read', { offset: 20000 }, {
+		tabId: 3, mode: 'text', title: '长页', url: 'https://example.com/long',
+		content: 'x'.repeat(100), truncated: true, offset: 20000, totalChars: 43210,
+	})
+	check('read 头含区间 chars 20000-20100 of 43210', longRead.includes('chars 20000-20100 of 43210'), longRead.split('\n')[0])
+	check('read 头含「call again with offset=20100」', longRead.includes('call again with offset=20100'))
+	check('read 正文就是窗口那一段', longRead.includes('x'.repeat(100)))
+	const shortRead = renderText('browser_read', {}, { tabId: 3, mode: 'text', title: 't', url: 'u', content: 'abc', truncated: false, offset: 0, totalChars: 3 })
+	check('读完了就不再提示 offset=', !shortRead.includes('call again with offset='))
+
+	// find：给人看的行，不是半截 JSON。
+	const found = renderText('browser_find', { selector: '.sku' }, {
+		tabId: 3, selector: '.sku', count: 7,
+		items: [
+			{ tag: 'div', id: 'a', class: 'sku-plus active', text: '加价购', rect: '120×40 @300,410' },
+			{ tag: 'a', href: '/x', rect: '10×10 @0,0' },
+		],
+	})
+	check('find 头含总数与选择器', found.includes('7 个匹配') && found.includes('.sku'))
+	check('find 行含 tag/id/class 与视口矩形', found.includes('div#a.sku-plus.active') && found.includes('@300,410'))
+	check('find 行含 href', found.includes('→ /x'))
+	check('find 不是半截 JSON', !found.trim().startsWith('{'))
+
+	// dialog：策略 + 最近记录（用来证明"确实弹过"）。
+	const dlg = renderText('browser_dialog', {}, {
+		policy: 'manual', changed: false,
+		recent: [{ type: 'alert', message: '确定要删除吗', at: '12:00:01' }],
+	})
+	check('dialog 报出当前策略', dlg.includes('对话框策略 = manual'))
+	check('dialog 列出历史记录', dlg.includes('确定要删除吗') && dlg.includes('[alert]'))
+	check('dialog 无记录时明说没有', renderText('browser_dialog', {}, { policy: 'accept', changed: false, recent: [] }).includes('最近没有对话框记录'))
+
+	// info：身份 + 协议对账（"行为不对先跑它"的那条）。
+	const info = renderText('browser_info', {}, {
+		client: 'dsh-browser-extension', extensionVersion: '1.0.20',
+		browserName: 'edge', browserVersion: '155.0.0.0', userAgent: 'UA',
+		bridgeProtocol: 1, extensionProtocol: 1, protocolCompatible: true, port: 9777, urlMode: 'public',
+	})
+	check('info 含扩展版本与浏览器名版本', info.includes('1.0.20') && info.includes('edge 155.0.0.0'))
+	check('info 含协议对账行', info.includes('桥 v1 / 扩展 v1'))
+	check('info 协议不匹配时把原因说出来', renderText('browser_info', {}, {
+		client: 'c', extensionVersion: '9.9.9', browserName: 'b', browserVersion: '1', userAgent: 'u',
+		bridgeProtocol: 1, extensionProtocol: 2, protocolCompatible: false, protocolNote: '扩展声明协议 v2',
+	}).includes('扩展声明协议 v2'))
+
+	// nav：没等到落地时要说清"还在加载哪个地址"。
+	const nav = renderText('browser_navigate', { url: 'https://slow.example/x' }, {
+		tabId: 3, url: 'https://old.example/', title: '旧页', loadPending: true, pendingUrl: 'https://slow.example/x',
+	})
+	check('nav 的"仍在加载"带上目标地址', nav.includes('https://slow.example/x') && nav.includes('仍在加载'))
+	check('nav 不可达时不再说"now shows 目标URL"', renderText('browser_navigate', { url: 'https://dead.example/' }, {
+		tabId: 3, url: 'https://dead.example/', siteUnreachable: true, error: 'DNS 解析失败',
+	}).includes('target unreachable'))
+}
+
+console.log('\n[10] 2026-10-13 第二段：snapshot 的 ax 模式与"旧扩展静默忽略"的告警')
+{
+	// ax 模式的渲染：role 要出现（它才是这一模式的价值），且标明这是 a11y 树。
+	const ax = renderText('browser_snapshot', { mode: 'ax' }, {
+		tabId: 3, title: '登录页', url: 'https://example.com/login', mode: 'ax',
+		items: [
+			{ ref: 'e1', tag: 'input', role: 'textbox', name: '用户名', why: 'ax' },
+			{ ref: 'e2', tag: 'button', role: 'button', name: '登录', why: 'ax' },
+		],
+	})
+	check('ax 渲染出 role', ax.includes('[textbox]') && ax.includes('[button]'))
+	check('ax 渲染标明这是 a11y 树', ax.includes('a11y 树'))
+	check('ax 不再把 why=ax 当作"cursor 兜底"打印', !ax.includes('(ax)'))
+
+	// 落回 dom 时，原因必须写进模型可见文本（不能静默）。
+	const fell = renderText('browser_snapshot', { mode: 'ax' }, {
+		tabId: 3, title: 't', url: 'u', mode: 'dom', axFallback: 'Accessibility.getFullAXTree 没有返回 nodes',
+		items: [{ ref: 'e1', tag: 'a', name: 'x' }],
+	})
+	check('落回 dom 时写明原因', fell.includes('落回了 dom') && fell.includes('没有返回 nodes'))
+
+	// 判定逻辑本身（纯函数）：真 ax / 有原因 / 旧扩展静默忽略 / 没请求。
+	const mod = await import(pathToFileURL(path.join(pkg, 'lib', 'index.js')).href)
+	check('扩展回 mode:ax ⇒ 判为 ax', mod.snapshotModeOf('ax', undefined, true).mode === 'ax')
+	check('扩展回 axFallback ⇒ 连原因一起带出去',
+		mod.snapshotModeOf('dom', 'boom', true).axFallback === 'boom')
+	const ignored = mod.snapshotModeOf(undefined, undefined, true)
+	check('旧扩展静默忽略 ⇒ 插件自己把降级说出来',
+		ignored.mode === 'dom' && String(ignored.axFallback).includes('ignored mode:"ax"'), String(ignored.axFallback).slice(0, 60))
+	check('没请求 ax ⇒ 不产生告警', mod.snapshotModeOf(undefined, undefined, false).axFallback === undefined)
+}
+
+console.log('\n[11] 2026-10-13 第三段：tabs 的归组/批量关闭/打开，都给人话')
+{
+	const closed = renderText('browser_tabs', { action: 'close' }, {
+		closed: 2, closedIds: [11, 12], alreadyGone: [13], failedIds: [{ id: 14, error: 'boom' }],
+	})
+	check('批量关闭报"关掉的 / 本来就不在 / 失败"三类', closed.includes('已关闭 2 个') && closed.includes('本来就不在了：13') && closed.includes('失败：14'))
+
+	const grouped = renderText('browser_tabs', { action: 'group' }, { tabId: 7, grouped: true, groupId: 42, created: true })
+	check('归组成功说清 groupId 与新建/复用', grouped.includes('已归入 DSH 分组') && grouped.includes('groupId=42') && grouped.includes('新建'))
+
+	const ungrouped = renderText('browser_tabs', { action: 'ungroup' }, { ungrouped: 5, groups: 2 })
+	check('拆组说清"没关任何标签页"', ungrouped.includes('已解除 5 个标签') && ungrouped.includes('没有关闭任何标签页'))
+
+	const opened = renderText('browser_tabs', { action: 'open', url: 'https://x/' }, {
+		tabId: 9, url: 'https://x/', title: 'X', grouped: true,
+	})
+	check('打开标签说清落地地址与归组', opened.includes('已打开 tab 9') && opened.includes('https://x/') && opened.includes('已归入 DSH 分组'))
+
+	const openedNoGroup = renderText('browser_tabs', { action: 'open', url: 'https://x/' }, {
+		tabId: 9, url: 'https://x/', title: 'X', grouped: false, reason: 'group:false',
+	})
+	check('没归组时把原因说出来', openedNoGroup.includes('没归组') && openedNoGroup.includes('group:false'))
 }
 
 const failed = results.filter((r) => !r.ok)

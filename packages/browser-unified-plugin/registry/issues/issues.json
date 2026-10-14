@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-10T10:06:00.000Z",
+  "lastUpdated": "2026-10-14T14:35:00.000Z",
   "purpose": "浏览器插件的**第二部分注册表：调用时的问题**（第一部分 registry/design/registry.json 记「功能对齐与计划」，本文件记「实际调用时踩到的坑」）。用法：模型在某会话里首次调用 browser_* 时会收到 open 问题的绕行摘要（+ 自上次调用以来已修复的问题告知）；完整内容只在调用 browser_issues 时输出，避免每轮占 token。",
   "fields": {
     "status": "open（仍存在，必须给 workaround）| fixed（已修，写 fixedIn）| wontfix（不修，写原因）",
@@ -831,6 +831,187 @@
         }
       ],
       "fixedIn": "core 0.1.4"
+    },
+    {
+      "id": "bi-033",
+      "title": "缺「拖拽/按住-移动-松开」能力：滑块类控件（含人机校验）无法操作",
+      "status": "open",
+      "symptom": "扩展的 `click` 只做**同坐标**的 mouseMoved → mousePressed → mouseReleased（`extension/background.js:1332-1334`），命令表里没有任何 drag 类命令。于是所有\"按住并移动\"的交互都做不到：滑块控件（音量/价格区间/图片裁剪）、看板拖拽、拖放上传。2026-10-10 实测撞到：用浏览器插件试注册 GitHub 账号时被人机校验拦住（DataDome 滑块；页面自述\"您使用的 IP 地址(120.227.23.150)与网路机器人相同\"），滑块无法操作。",
+      "workaround": "（未修）需要拖拽的交互请用户本人操作。**人机校验一律交回真人**：不尝试程序化通过反机器人校验（既不合规也不可靠）。只读诊断仍按现有能力做：`browser_network_log` 看 403/挑战域名、`browser_frames` 看挑战 iframe、`browser_screenshot` 看实际画面、`browser_evaluate` 读 readyState/标题。",
+      "match": "drag|拖拽|滑块|pointer-hold|人机校验|captcha",
+      "affected": "扩展 ≤1.0.19（全版本）",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "capability-gap",
+        "extension",
+        "interaction"
+      ],
+      "evidence": "同坐标点击的代码：`extension/background.js:1332-1334`（mouseMoved/mousePressed/mouseReleased 全用 hit.x/hit.y）；整个 COMMANDS 表 grep 无 drag。本次实测链路：navigate `github.com/signup` → network_log 见 `GET /signup → 403` 且随后 `geo.captcha-delivery.com/captcha/... → 200` → evaluate 见 `readyState=complete` 但 `body.innerText` 长度 0 → screenshot 见中文滑块提示 → frames 见顶层唯一**跨域** iframe 即挑战页（解释了\"正文空但画面上有字\"）。",
+      "history": [
+        {
+          "at": "2026-10-10T14:35:00.000Z",
+          "what": "created（用户要求用浏览器插件试注册 GitHub 账号时撞到。用户明确：人机校验这步不程序化攻克；「通用拖拽能力」记为待办）"
+        }
+      ]
+    },
+    {
+      "id": "bi-034",
+      "title": "`browser_press` 一次按键插两遍：输入框得到 `xx`、`Enter` 把表单提交两次",
+      "status": "fixed",
+      "symptom": "按一次 `x`，输入框里出现 `xx`；按一次 `Enter`，表单被提交两次；数字键同样翻倍。**全程不报错** —— 页面上只是\"多了一个字符\"，看起来像用户手滑，所以坏了很多版都没人报。`browser_type` 的 `submit:true` 走的是同一条 `press` 通道（插件侧先 `input` 再 `press Enter`），所以\"填完即提交\"也会提交两次。真机读数（改前）：`value=\"xx\"`、keydown=1 **keypress=2 input=2 beforeinput=2**。",
+      "workaround": "（已修）扩展 1.0.20 + 插件 0.11.21。旧版本上：① 需要输入文本时优先用 `browser_type` 的默认 fill 模式（直写 value + input/change，不走按键通道）；② 别用 `submit:true`，改成 `browser_type` 后再显式 `browser_click` 提交按钮；③ `browser_press` 只用于不需要插入字符的键（方向键、Tab、Escape 不受影响）。",
+      "match": "browser_press|submit:true|重复触发",
+      "affected": "扩展 ≤1.0.19（全版本）",
+      "firstSeen": "2026-10-13",
+      "tags": [
+        "bug",
+        "extension",
+        "keyboard",
+        "silent-failure"
+      ],
+      "evidence": "根因：CDP `Input.dispatchKeyEvent` 的 `type:'keyDown'` **带 `text` 时 Chrome 自己会补一个 char/keypress**（`rawKeyDown` 才不补），而 `cmdPress` 在这之后又显式发了一条 `type:'char'` ⇒ 一次按键插入两遍。上游 caob23 是同一个坑（其 issue #14），2026-10-13 他自己以同样方式修掉（`908a149f9`）。真机前后对照（rig：真 Edge 155 headless=new + 真扩展 sideload + 假桥 `__pr-d-rig/stub.mjs`@9781；页面 `/press` 数事件；改前 9 项 6 失败 → 改后 9/9）：`x` → `\"xx\"`→`\"x\"`；`7` → `\"77\"`→`\"7\"`；表单内 `Enter` → submit 2→**1**；对照项 `ArrowRight`（不带 text）两版都不插字符、keydown 均 1。证据文件 `__pr-d-rig/evidence-unified-UB0.json` / `-UC1.json`，场景脚本 `unified-bugs-real.mjs`，收官 `rig edge killed: 16; left: 0`。顺带发现（本版未动）：`Shift+X` 落成小写 `x`（`text` 直接取 `key` 原文）。",
+      "history": [
+        {
+          "at": "2026-10-13T02:00:00.000Z",
+          "what": "created（真机 rig 复现并定位到 `cmdPress` 多余的 char 派发）"
+        },
+        {
+          "at": "2026-10-13T02:20:00.000Z",
+          "what": "status -> fixed（扩展 1.0.19→1.0.20；改前/改后成对真机取证 6 失败 → 9/9）"
+        }
+      ],
+      "fixedIn": "扩展 1.0.20 + 插件 0.11.21"
+    },
+    {
+      "id": "bi-035",
+      "title": "`browser_emulate` 不覆盖 UA 时**每次**抛 `ToolOutputError`（`device:\"desktop\"` 与自定义宽高全坏）",
+      "status": "fixed",
+      "symptom": "调用 `browser_emulate` 传 `device:\"desktop\"`、或只给 `width`/`height` 的自定义视口时，宿主侧固定报 `\"value.userAgent\" must be a string`（`ToolOutputError`）。只有带真 UA 的预设（`mobile-iphone-13` / `mobile-pixel-7` / `tablet-ipad`）能正常返回 —— 所以这条从 0.7 起一直坏着，却因为最常见的\"桌面预设\"恰好是最少被调的而长期没暴露。",
+      "workaround": "（已修）插件 0.11.21。旧版本上：需要桌面视口时改用 `device:\"mobile-iphone-13\"` 之类带真 UA 的预设，或给 `browser_emulate` 显式传一个 `userAgent` 字符串（传了就绕过 null）。",
+      "match": "ToolOutputError|value\\.userAgent|must be a string",
+      "affected": "插件 ≤0.11.20（扩展端始终回显式 `null`，与版本无关）",
+      "firstSeen": "2026-10-13",
+      "tags": [
+        "bug",
+        "contract",
+        "tool-output",
+        "silent-failure"
+      ],
+      "evidence": "根因：扩展在无 UA 覆盖时回的是**显式** `userAgent: null`（`extension/background.js` 的 `userAgent: userAgent || null`），而宿主的输出校验器对 `null` **会下钻判类型**（只跳过 `undefined`）；插件把回包原样透传 ⇒ 校验失败。上游 caob23 在 v1.0.14 修的是同一条。修法：新增导出纯函数 `normalizeEmulateValue()`（插件 `src/index.ts`），逐个字段按类型收口、`null`/缺字段一律不落进结果。两层验证：① 契约层 —— 新增 `tests/emulate-contract.mjs`（**用宿主机自己的校验器** `@deepseek-ai/dsh-tools` 的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue`）12/12：真机回包原样必须**不合格**（阳性对照，实测报 `\"value.userAgent\" must be a string`）、归一化后合格，另覆盖\"带真 UA 的预设不能被丢掉\"与 reset 回包；② 真机层 —— rig 里实测回包确实是 `{\"tabId\":…,\"width\":1280,\"height\":800,…,\"userAgent\":null}`（**显式 null，不是缺字段**）。",
+      "history": [
+        {
+          "at": "2026-10-13T02:30:00.000Z",
+          "what": "created（对照上游 v1.0.14 的修法时在自己的扩展/插件链路上复现）"
+        },
+        {
+          "at": "2026-10-13T02:50:00.000Z",
+          "what": "status -> fixed（插件 0.11.21；契约测试 12/12，rig 确认扩展回显式 null）"
+        }
+      ],
+      "fixedIn": "插件 0.11.21"
+    },
+    {
+      "id": "bi-036",
+      "title": "`browser_navigate` 遇到「永远加载中」的页面会挂住：扩展的落地探针没有超时，整次调用只能等桥的 60s 兜底",
+      "status": "fixed",
+      "symptom": "导航到一个**接受连接但永不回正文**的地址时（真机上如被丢包的 `example.com:81`，rig 里如假桥的 `/hang`），`browser_navigate` 不会在扩展自己那个「落地等待」预算内返回，而是一路挂到桥的 60s 兜底（新版本会报 `[command_timeout] … effectState=unknown`）。页面卡在加载态，随后的 `browser_read` 只能读到空正文。",
+      "workaround": "（已修）扩展 1.0.21：导航后的落地探针包上了 withBudget(promise, 2500, null) —— 文档卡在 commit 之前时最多等 2.5s，然后按「探不到落地地址」继续，loadPending/pendingUrl 仍然如实交代。旧版本上：别连续重试同一地址（effectState=unknown），用 browser_tabs action=list 看目标标签是不是还在 loading，必要时 action=close 掉它。",
+      "match": "command_timeout|loadPending|永远加载",
+      "affected": "扩展 ≤1.0.20（全版本）",
+      "firstSeen": "2026-10-13",
+      "tags": [
+        "bug",
+        "extension",
+        "navigation",
+        "timeout"
+      ],
+      "evidence": "2026-10-13 rig 实测（真 Edge 155 headless=new + 真扩展 1.0.92 + 假桥 9781）：`nav` 到 `http://localhost:9781/hang`（接受连接、60s 不回正文）时，`/ctl/cmd` 在 25s 预算内没有拿到任何回答（`rig timeout after 25000ms`），随后 `content` 读到 `len=0`。同一台子上「慢但有限」的 `/slow?ms=8000`（落地预算给 1500ms）正常返回 `{loadPending:true, pendingUrl:…/slow?ms=8000}` —— 差异只在「页面是否永远不完成」。定位：`cmdNav` 落地等待结束后用 `withCDP` 做落地 URL 探针（读 `location.href` 与 `#main-frame-error`），那次 `Runtime.evaluate` **没有超时预算**，文档一直不 commit 时它就挂着（对比：`cmdEval` 早就有 `evalTimeoutMs` 兜底）。上游扩展同源但另属一套实现，未核。",
+      "history": [
+        {
+          "at": "2026-10-13T12:20:00.000Z",
+          "what": "created（第一段吸收上游时，rig 契约核对里用 /hang 造边界条件撞到；同批 10 项其余全过）"
+        },
+        {
+          "at": "2026-10-13T13:05:00.000Z",
+          "what": "status -> fixed（扩展 1.0.21；rig 实测：/hang 下 nav 从「25s 无任何回答」变成 5.7s 返回 + loadPending=true + pendingUrl=…/hang。上游 v1.0.11 用同名 withBudget 修过同一现象，其注释写着「无预算的探针让 nav 40 多秒没回答」—— 与本机复现一致）"
+        }
+      ],
+      "fixedIn": "扩展 1.0.21（插件 0.11.22 起）"
+    },
+    {
+      "id": "bi-037",
+      "title": "已打开的局域网标签页也被政策拒绝（读不了路由器管理页）",
+      "status": "open",
+      "symptom": "在**已打开**的小米路由器管理页标签页（http://192.168.31.1/cgi-bin/luci/...）上调用 browser_read：`WEB_REALM_DENIED: LAN access is denied by policy: 192.168.31.1 — operating on this open tab is refused`。browser_tabs list 正常、能列出该标签页；此前 browser_navigate 到 172.18.71.254 同样被拒（LAN access is denied）。",
+      "firstSeen": "2026-10-14",
+      "history": [
+        {
+          "at": "2026-10-14T14:02:25.888Z",
+          "what": "created via browser_issues"
+        },
+        {
+          "at": "2026-10-14T14:10:00.000Z",
+          "what": "id bi-036 -> bi-037：与另一会话同日登记的 bi-036（nav 落地探针无超时）撞号。原因是两个「登记簿」副本状态不同（装机副本 34 条、仓库副本 35 条），各写各的。两处副本已合并为同一份。"
+        }
+      ],
+      "workaround": "策略行为，不是故障（局域网档默认 deny）。要读/驱动内网或路由器管理页：① 请主人把该主机加进 allowHosts，或把「局域网」档改成 allow/ask 并当场放行；② **改完必须重启 `dsh web` 才生效** —— 运行中改设置目前一律不生效（见 bi-038），所以「改了还是被拒」是预期现象，不是策略没写进去；③ 否则只能请主人自己看页面并转述关键字段（截图/念几行）。**不要对同一目标重试**。",
+      "tags": [
+        "cross-session-collision",
+        "lan",
+        "policy",
+        "realms",
+        "router-admin"
+      ]
+    },
+    {
+      "id": "bi-038",
+      "title": "运行中改设置**一律不生效**（要重启 dsh web）：插件在 apply 时把配置快照死了，且没监听 loader/volatile-update",
+      "status": "fixed",
+      "symptom": "在设置页把「局域网访问 / 本机（回环）访问」改成**放行**（写入 `~/.dsh/profiles/web/cordis.patch.yml`：`lanAccess: allow`、`localAccess: allow`），页面显示已保存，但 `browser_policy_status` 仍报「局域网: deny（预设）/ 本机: deny（预设）」，实际访问仍被 `WEB_REALM_DENIED` 拒绝。`dsh web`（pid 58952）启动于 2026-10-14 18:29，设置文件写于同日 20:00 —— 写入晚于启动，且**重启前怎么等都不会生效**。",
+      "firstSeen": "2026-10-14",
+      "evidence": "① `~/.dsh/profiles/web/cordis.patch.yml` 第 37/46 行确有 `lanAccess: allow` / `localAccess: allow`，mtime 2026-10-14 20:00；② `ps -o lstart` 显示 web 进程 18:29:21 启动（早于写入 1.5 小时）；③ 桥侧读数仍是 deny；④ 根因在 loader：`@deepseek-ai/cordis-plugin-loader/lib/index.js` 第 380-420 行 —— 纯 volatile 的 config 变更**不重跑 apply**，只把新值原地提交进运行中的引用，并发 `loader/volatile-update`（带变更路径）事件；⑤ 本插件在 `apply()` 里一次性 `unwrapVolatile(config)` 快照成 `resolved`，闭包后不再更新，且**没有订阅** `loader/volatile-update` —— 代码注释里那句「改一次设置 = 重组一次条目 = 重跑本函数」与 loader 的实际行为不符。",
+      "workaround": "（已修，0.11.22 起）档位/开关改完**即时生效**，不再需要重启。在那之前的版本上：改完要重启 `dsh web` 才生效，**别对同一目标反复重试**；给主人报状态一律以 `browser_policy_status` 的读数为准（设置页显示的是\"存下来的值\"）。",
+      "tags": [
+        "config",
+        "fixed-0.11.22",
+        "hot-reload",
+        "policy",
+        "restart-required",
+        "settings",
+        "volatile"
+      ],
+      "history": [
+        {
+          "at": "2026-10-14T14:20:00.000Z",
+          "what": "created（另一会话按「加 allowHosts/改档位」处理仍被拒后，由本会话定位到 loader 层根因）"
+        },
+        {
+          "at": "2026-10-14T14:35:00.000Z",
+          "what": "status -> fixed。修法：apply 里把校验抽成 `validate()`，并订阅 `loader/volatile-update` —— 收到事件后用**原始** config 重新 `unwrapVolatile`（那些 volatile 包装的 `.get()` 已被宿主原地提交成新值）→ `resolved = next`（`current()` 及所有闭包跟着变）→ `controller.reconcile(next)`；同时给 buddy 加 `refreshConfig(raw)` 重建 `cfg`/`enabledGroups`/`resident`（它的 apply 同样不会重跑）。校验走同一条路：非法值只 warn 并继续用上一份好配置，不许\"热更新绕过校验\"。回归测试 `tests/config-hot-update.mjs` **11/11**（仿 loader 的 volatile 包装：原地提交 + 事件 ⇒ 策略与分层立刻跟着变）。"
+        }
+      ],
+      "fixedIn": "插件 0.11.22"
+    },
+    {
+      "id": "bi-039",
+      "title": "问题登记簿有两个副本（装机包 / 源码仓库）且会各自漂移：`browser_issues add` 只按读到的那一份分配 id，跨会话会撞号",
+      "status": "open",
+      "symptom": "2026-10-14 两个会话同一天各写了一条 `bi-036`：装机副本里是「局域网标签页被政策拒绝」（那侧 add 时该副本最大 id 是 bi-035），仓库副本里是「nav 落地探针无超时」（本会话稍早写的）。两份文件都合法、各自内部 id 唯一，但**含义冲突**，而且下次 `build-pack` / 安装会用仓库那份**覆盖**装机那份（对方那条会静默消失）。",
+      "firstSeen": "2026-10-14",
+      "evidence": "装机副本 `/home/wsluser/.dsh/profiles/web/node_modules/dsh-browser-unified/registry/issues/issues.json`（35 条，lastUpdated 2026-10-14T14:02Z）与仓库副本 `packages/browser-unified-plugin/registry/issues/issues.json`（35 条，lastUpdated 2026-10-13T13:05Z）在 bi-036 上含义不同。",
+      "workaround": "① 写问题前先确认在看哪一份（`browser_issues` 读的是**装机副本**；它由包的 `registry/` 决定，配置项 `registryDir` 为空时就是装机包自带那份）；② 写完把两份同步（本会话已把两处合并成同一份：bi-036 = nav 探针（已修）、bi-037 = 局域网被拒（对方那条））；③ 想根治：把 profile 里的 `registryDir` 指向仓库那份（单一事实源），或让 `browser_issues add` 取两份的最大 id —— 两者都要重启才生效（bi-038）。",
+      "tags": [
+        "registry",
+        "cross-session-collision",
+        "id-allocation",
+        "two-copies"
+      ],
+      "history": [
+        {
+          "at": "2026-10-14T14:20:00.000Z",
+          "what": "created（合并本次撞号时发现）"
+        }
+      ]
     }
   ]
 }

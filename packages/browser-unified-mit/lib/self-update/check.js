@@ -15,7 +15,7 @@
  * Pure functions, no I/O, no DSH dependency. License: MIT (part of
  * dsh-browser-unified-mit; see NOTICE.md).
  */
-import { impactRowsFor } from './registry.js';
+import { impactRowsFor, repoRole } from './registry.js';
 function classify(pinSha, head) {
     if (!head)
         return 'unknown';
@@ -28,10 +28,19 @@ function classify(pinSha, head) {
 /**
  * Build the per-repo status report set. `observations` maps repo id -> remote
  * observation; repos without an observation are reported as unreachable.
+ *
+ * 只报告 `role=merge` 的来源（缺省即 merge）；`reference`/`attribution` 档
+ * 只在决定接线某功能时按需翻归档，不进这个定时自检（它们的 id 收在
+ * `skippedNonMerge` 里，读者仍知道跳过了谁）。
  */
 export function buildReport(baseline, registry, observations, opts = {}) {
     const reports = [];
+    const skippedNonMerge = [];
     for (const repo of baseline.repos) {
+        if (repoRole(repo) !== 'merge') {
+            skippedNonMerge.push(repo.id);
+            continue;
+        }
         const obs = observations[repo.id];
         const head = obs?.head;
         const status = obs?.unreachable
@@ -42,6 +51,7 @@ export function buildReport(baseline, registry, observations, opts = {}) {
             url: repo.url,
             pinnedSha: repo.pinnedSha,
             pinnedVersion: repo.pinnedVersion,
+            role: repoRole(repo),
             status,
             baselineRef: baseline.pinnedAt ?? '',
         };
@@ -78,6 +88,7 @@ export function buildReport(baseline, registry, observations, opts = {}) {
     return {
         anyDrift: reports.some((r) => r.status === 'drift' || r.status === 'rewritten'),
         reports,
+        skippedNonMerge,
         openDesign,
     };
 }

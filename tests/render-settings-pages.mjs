@@ -353,6 +353,54 @@ console.log('\n[3] 页面侧探测（fetch 桩返回一座在 9778 的桥）')
 	check('端口与配置不一致时给出顺延提示', rendered.includes('已自动顺延'))
 }
 
+// ---- [胶囊] 2026-10-14：写完"真改了"才弹「配置已保存」，改不动要能看出来 --------
+{
+	const mod = loadClient(vendorClient, React)
+	const T2 = mod.__test
+	check('client 半区导出纯函数入口 __test', T2 !== undefined && typeof T2.writeOutcome === 'function')
+	if (T2) {
+		// 判定表：saved（真改了）/ noop（选了个一样的）/ pending（超时没看到）/ wait（继续等）
+		check('改了值且快照已是新值 ⇒ saved', T2.writeOutcome('allow', 'deny', 'deny', false) === 'saved')
+		check('新值跟原来一样 ⇒ noop（不打扰）', T2.writeOutcome('allow', 'allow', 'allow', false) === 'noop')
+		check('超时还没看到新值 ⇒ pending', T2.writeOutcome('allow', 'deny', 'allow', true) === 'pending')
+		check('没到超时 ⇒ wait', T2.writeOutcome('allow', 'deny', 'allow', false) === 'wait')
+		check('没改过这一项（undefined→undefined）⇒ noop', T2.writeOutcome(undefined, undefined, undefined, false) === 'noop')
+		check('列表按 JSON 深比较', T2.writeOutcome([], ['a.com'], ['a.com'], false) === 'saved'
+			&& T2.writeOutcome([], ['a.com'], [], true) === 'pending')
+		// 主机列表自查（与插件 assertHostList 同规则）
+		check('合法主机条目放行', ['example.com', '*.suffix', '1.2.3.4', '127.0.0.1'].every((h) => T2.validHostEntry(h)))
+		check('非法条目拦下（空白 / 协议 / 路径 / 空串）',
+			['a b', 'http://x', 'a/b', '', '  ', 'a@b', 'a?b'].every((h) => !T2.validHostEntry(h)))
+	}
+	// 页面上不该再有"保存即时生效"这类自夸；胶囊文案必须在
+	const src = readFileSync(vendorClient, 'utf8')
+	check('页面文案不再自夸「保存即时生效」', !src.includes('保存即时生效') && !src.includes('Saves apply live'))
+	check('胶囊文案齐备（zh+en，未生效那句已按用户口径改词）',
+		src.includes("savedToast: '配置已保存'") && src.includes("savedToast: 'Saved'")
+		&& src.includes("writePending: '配置尚未生效'") && src.includes("writePending: 'Not applied yet'")
+		&& src.includes("writeInvalid: '格式不对，没保存'"))
+	check('复验轮询有硬上界（1.5s）且只在 wait 分支重排 —— 不会常驻轮询',
+		/var deadline = Date\.now\(\) \+ 1500/.test(src)
+		&& /if \(outcome === 'wait'\) \{ window\.setTimeout\(step, 60\); return \}/.test(src))
+	check('卸载后不再 setState（aliveRef 守卫）',
+		/aliveRef\.current = false/.test(src) && /if \(!aliveRef\.current\) return/.test(src))
+	// 用假时钟把整条复验链跑一遍（与源码同构：deadline=now+1500，只在 wait 时按 60ms 重排）
+	{
+		let ticks = 0
+		let clock = 0
+		let outcome = 'wait'
+		while (outcome === 'wait' && ticks < 200) {
+			outcome = T2.writeOutcome('allow', 'deny', 'allow', clock > 1500)
+			if (outcome === 'wait') { clock += 60; ticks += 1 }
+		}
+		check('假时钟复现：1.5s 后必出「未生效」，最多 ~26 步、之后不再重排',
+			outcome === 'pending' && ticks <= 26 && clock <= 1560, `outcome=${outcome} ticks=${ticks} clock=${clock}ms`)
+	}
+	check('成功不再写内联「已保存」（改由胶囊回报）', !/setBusy\('saved'\)/.test(src))
+	check('胶囊会覆盖前一个（先清旧定时器）',
+		/if \(capsuleTimer\.current\) window\.clearTimeout\(capsuleTimer\.current\)/.test(src))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {

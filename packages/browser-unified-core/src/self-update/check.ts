@@ -11,8 +11,8 @@
  * browser-unified-core; see NOTICE.md).
  */
 
-import type { BaselineDocument, DesignRegistry, ImpactRule } from './registry.js'
-import { impactRowsFor } from './registry.js'
+import type { BaselineDocument, DesignRegistry, ImpactRule, RepoRole } from './registry.js'
+import { impactRowsFor, repoRole } from './registry.js'
 
 export type RepoStatus = 'up-to-date' | 'drift' | 'unreachable' | 'rewritten' | 'unknown'
 
@@ -40,6 +40,7 @@ export interface RepoReport {
   url: string
   pinnedSha: string
   pinnedVersion?: string
+  role: RepoRole
   status: RepoStatus
   headSha?: string
   headMeta?: string
@@ -57,6 +58,11 @@ export interface CheckSummary {
   /** true when at least one tracked repo is drifting. */
   anyDrift: boolean
   reports: RepoReport[]
+  /**
+   * 基线里 `role` 不是 `merge` 的来源 id：它们不做漂移自检（2026-10-13 主人定），
+   * 但**不静默丢弃** —— 报告里要能看出"被跳过的是谁、为什么"。
+   */
+  skippedNonMerge: string[]
   /** compact digest of open (proposed/pending/accepted) design entries, optional. */
   openDesign?: { id: string; title: string; status: string }[]
 }
@@ -71,6 +77,10 @@ function classify(pinSha: string, head: RemoteHeadInfo | undefined): RepoStatus 
 /**
  * Build the per-repo status report set. `observations` maps repo id -> remote
  * observation; repos without an observation are reported as unreachable.
+ *
+ * 只报告 `role=merge` 的来源（缺省即 merge）；`reference`/`attribution` 档
+ * 只在决定接线某功能时按需翻归档，不进这个定时自检（它们的 id 收在
+ * `skippedNonMerge` 里，读者仍知道跳过了谁）。
  */
 export function buildReport(
   baseline: BaselineDocument,
@@ -79,7 +89,9 @@ export function buildReport(
   opts: { includeOpenDesign?: boolean } = {},
 ): CheckSummary {
   const reports: RepoReport[] = []
+  const skippedNonMerge: string[] = []
   for (const repo of baseline.repos) {
+    if (repoRole(repo) !== 'merge') { skippedNonMerge.push(repo.id); continue }
     const obs = observations[repo.id]
     const head = obs?.head
     const status: RepoStatus = obs?.unreachable
@@ -91,6 +103,7 @@ export function buildReport(
       url: repo.url,
       pinnedSha: repo.pinnedSha,
       pinnedVersion: repo.pinnedVersion,
+      role: repoRole(repo),
       status,
       baselineRef: baseline.pinnedAt ?? '',
     }
@@ -127,6 +140,7 @@ export function buildReport(
   return {
     anyDrift: reports.some((r) => r.status === 'drift' || r.status === 'rewritten'),
     reports,
+    skippedNonMerge,
     openDesign,
   }
 }

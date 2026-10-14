@@ -36,7 +36,16 @@ window.__ModuleLoader__.load({
 		var L = {
 			zh: {
 				nav: '浏览器插件',
-				intro: 'DSH 浏览器控制（browser-bridge）：本地桥、URL 策略与访问控制。保存即时生效。',
+				// 2026-10-14 bi-038 修好后，这句话才名副其实：宿主对 volatile 字段是「原地提交 + 事件」，
+				// 插件自己订阅 loader/volatile-update 重建桥与策略，所以改档**不需要重启**。
+				// 只有更换插件包版本（安装/升级/卸载）必须重启 —— 这点照插件市场那句实话写出来。
+				// 2026-10-14 用户口径：别在页面上自夸「即时生效」—— 改成「写完确实改了值就弹 1 秒胶囊」，
+				// 改不动就弹「还没看到生效」。眼见为实，比一句承诺可靠。
+				intro: 'DSH 浏览器控制（browser-bridge）：本地桥、URL 策略与访问控制。只有更换插件包版本（安装 / 升级 / 卸载）才需要重启 dsh web。',
+				savedToast: '配置已保存',
+				writePending: '配置尚未生效',
+				writeFailed: '保存失败：',
+				writeInvalid: '格式不对，没保存',
 				idBadge: 'dsh-browser-unified · browser-bridge',
 				general: '常规',
 				enabled: '启用浏览器桥',
@@ -146,7 +155,11 @@ window.__ModuleLoader__.load({
 			},
 			en: {
 				nav: 'Browser plugin',
-				intro: 'DSH Browser Control (browser-bridge): local bridge, URL policy and access control. Saves apply live.',
+				intro: 'DSH Browser Control (browser-bridge): local bridge, URL policy and access control. Only swapping the plugin package version (install / upgrade / uninstall) needs a dsh web restart.',
+				savedToast: 'Saved',
+				writePending: 'Not applied yet',
+				writeFailed: 'Save failed: ',
+				writeInvalid: 'Invalid format — not saved',
 				idBadge: 'dsh-browser-unified · browser-bridge',
 				general: 'General',
 				enabled: 'Enable browser bridge',
@@ -339,6 +352,16 @@ window.__ModuleLoader__.load({
 			alignSelf: 'flex-start', padding: '2px 10px', borderRadius: '999px',
 			background: T.accentSoft, fontSize: '11px', lineHeight: '18px',
 			fontWeight: 500, color: T.label2, fontFamily: T.mono,
+		}
+		/** 胶囊：固定视口底部居中，不吃点击（pointerEvents: none），颜色随结果。 */
+		var capsuleWrapStyle = {
+			position: 'fixed', left: '50%', bottom: '28px', transform: 'translateX(-50%)',
+			zIndex: 2147483000, pointerEvents: 'none',
+			padding: '7px 16px', borderRadius: '999px',
+			background: T.bg2, border: '1px solid ' + T.line2,
+			boxShadow: '0 6px 24px rgba(0,0,0,0.28)',
+			fontSize: '13px', lineHeight: '20px', fontWeight: 500,
+			whiteSpace: 'nowrap', maxWidth: '80vw', overflow: 'hidden', textOverflow: 'ellipsis',
 		}
 		var cardStyle = {
 			border: '1px solid ' + T.line2, borderRadius: '16px', overflow: 'hidden',
@@ -622,6 +645,33 @@ window.__ModuleLoader__.load({
 			}, function () { return done(null) })
 		}
 
+		/** 深比较：标量照实比，数组/对象走 JSON（设置里的列表就是这么用的）。 */
+		function sameValue(a, b) {
+			if (a === b) return true
+			try {
+				return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b)
+			} catch (e) { return false }
+		}
+
+		/**
+		 * 一次写完之后的判定（纯函数，单测用）：
+		 *   'saved'   —— 快照已经是新值、且与写之前不同 ⇒「配置已保存」
+		 *   'noop'    —— 新值跟写之前一模一样：真没改，不打扰（这不是失败）
+		 *   'pending' —— 超时还没看到新值 ⇒「已提交，但还没看到生效」（旧版插件要重启就是这种）
+		 *   'wait'    —— 还没到超时，继续看
+		 */
+		function writeOutcome(before, next, seen, timedOut) {
+			if (sameValue(seen, next)) return sameValue(before, next) ? 'noop' : 'saved'
+			return timedOut ? 'pending' : 'wait'
+		}
+
+		/** 主机列表条目的合法形态（与插件 assertHostList 同一条规则：主机名/IP 或 *.suffix）。 */
+		function validHostEntry(entry) {
+			if (typeof entry !== 'string') return false
+			var value = entry.trim()
+			return value.length > 0 && value.length <= 253 && !/[\s/\\@?#\u0000-\u001f\u007f]/.test(value)
+		}
+
 		/** 并行探 10 个候选端口（起始端口 +0..+9，与插件/扩展同构），返回命中的桥或 null。 */
 		function probeBridge(basePort) {
 			var jobs = []
@@ -766,32 +816,99 @@ window.__ModuleLoader__.load({
 			}
 			var value = snapshot.value || {}
 
+			// --- 胶囊（toast）------------------------------------------------------------
+			// 只在**真的改了值**之后弹一次「配置已保存」，1 秒后自己消失；后来的胶囊直接覆盖
+			// 前一个（清掉旧定时器再挂新的）。改不动时弹琥珀「还没看到生效」/ 红「保存失败」——
+			// 「没改也能看出来」是这条 UX 的一半，光报成功等于没有信息。
+			var capsuleState = useState(null)
+			var capsule = capsuleState[0]
+			var setCapsule = capsuleState[1]
+			var capsuleTimer = useRef(null)
+			// 卸载守卫：复验轮询最多跑 1.5s，但期间用户可能切走页面 —— 卸载后一律不再 setState。
+			var aliveRef = useRef(true)
+			React.useEffect(function () {
+				aliveRef.current = true
+				return function () { aliveRef.current = false }
+			}, [])
+			var showCapsule = function (kind, text) {
+				if (!aliveRef.current) return
+				if (capsuleTimer.current) window.clearTimeout(capsuleTimer.current)
+				setCapsule({ kind: kind, text: text })
+				capsuleTimer.current = window.setTimeout(function () { setCapsule(null) }, kind === 'ok' ? 1000 : 2600)
+			}
+			/** 当前**存下来**的值 —— 写完拿它复验：真改了才敢说「已保存」。 */
+			var readField = function (field) {
+				try {
+					var snap = scope.getSnapshot()
+					return snap && snap.value ? snap.value[field] : undefined
+				} catch (e) { return undefined }
+			}
+			/**
+			 * 轮询到「快照变成新值」为止，再按 writeOutcome 决定弹什么。
+			 *
+			 * **有终止**：`deadline` 是硬上界（1.5s），每 tick 用 `Date.now() > deadline` 重算；
+			 * 过了上界 `writeOutcome` 必返回 'pending'（'wait' 只在未超时且未命中时出现），
+			 * 而**只有 'wait' 分支才重排下一次** ⇒ 最多 ceil(1500/60)+1 ≈ 26 次就停，不会常驻轮询。
+			 * 另外卸载后不再 setState（aliveRef），页面切走也不会留下在跑的定时器。
+			 */
+			var confirmWrite = function (field, next, before) {
+				var deadline = Date.now() + 1500
+				var step = function () {
+					if (!aliveRef.current) return
+					var outcome = writeOutcome(before, next, readField(field), Date.now() > deadline)
+					if (outcome === 'wait') { window.setTimeout(step, 60); return }
+					if (outcome === 'saved') showCapsule('ok', t('savedToast'))
+					else if (outcome === 'pending') showCapsule('warn', t('writePending') + '（' + field + '）')
+					// 'noop'：选了个跟原来一样的值，确实没改 —— 不打扰
+				}
+				step()
+			}
 			var runWrite = function (target, field, next) {
 				writeBusy.current = true
 				setBusy('saving')
+				var before = readField(field)
 				var done = target.set(field, next)
 				if (done && typeof done.then === 'function') {
 					done.then(
 						function () {
 							if (writeBusy.current) {
 								writeBusy.current = false
-								setBusy('saved')
-								window.setTimeout(function () { setBusy(null) }, 1400)
+								setBusy(null) // 成功不再写内联文字：改由胶囊回报
+								confirmWrite(field, next, before)
 							}
 						},
 						function (err) {
 							writeBusy.current = false
 							var msg = err && err.message ? err.message : String(err)
 							setBusy({ error: msg })
+							showCapsule('bad', t('writeFailed') + msg)
 						},
 					)
 				} else {
 					writeBusy.current = false
-					setBusy('saved')
-					window.setTimeout(function () { setBusy(null) }, 1400)
+					setBusy(null)
+					confirmWrite(field, next, before)
 				}
 			}
+			/** 复位（unset）走同样的回报：清掉就等于把这项改回「未设置」。 */
+			var runUnset = function (field) {
+				var before = readField(field)
+				var land = function () { confirmWrite(field, undefined, before) }
+				var fail = function (err) {
+					showCapsule('bad', t('writeFailed') + (err && err.message ? err.message : String(err)))
+				}
+				var done = scope.unset(field)
+				if (done && typeof done.then === 'function') done.then(land, fail)
+				else land()
+			}
 			var setField = function (field, next) { runWrite(scope, field, next) }
+			/** 主机列表先按插件那条规则自查一遍：格式不对就别写出去（否则它会拒，白跑一趟）。 */
+			var setHostList = function (field, next) {
+				var list = Array.isArray(next) ? next : []
+				var bad = list.filter(function (entry) { return !validHostEntry(entry) })
+				if (bad.length > 0) { showCapsule('warn', t('writeInvalid')); return }
+				setField(field, list)
+			}
 			var noop = function () {}
 
 			var metaHosts = Array.isArray(value.metadataHostnames) ? value.metadataHostnames : []
@@ -802,7 +919,7 @@ window.__ModuleLoader__.load({
 			if (busy !== null) {
 				var statusText = busy === 'saving'
 					? t('saving')
-					: (busy && busy.error ? t('error') + busy.error : t('saved'))
+					: (busy && busy.error ? t('error') + busy.error : '')
 				var statusColor = busy === 'saving' ? T.label3 : (busy && busy.error ? T.error : T.success)
 				statusRow = createElement('div', {
 					style: { fontSize: '12px', color: statusColor, padding: '0 4px' },
@@ -844,8 +961,8 @@ window.__ModuleLoader__.load({
 						createElement(StringListEditor, {
 							value: Array.isArray(value.allowHosts) ? value.allowHosts : [],
 							placeholder: t('addAllow'),
-							onChange: function (next) { setField('allowHosts', next) },
-							onReset: function () { scope.unset('allowHosts').then(noop, noop) },
+							onChange: function (next) { setHostList('allowHosts', next) },
+							onReset: function () { runUnset('allowHosts') },
 						}),
 					),
 					createElement('div', { style: { padding: '4px 0 2px' } },
@@ -854,8 +971,8 @@ window.__ModuleLoader__.load({
 						createElement(StringListEditor, {
 							value: Array.isArray(value.denyHosts) ? value.denyHosts : [],
 							placeholder: t('addDeny'),
-							onChange: function (next) { setField('denyHosts', next) },
-							onReset: function () { scope.unset('denyHosts').then(noop, noop) },
+							onChange: function (next) { setHostList('denyHosts', next) },
+							onReset: function () { runUnset('denyHosts') },
 						}),
 					),
 				),
@@ -951,7 +1068,7 @@ window.__ModuleLoader__.load({
 							value: metaHosts,
 							placeholder: t('addHost'),
 							onChange: function (next) { setField('metadataHostnames', next) },
-							onReset: function () { scope.unset('metadataHostnames').then(noop, noop) },
+							onReset: function () { runUnset('metadataHostnames') },
 						}),
 					),
 					createElement('div', { style: { padding: '4px 0 2px' } },
@@ -961,7 +1078,7 @@ window.__ModuleLoader__.load({
 							value: metaIps,
 							placeholder: t('addIp'),
 							onChange: function (next) { setField('metadataIps', next) },
-							onReset: function () { scope.unset('metadataIps').then(noop, noop) },
+							onReset: function () { runUnset('metadataIps') },
 						}),
 					),
 					createElement('div', { style: Object.assign({}, cardSubStyle, { marginTop: '8px' }) }, t('defaultsHint')),
@@ -998,6 +1115,12 @@ window.__ModuleLoader__.load({
 					),
 				),
 				statusRow,
+				capsule === null ? null : createElement('div', {
+					style: Object.assign({}, capsuleWrapStyle, {
+						color: capsule.kind === 'ok' ? T.success : (capsule.kind === 'bad' ? T.error : T.warn),
+						borderColor: capsule.kind === 'ok' ? T.success : (capsule.kind === 'bad' ? T.error : T.warn),
+					}),
+				}, (capsule.kind === 'ok' ? '✓ ' : '⚠ ') + capsule.text),
 			)
 		}
 
@@ -1062,6 +1185,8 @@ window.__ModuleLoader__.load({
 		var inject = ['slots', 'configForms']
 		exports.apply = apply
 		exports.inject = inject
+		// 单测入口（纯函数；见 tests/render-settings-pages.mjs 的 [胶囊] 段）
+		exports.__test = { writeOutcome: writeOutcome, sameValue: sameValue, validHostEntry: validHostEntry }
 		return module.exports
 	},
 })
