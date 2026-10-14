@@ -1,42 +1,8 @@
 {
   "schemaVersion": 1,
-  "note": "开发基线：upstream/ 归档快照所对应的上游 commit SHA。scripts/check-upstream.ps1 以本清单为基准比对上游是否有新提交。任何「重新归档 / 吸收上游新提交 / 合并源码」的动作之后，必须同步把对应 repos[].pinnedSha 推进到新基线并更新 pinnedAt（-UpdateBaseline 开关只做这一件事，不碰源码）。",
-  "pinnedAt": "2026-10-10 18:20 +08:00",
+  "note": "开发基线：upstream/ 归档快照所对应的上游 commit SHA。scripts/check-upstream.ps1 以本清单为基准比对上游是否有新提交。任何「重新归档 / 吸收上游新提交 / 合并源码」的动作之后，必须同步把对应 repos[].pinnedSha 推进到新基线并更新 pinnedAt（-UpdateBaseline 开关只做这一件事，不碰源码）。role 决定这份清单怎么被用（2026-10-13 主人定）：merge = 持续合并源，check-upstream 只对它们做漂移自检；reference = 只在决定接线某功能时翻归档取用，不做定时漂移自检；attribution = 纯来源记录。注意 pinnedSha 对 reference 档同样是「归档快照的确切版本」，改它必须与重新归档同一步完成。本项目前身（`dsh-intranet-browser`，主人自己的仓库，2026-10-10 已在 GitHub 归档只读）于同日从 repos[] 除名：它不是外部上游，而是本插件的上一代 —— url-policy 的 intranet 档（元数据黑名单/主机名归一化）与 approval 决策表语义都出自它，未并入的只剩 de-005 逐请求 route 拦截；归档与来源说明留在 NOTICE.md，不再参与自检。",
+  "pinnedAt": "2026-10-13 01:48 +08:00",
   "repos": [
-    {
-      "id": "xylt369-dsh-browser",
-      "url": "https://github.com/xylt369/dsh-browser",
-      "branch": "main",
-      "archivedPath": "upstream/dsh-browser-xylt369",
-      "pinnedSha": "2f1adeea9f56eed710680aab9d0a6d1da12407b3",
-      "pinnedVersion": "repo 0.1.0；packages @yeesy369/* 0.6.0-0.8.1",
-      "license": "MIT",
-      "mergedIntoCore": true,
-      "baselineVerifiedFileDiff": 0
-    },
-    {
-      "id": "short-arm-ape-intranet",
-      "url": "https://github.com/Short-Arm-Ape/dsh-intranet-browser",
-      "branch": "main",
-      "archivedPath": "upstream/dsh-intranet-browser-short-arm-ape",
-      "pinnedSha": "81df0d5422293a3ab6665e6691b64458c6136948",
-      "pinnedVersion": "0.1.0（README 停维护横幅）",
-      "license": "MIT",
-      "mergedIntoCore": true,
-      "baselineVerifiedFileDiff": 0,
-      "note": "2026-10-10 归档刷新：d3f63d4 → 81df0d5（2 提交 / 1 文件 = README.md：本仓库停维护横幅 + 指向 dsh-browser-unified 的价值并入说明）。源码面与 0.1.0 归档一致，合并语义无变化 —— 未并入的只有逐请求 route 拦截（de-005）。旧快照备份：F:\\Work\\Objects\\__archive-backups\\dsh-intranet-browser-short-arm-ape-d3f63d4-20261010"
-    },
-    {
-      "id": "kyo615-browser-control",
-      "url": "https://github.com/kyo615/dsh-browser-control",
-      "branch": "main",
-      "archivedPath": "upstream/dsh-browser-control-kyo615",
-      "pinnedSha": "9c10f2c42999947a2c8009443994f6297d472b8c",
-      "pinnedVersion": "1.0.0",
-      "license": "MIT",
-      "mergedIntoCore": false,
-      "baselineVerifiedFileDiff": 0
-    },
     {
       "id": "caob23-browser-control",
       "url": "https://github.com/caob23/dsh-browser-control",
@@ -47,7 +13,32 @@
       "license": "AGPL-3.0",
       "mergedIntoCore": true,
       "baselineVerifiedFileDiff": 0,
-      "note": "2026-10-10 归档刷新：v1.0.7 (2763148) → v1.0.8 (43e6325)，9 提交 / 27 文件（+524/−23 计 lib 产物）。其中两条是安全强化 —— HTTP 命令面/清理端点要求 Token（Authorization: Bearer / X-Token / ?token=，timingSafeEqual）、全部移除 `Access-Control-Allow-Origin: *`、WebSocket 升级加 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与网页拨号）；另修 settings.register 特性探测(#8)、lib 落后 src（v1.0.7 的 npm 包只注册 11/16 工具）、包内 patch 的 enabled 覆盖(#4)、发布资产 zip 前言(#2)、文档口径(#5)。本轮已把 Host/Origin 校验与 token 形式并入 browser-unified-core 的 bridge/server.ts（保留 guardCommand 与回环 CORS 回显两处差异，见 NOTICE.md）。旧快照备份：F:\\Work\\Objects\\__archive-backups\\dsh-browser-control-caob23-2763148-20261010"
+      "note": "2026-10-10 归档刷新：v1.0.7 (2763148) → v1.0.8 (43e6325)，9 提交 / 27 文件（+524/−23 计 lib 产物）。其中两条是安全强化 —— HTTP 命令面/清理端点要求 Token（Authorization: Bearer / X-Token / ?token=，timingSafeEqual）、全部移除 `Access-Control-Allow-Origin: *`、WebSocket 升级加 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与网页拨号）；另修 settings.register 特性探测(#8)、lib 落后 src（v1.0.7 的 npm 包只注册 11/16 工具）、包内 patch 的 enabled 覆盖(#4)、发布资产 zip 前言(#2)、文档口径(#5)。本轮已把 Host/Origin 校验与 token 形式并入 browser-unified-core 的 bridge/server.ts（保留 guardCommand 与回环 CORS 回显两处差异，见 NOTICE.md）。旧快照备份：F:\\Work\\Objects\\__archive-backups\\dsh-browser-control-caob23-2763148-20261010",
+      "role": "merge"
+    },
+    {
+      "id": "xylt369-dsh-browser",
+      "url": "https://github.com/xylt369/dsh-browser",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-browser-xylt369",
+      "pinnedSha": "2f1adeea9f56eed710680aab9d0a6d1da12407b3",
+      "pinnedVersion": "repo 0.1.0；packages @yeesy369/* 0.6.0-0.8.1",
+      "license": "MIT",
+      "mergedIntoCore": true,
+      "baselineVerifiedFileDiff": 0,
+      "role": "reference"
+    },
+    {
+      "id": "kyo615-browser-control",
+      "url": "https://github.com/kyo615/dsh-browser-control",
+      "branch": "main",
+      "archivedPath": "upstream/dsh-browser-control-kyo615",
+      "pinnedSha": "9c10f2c42999947a2c8009443994f6297d472b8c",
+      "pinnedVersion": "1.0.0",
+      "license": "MIT",
+      "mergedIntoCore": false,
+      "baselineVerifiedFileDiff": 0,
+      "role": "reference"
     },
     {
       "id": "webops-dsh-agent-webops",
@@ -59,7 +50,8 @@
       "license": "MIT",
       "mergedIntoCore": false,
       "baselineVerifiedFileDiff": 0,
-      "note": "headless Edge(CDP) 独立实例路线 + attach 外部 CDP 端点 + wait 谓词轮询 + console 缓冲；0.2.x 另含 src/pure.ts 纯逻辑层与 337 例离线测试、docs/semantic.md（含可证伪验收 A1–A20）、dsh-plugin.json Fabric 骨架（自陈不可运行，别当契约）。仍未并入 core。（2026-10-10 归档刷新：8603a0a → 31e5c17，13 提交 +1275/−142）"
+      "note": "headless Edge(CDP) 独立实例路线 + attach 外部 CDP 端点 + wait 谓词轮询 + console 缓冲；0.2.x 另含 src/pure.ts 纯逻辑层与 337 例离线测试、docs/semantic.md（含可证伪验收 A1–A20）、dsh-plugin.json Fabric 骨架（自陈不可运行，别当契约）。仍未并入 core。（2026-10-10 归档刷新：8603a0a → 31e5c17，13 提交 +1275/−142）",
+      "role": "reference"
     }
   ]
 }

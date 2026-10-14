@@ -35,8 +35,14 @@ import { randomUUID, createHash, timingSafeEqual } from 'node:crypto'
 import { mkdir, readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { encodeCloseFrame, encodeControlFrame, encodeTextFrame, FrameReader } from './ws.js'
+import { BridgeError, classify } from '../errors.js'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+/**
+ * 本桥说的线协议版本。与包版本分开：扩展新一个补丁版照样能用，但**帧契约不同**就必须亮灯。
+ * （与上游 v1.0.9 的 `protocol` 字段同口径；我们没有该字段的旧扩展一律按 v1 兼容处理。）
+ */
+export const BRIDGE_PROTOCOL_VERSION = 1
 /** Per-command ceiling when the caller passes none. */
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000
 /** Hard ceiling accepted from callers; longer waits cannot be expressed. */
@@ -56,6 +62,8 @@ export interface BridgeHello {
    * 反查"哪个 profile 装了它"。旧版扩展不带此字段，故可选。
    */
   readonly extensionId?: string
+  /** 扩展声明的帧契约版本；缺失＝0（早于版本协商的扩展）。 */
+  readonly protocol?: number
 }
 
 /** Snapshot of the link and in-flight work, served verbatim on `/api/status`. */
@@ -65,6 +73,13 @@ export interface BridgeServerStatus {
   readonly extensionConnected: boolean
   readonly connectedAt: string | undefined
   readonly hello: BridgeHello | undefined
+  /** 本桥说的协议版本。 */
+  readonly bridgeProtocol: number
+  /** 扩展声明的协议版本；缺失/0 ＝ 早于版本协商。 */
+  readonly extensionProtocol: number
+  /** 两边帧契约是否对得上；对不上时 `protocolNote` 说明原因。 */
+  readonly protocolCompatible: boolean
+  readonly protocolNote: string | null
   readonly pendingCommands: number
   readonly lastError: string | undefined
   /**
@@ -178,6 +193,10 @@ export class BridgeServer {
       extensionConnected: this.clientSocket !== undefined,
       connectedAt: this.connectedAt?.toISOString(),
       hello: this.hello,
+      bridgeProtocol: BRIDGE_PROTOCOL_VERSION,
+      extensionProtocol: this.hello?.protocol ?? 0,
+      protocolCompatible: this.protocolNote === null,
+      protocolNote: this.protocolNote,
       pendingCommands: this.pending.size,
       lastError: this.lastError,
       insecureToken: isWeakToken(this.options.token ?? ''),
@@ -246,7 +265,7 @@ export class BridgeServer {
   async execute(command: string, params: Record<string, unknown>, options: BridgeExecuteOptions = {}): Promise<unknown> {
     const socket = this.clientSocket
     if (socket === undefined) {
-      throw new Error('no browser extension connected — open the browser that has the DSH Browser Control extension installed')
+      throw classify(command, new Error('no browser extension connected — open the browser that has the DSH Browser Control extension installed'))
     }
     const timeoutMs = Math.min(MAX_COMMAND_TIMEOUT_MS, Math.max(1, options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS))
     const signal = options.signal
@@ -277,6 +296,10 @@ export class BridgeServer {
     socket.write(encodeTextFrame(JSON.stringify({ type: 'command', id, command, params })))
     try {
       return await result
+    } catch (error) {
+      // 单一收口：这行以上的失败全是链路/扩展类失败，调用方需要知道"页面是不是可能已经被改了"。
+      // 见 ../errors.ts；插件壳那层还会再包一次（classify 幂等，code 不会被洗掉）。
+      throw classify(command, error)
     } finally {
       clearTimeout(entry.timer)
       if (entry.onAbort !== undefined && signal !== undefined) signal.removeEventListener('abort', entry.onAbort)
@@ -298,6 +321,23 @@ export class BridgeServer {
 
   private log(line: string): void {
     this.options.log?.(line)
+  }
+
+  /**
+   * 协议不匹配的说明，或 null（能对话）。**声明 0/缺失的老扩展按 v1 兼容处理**：
+   * 它能答本桥发过的每一条命令，为了一处形式上的缺口把可用装置判死并不值得。
+   */
+  private get protocolNote(): string | null {
+    if (this.hello === undefined) return null
+    const theirs = this.hello.protocol ?? 0
+    if (theirs === 0) return null
+    if (theirs > BRIDGE_PROTOCOL_VERSION) {
+      return `扩展声明协议 v${theirs}，本桥只支持到 v${BRIDGE_PROTOCOL_VERSION} —— 请升级 dsh 插件，否则新命令会报「未知命令」`
+    }
+    if (theirs < BRIDGE_PROTOCOL_VERSION) {
+      return `扩展协议 v${theirs} 低于本桥 v${BRIDGE_PROTOCOL_VERSION} —— 旧扩展可能缺少新命令，必要时重新下载扩展包`
+    }
+    return null
   }
 
   /* ------------------------------------------------------------- HTTP face */
@@ -454,9 +494,8 @@ export class BridgeServer {
             this.execute(parsed.command as string, params, timeoutMs === undefined ? {} : { timeoutMs }).then(
               (result) => this.respondJson(res, 200, { ok: true, result }),
               (error) => {
-                const message = errorMessage(error)
-                const code = message.startsWith('no browser extension') ? 503 : 502
-                this.respondJson(res, code, { ok: false, error: message })
+                const { status, body } = this.errorResponse(error)
+                this.respondJson(res, status, body)
               },
             )
           })
@@ -465,12 +504,28 @@ export class BridgeServer {
       this.execute(parsed.command, params, timeoutMs === undefined ? {} : { timeoutMs }).then(
         (result) => this.respondJson(res, 200, { ok: true, result }),
         (error) => {
-          const message = errorMessage(error)
-          const code = message.startsWith('no browser extension') ? 503 : 502
-          this.respondJson(res, code, { ok: false, error: message })
+          const { status, body } = this.errorResponse(error)
+          this.respondJson(res, status, body)
         },
       )
     })
+  }
+
+  /**
+   * 失败 → HTTP 响应。有 {@link BridgeError} 时按 `code` 给状态码（不再靠 message 前缀猜），
+   * 并把 `code` / `effectState` / `hint` 一并交出去 —— HTTP 面本来就是给脚本/curl 用的，
+   * 结构化字段在这里**读得到**（模型面只能读 message，那是另一条路径，见 errors.ts 的注释）。
+   */
+  private errorResponse(error: unknown): { status: number; body: Record<string, unknown> } {
+    const message = errorMessage(error)
+    if (error instanceof BridgeError) {
+      const status = error.code === 'extension_offline' || error.code === 'bridge_disabled' ? 503
+        : error.code === 'policy_blocked' ? 403
+          : error.code === 'command_timeout' ? 504
+            : 502
+      return { status, body: { ...error.toJSON() } }
+    }
+    return { status: message.startsWith('no browser extension') ? 503 : 502, body: { ok: false, error: message } }
   }
 
   /* ------------------------------------------------------- websocket link */

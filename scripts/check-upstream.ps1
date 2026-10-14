@@ -2,9 +2,16 @@
   check-upstream.ps1 — 上游新提交自检（dsh-browser-unified 开发基线）
 
   用法：
-    pwsh scripts/check-upstream.ps1                          # 检查全部上游
+    pwsh scripts/check-upstream.ps1                          # 只查 role=merge 的上游（持续合并源）
     pwsh scripts/check-upstream.ps1 -UpstreamId caob23-browser-control   # 只查一个
     pwsh scripts/check-upstream.ps1 -UpdateBaseline          # (仅在你已批准后) 把基线 SHA 推进到当前 HEAD
+
+  角色（2026-10-13 主人定；见 upstream-baseline.json 顶层 note）：
+    - role=merge：持续合并源，本脚本唯一做漂移自检的对象（目前只有 caob23）。
+    - role=reference：只在决定接线某功能时翻归档取用（xylt369 的 stealth/审批模型、kyo615 的
+      GUI 实时画面、jonah791 的 headless/attach 路线）。**不做定时自检** —— 它们几个月不动，
+      每次自检只会报一堆没人处理的提交。要取用时按 id 直接读归档，别指望本脚本提醒。
+    - 本项目前身 `dsh-intranet-browser`（主人自己的仓库，已归档只读）已从基线除名，不是上游。
 
   安全约定：
     - 默认只做只读网络探测（git clone 到临时目录）与临时目录清理；
@@ -70,7 +77,15 @@ $anyDrift = $false
 $dirty = $false
 foreach ($repo in $baseline.repos) {
   if ($UpstreamId -and $repo.id -ne $UpstreamId) { continue }
+  # 只有 role=merge 参与漂移自检；reference 档只打一行说明就跳过（不 clone、不比对）。
+  $role = 'merge'
+  if ($repo.PSObject.Properties['role'] -and $repo.role) { $role = [string]$repo.role }
   Write-Output ("===== {0} =====" -f $repo.id)
+  if ($role -ne 'merge') {
+    Write-Output ("  状态      : SKIP —— role={0}（参考档：只在决定接线/取用时翻归档，不做定时漂移自检）" -f $role)
+    Write-Output ''
+    continue
+  }
   $dst = Join-Path $tmp $repo.id
   foreach ($gitArgs in $gitArgSets) {
     if (Test-Path (Join-Path $dst '.git')) { break }
@@ -129,6 +144,12 @@ if ($UpdateBaseline -and $anyDrift) {
   $now = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
   foreach ($repo in $baseline.repos) {
     if ($UpstreamId -and $repo.id -ne $UpstreamId) { continue }
+    # 与自检同一把尺子：只有 merge 档会被推进（reference 档的 pin 只在"重新归档并取用"时手改，
+    # 否则 pin 会脱离归档快照本身）。
+    if ($repo.PSObject.Properties['role'] -and $repo.role -and $repo.role -ne 'merge') {
+      Write-Output ("跳过（role={0}，本开关只推进 merge 档）: {1}" -f $repo.role, $repo.id)
+      continue
+    }
     $dst = Join-Path $tmp $repo.id
     if (-not (Test-Path (Join-Path $dst '.git'))) { continue }
     $head = (& git -C $dst rev-parse HEAD 2>&1 | Select-Object -First 1).Trim()

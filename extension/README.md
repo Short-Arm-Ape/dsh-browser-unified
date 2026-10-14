@@ -3,13 +3,13 @@
 让 DSH 通过本地桥（`ws://127.0.0.1:<port>/ws?token=…`）驱动**你已登录的真实浏览器**：
 导航、读正文、执行 JS、点击/输入/按键、截图/PDF、console/network 缓冲、标签页与窗口管理、视口仿真。
 
-当前版本 **1.0.19**（`manifest.json` 的 `version` 是唯一真源：`background.js` 里
+当前版本 **1.0.20**（`manifest.json` 的 `version` 是唯一真源：`background.js` 里
 `EXT_VERSION = chrome.runtime.getManifest().version`，改版本只改 manifest，别在代码里再写一份）。
 
 ## 来源与许可
 
 - **派生自上游 [caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control) 的
-  `extension/`（AGPL-3.0）**，本仓库在其之上继续修改（版本已分叉到 1.0.x 的 1.0.19）。
+  `extension/`（AGPL-3.0）**，本仓库在其之上继续修改（版本已分叉到 1.0.x 的 1.0.20）。
 - 因此本目录与本仓库其余部分一样按 **AGPL-3.0-only** 分发；归属矩阵与收编说明见
   [`../NOTICE.md`](../NOTICE.md)。把扩展打进 Release 时，**对应源码就是本目录**（AGPL 要求
   提供二进制就要提供对应源码 —— 这也是它必须留在仓库里的原因）。

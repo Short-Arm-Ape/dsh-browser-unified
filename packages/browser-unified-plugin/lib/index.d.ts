@@ -154,7 +154,54 @@ export declare const Config: z<Config>;
  * @param shown 已经截断/格式化好的名单文本（空时传 '（空）'）。
  * @param ignored 生效策略是否忽略了这份名单（askMode=allow）。
  */
+/**
+ * `browser_snapshot` 的模式判定：请求了 ax，扩展到底有没有真的给 ax？
+ *
+ * 三种情形必须分清（上游 v1.0.15 的教训）：
+ *   ① 扩展回了 `mode:'ax'`         → 真 AX；
+ *   ② 扩展回了 `axFallback`        → 它试过、落回 dom，把原因原样带出去；
+ *   ③ 两者都没有（`mode` 字段也不存在）→ **旧扩展静默忽略**了 `mode:"ax"`，照样回 DOM 结果。
+ *      这时必须由插件把"降级了"说出来 —— 否则模型以为自己拿的是无障碍名，实际是标签名。
+ *
+ * @param rawMode 扩展回包里的 `mode`（老扩展可能完全没有这个字段）
+ * @param rawFallback 扩展回包里的 `axFallback`
+ * @param wantAx 本次调用是否请求了 ax
+ */
+export declare function snapshotModeOf(rawMode: string | undefined, rawFallback: string | undefined, wantAx: boolean): {
+    mode: 'ax' | 'dom';
+    axFallback?: string;
+};
 export declare function denyHostsStatusLine(shown: string, ignored: boolean): string;
+/** 扩展端 `emulate` 的原始回包（无 UA 覆盖时 `userAgent` 是**显式** `null`）。 */
+export interface EmulateRawValue {
+    tabId: number;
+    reset?: boolean | null;
+    width?: number | null;
+    height?: number | null;
+    deviceScaleFactor?: number | null;
+    isMobile?: boolean | null;
+    hasTouch?: boolean | null;
+    userAgent?: string | null;
+}
+/**
+ * 把扩展端 `emulate` 的回包按 `output.schema` 收口。
+ *
+ * 为什么必须有这一步：扩展在无 UA 覆盖时回的是**显式** `userAgent: null`
+ * （`extension/background.js` 的 `userAgent: userAgent || null`），而宿主的输出校验器
+ * 对 `null` **会下钻判类型**（只跳过 `undefined`）。原样透传时，`device:"desktop"`
+ * 或只给宽高的自定义视口**每次调用**都会抛 `ToolOutputError` —— 即 `browser_emulate`
+ * 从 v0.7 起对这两类调用全是坏的，只有带真 UA 的预设（mobile/tablet）能过，所以一直没暴露。
+ */
+export declare function normalizeEmulateValue(raw: EmulateRawValue): {
+    tabId: number;
+    reset?: boolean;
+    width?: number;
+    height?: number;
+    deviceScaleFactor?: number;
+    isMobile?: boolean;
+    hasTouch?: boolean;
+    userAgent?: string;
+};
 export declare function permissionReport(input: {
     origin: string;
     tabId: number | undefined;

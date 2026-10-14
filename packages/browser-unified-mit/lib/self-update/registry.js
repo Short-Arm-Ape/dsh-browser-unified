@@ -15,6 +15,10 @@
  * Pure functions, no I/O, no DSH dependency. License: MIT (part of
  * dsh-browser-unified-mit; see NOTICE.md for the MIT/AGPL attribution matrix).
  */
+/** 缺省 `merge`：老基线没有 role 字段时行为不变。 */
+export function repoRole(repo) {
+    return repo.role ?? 'merge';
+}
 export class RegistryError extends Error {
     constructor(message) {
         super(message);

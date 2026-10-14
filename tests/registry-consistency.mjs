@@ -17,7 +17,8 @@
  * 复现：node tests/registry-consistency.mjs        # 需要先 npm run build-pack（或 npm run build）
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -128,6 +129,51 @@ console.log('\n[4] 数据自身的不变量')
 	check('每条已修复问题都标注修复版本', fixedWithout.length === 0, fixedWithout.map((i) => i.id).join(','))
 	const badStatus2 = issues.filter((i) => !['open', 'fixed', 'wontfix'].includes(String(i.status)))
 	check('问题条目状态合法', badStatus2.length === 0, badStatus2.map((i) => `${i.id}:${i.status}`).join(','))
+}
+
+console.log('\n[5] role 决定谁进漂移自检（merge 才查；reference 跳过但要说出来）')
+{
+	const mod = await import(pathToFileURL(path.join(pkg, 'lib', 'index.js')).href)
+	const tmp = mkdtempSync(path.join(os.tmpdir(), 'role-check-'))
+	mkdirSync(path.join(tmp, 'design'), { recursive: true })
+	writeFileSync(path.join(tmp, 'design', 'registry.json'), JSON.stringify({ schemaVersion: 1, impactRules: {}, designEntries: [] }))
+	// 两个假来源：URL 指向一个必定立刻失败的本地端口（不碰真网络、不依赖 github 可达）。
+	const bogus = 'https://127.0.0.1:9/nope.git'
+	writeFileSync(path.join(tmp, 'upstream-baseline.json'), JSON.stringify({
+		schemaVersion: 1,
+		pinnedAt: 'test',
+		repos: [
+			{ id: 'fake-merge', url: bogus, pinnedSha: '0'.repeat(40), role: 'merge' },
+			{ id: 'fake-reference', url: bogus, pinnedSha: '0'.repeat(40), role: 'reference' },
+			{ id: 'fake-legacy-no-role', url: bogus, pinnedSha: '0'.repeat(40) },
+		],
+	}))
+	const tools = new Map()
+	const ctx = {
+		logger: { info() {}, warn() {}, error() {} },
+		tools: { register: (definition) => { tools.set(definition.name, definition) } },
+		inject() {},
+		get() { return undefined },
+		effect(fn) { const disposer = fn(); return typeof disposer === 'function' ? disposer : () => {} },
+		on() { return () => {} },
+		provide() { return () => {} },
+		systemPrompt: { context: () => () => {}, section: () => () => {}, tools: () => () => {} },
+	}
+	mod.apply(ctx, { ...CONFIG_MIN, registryDir: tmp })
+	const tool = tools.get('browser_check_update')
+	const run = async (args) => String((await tool.execute(args, { signal: undefined })).text)
+
+	const def = await run({})
+	check('默认不查 reference 档', def.includes('fake-reference') && !def.split('\n').some((l) => l.startsWith('[fake-reference]')),
+		def.split('\n').filter((l) => l.includes('fake-reference')).join(' | '))
+	check('默认也不查没有 role 的老条目（缺省=merge 的老语义不变）', def.includes('[fake-legacy-no-role]'), def.includes('legacy'))
+	check('被跳过的参考来源在报告里点名（不静默丢弃）', def.includes('未查的参考来源') && def.includes('fake-reference(reference)'))
+	check('merge 档照旧去查（这里必定 UNREACHABLE，因为 URL 指向死端口）', def.includes('[fake-merge] UNREACHABLE'))
+
+	const explicit = await run({ repos: ['fake-reference'] })
+	check('显式点名 reference 档时仍会查（工具不因角色变哑巴）', explicit.includes('[fake-reference] UNREACHABLE'))
+
+	rmSync(tmp, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

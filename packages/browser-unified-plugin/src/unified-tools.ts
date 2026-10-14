@@ -244,9 +244,11 @@ export function applyUnifiedTools(ctx: Context, config: { registryDir: string })
 		name: 'browser_check_update',
 		description: '检查浏览器插件（dsh-browser-unified）所跟踪的上游仓库相对开发基线是否有新提交。只读：不修改任何文件、不推进基线。'
 			+ '当用户问「帮我检查下浏览器插件的更新 / 上游有没有新提交 / 插件是不是最新 / 版本有没有落后」时调用本工具。'
+			+ '默认只查 `role=merge` 的**持续合并源**（目前只有 caob23）；`role=reference` 的参考来源只在决定接线某功能时翻归档取用，'
+			+ '不做定时自检 —— 要查它们就显式传 `repos: [<id>]`。'
 			+ '有更新时给出 DRIFT 与远端 HEAD；完整提交清单/改动文件/影响评估属于「吸收流程」（需用户确认后另行执行）。',
 		parameters: {
-			repos: { type: 'array', items: { type: 'string' }, description: '只检查指定上游 id（默认全部；id 见 upstream-baseline.json）' },
+			repos: { type: 'array', items: { type: 'string' }, description: '只检查指定上游 id（默认全部 role=merge 的来源；id 见 upstream-baseline.json）' },
 			includeDesign: { type: 'boolean', description: '是否附上未决设计条目摘要（默认 false 省 token）' },
 		},
 		output: { schema: TEXT_OUT, render: renderText },
@@ -261,10 +263,14 @@ export function applyUnifiedTools(ctx: Context, config: { registryDir: string })
 				const wanted = Array.isArray(args.repos) && args.repos.length > 0 ? new Set<string>(args.repos as string[]) : null
 				const lines: string[] = []
 				const insecureRepos: string[] = []
+				const skippedNonMerge: string[] = []
 				let drift = 0
 				for (const repo of repos) {
 					const id = String(repo.id)
 					if (wanted && !wanted.has(id)) continue
+					// 角色：merge 才做漂移自检；reference/attribution 跳过（显式点名时照查，别把工具变哑巴）。
+					const role = typeof repo.role === 'string' && repo.role.length > 0 ? repo.role : 'merge'
+					if (role !== 'merge' && !(wanted && wanted.has(id))) { skippedNonMerge.push(`${id}(${role})`); continue }
 					const pinned = String(repo.pinnedSha || '')
 					let sha: string | undefined
 					let unreachable: string | undefined
@@ -289,9 +295,12 @@ export function applyUnifiedTools(ctx: Context, config: { registryDir: string })
 				if (insecureRepos.length > 0) {
 					lines.push(`⚠️ 本机缺信任 CA：${insecureRepos.join(', ')} 的 HEAD 是用 \`http.sslVerify=false\` **重试**取到的（只读探测，但这类结果的抗篡改能力弱于正常校验 —— 别把它当强证据）`)
 				}
+				if (skippedNonMerge.length > 0) {
+					lines.push(`（未查的参考来源：${skippedNonMerge.join(', ')} —— role≠merge 不做定时自检，只在决定接线某功能时取用；显式传 repos:[<id>] 仍可单独查）`)
+				}
 				const head = drift > 0
 					? `上游有新提交：${drift} 个仓库需要吸收（re-vendor + 合并 + typecheck，需你确认后执行；完整提交清单见 scripts/check-upstream.ps1）`
-					: '全部跟踪上游均与开发基线一致，无需更新。'
+					: '全部跟踪来源（role=merge）均与开发基线一致，无需更新。'
 				let extra = ''
 				if (args.includeDesign === true) {
 					const entries = Array.isArray(reg.designEntries) ? reg.designEntries as Array<Record<string, unknown>> : []

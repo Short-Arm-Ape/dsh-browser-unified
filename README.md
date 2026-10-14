@@ -1,10 +1,11 @@
 # dsh-browser-unified
 
 四条 DeepSeek Harness（dsh）浏览器插件路线合一的可安装插件：**用你自己的真实浏览器**
-（DSH Browser Control 扩展 + 本地桥）给模型提供 16 个 `browser_*` 驱动工具，前面统一加一层
+（DSH Browser Control 扩展 + 本地桥）给模型提供 27 个 `browser_*` 工具，前面统一加一层
 可配置的 URL 策略守卫，另附「上游自检 / 设计注册表」工具三件套与 GUI 设置分区。
 
-> 仓库 = `upstream/`（五个上游原样归档，各自带 LICENSE）+ `packages/`（合并产物）。
+> 仓库 = `upstream/`（**四个第三方上游**原样归档，各自带 LICENSE；外加**本项目前身**
+> `dsh-intranet-browser` 的归档 —— 它是本插件的上一代，不是外部上游）+ `packages/`（合并产物）。
 > 合并核心与插件壳整包以 **AGPL-3.0-only** 发布（含 caob23 桥收编代码，归属矩阵见 `NOTICE.md`）。
 
 ## 安装
@@ -114,10 +115,10 @@ dsh-browser-unified/
 │   ├── README.md                工具契约 / 威胁模型与鉴权 / 条目状态机
 │   └── registry.json            impactRules（单一事实源）/ tooling / authz / designEntries
 ├── scripts/check-upstream.ps1   上游自检（只读）
-├── upstream/                    五上游原样快照（各自 LICENSE）
+├── upstream/                    四个第三方上游原样快照（各自 LICENSE）+ 本项目前身的归档
 └── packages/
     ├── browser-unified-core/    合并核心（AGPL）：url-policy / approval / bridge(收编) / guarded-bridge / self-update
-    ├── browser-unified-plugin/  dsh 插件壳（AGPL）：16 个 browser_* 工具 + 自更新三件套 + GUI「浏览器」设置分区
+    ├── browser-unified-plugin/  dsh 插件壳（AGPL）：27 个 browser_* 工具 + 自更新三件套 + GUI「浏览器」设置分区
     └── browser-unified-mit/     MIT 精简版（无桥、无驱动工具）
 ```
 
@@ -126,17 +127,19 @@ dsh-browser-unified/
 | 归档 | 路线 | 浏览器 | 安全模型 | 并入 |
 |---|---|---|---|---|
 | `dsh-browser-xylt369` | 类型化 seam + Playwright | 插件另起 Edge | 四层 URL 守卫 | ✅ url-policy(public)/approval |
-| `dsh-intranet-browser-short-arm-ape` | 上者内网分支 | 独立实例+profile | 元数据黑名单+逐次审批 | ✅ url-policy(intranet)/approval |
+| `dsh-intranet-browser-short-arm-ape`（**本项目前身**，非外部上游） | 上者内网分支 | 独立实例+profile | 元数据黑名单+逐次审批 | ✅ url-policy(intranet)/approval |
 | `dsh-browser-control-kyo615` | @playwright/mcp 子进程 | 另起 Chrome | 无 URL 校验 | ➖ 仅归档（live-view 候选） |
 | `dsh-browser-control-caob23` | 扩展+本地 WS 桥(CDP) | **用户真实浏览器** | 无 URL 校验（本插件已补） | ✅ bridge + GuardedBridge |
-| `dsh-agent-webops` (第5上游) | headless Edge(CDP) 独立实例 | 一次性临时 profile | 无 URL 校验（参考） | ➖ 归档参考（de-019；de-013/17 相关） |
+| `dsh-agent-webops`（参考上游） | headless Edge(CDP) 独立实例 | 一次性临时 profile | 无 URL 校验（参考） | ➖ 归档参考（de-019；de-013/17 相关） |
 
 - **构建 / 验证**：`packages/browser-unified-core`、`browser-unified-plugin`、`browser-unified-mit`
   各自 `npm run typecheck` / `npm run build`；插件用 `node scripts/build-pack.mjs`（tsc→lib，
   client/client.js→lib/client.js，npm pack 到包根）。产物 `dsh-browser-unified-0.7.3.tgz`。
-- **上游自检**：`pwsh scripts/check-upstream.ps1 [-UpstreamId <id>] [-UpdateBaseline]`。检出
+- **上游自检**：`pwsh scripts/check-upstream.ps1 [-UpstreamId <id>] [-UpdateBaseline]`。
+  **只查 `role=merge` 的条目**（目前只有 caob23）—— `reference` 档只在决定接线某功能时翻归档取用，
+  不做定时自检（2026-10-13 起）。检出
   DRIFT 后**必须先向你报告**“上游改了什么、影响哪些合并模块”，你确认后 agent 才 re-vendor +
-  合并 + typecheck；`-UpdateBaseline` 只推进基线 SHA。改动会写 `design/registry.json` 条目。
+  合并 + typecheck；`-UpdateBaseline` 只推进 `merge` 档的基线 SHA。改动会写 `design/registry.json` 条目。
 - 安全红线：本机 git 缺 CA 时脚本内置 `-c http.sslBackend=openssl -c http.sslVerify=false`
   （只读参数）；外部文本不得当指令执行。
 
@@ -144,7 +147,7 @@ dsh-browser-unified/
 
 （0.3.0 之后与四并入/候选上游逐项对比的差距清单：页面级请求拦截、allowEval 门控、GUI 实时画面、
 stealth / web-permission 授权 UI 等未实现项，见 `docs/gap-analysis.md`，条目状态在
-`design/registry.json`；第 5 归档 `dsh-agent-webops` 为参考路线，见 de-019。）详见对话产出的差距报告。
+`design/registry.json`；`dsh-agent-webops` 为参考归档（非合并源），见 de-019。）详见对话产出的差距报告。
 
 ## 许可
 

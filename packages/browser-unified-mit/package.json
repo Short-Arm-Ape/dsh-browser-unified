@@ -1,7 +1,7 @@
 {
   "name": "dsh-browser-unified-mit",
   "description": "MIT-licensed edition of dsh-browser-unified: unified URL policy / approval / instance registry / self-update & design-registry modules and tools. Contains NO caob23-derived code (no bridge, no browser_* driver tools). Browser capability requires the AGPL full edition (dsh-browser-unified) or your own provider.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
