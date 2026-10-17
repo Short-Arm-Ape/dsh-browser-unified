@@ -8,9 +8,10 @@
 
   角色（2026-10-13 主人定；见 upstream-baseline.json 顶层 note）：
     - role=merge：持续合并源，本脚本唯一做漂移自检的对象（目前只有 caob23）。
-    - role=reference：只在决定接线某功能时翻归档取用（xylt369 的 stealth/审批模型、kyo615 的
+    - role=reference：只在决定接线某功能时按基线 SHA 取用（xylt369 的 stealth/审批模型、kyo615 的
       GUI 实时画面、jonah791 的 headless/attach 路线）。**不做定时自检** —— 它们几个月不动，
-      每次自检只会报一堆没人处理的提交。要取用时按 id 直接读归档，别指望本脚本提醒。
+      每次自检只会报一堆没人处理的提交。要取用时按 id + baselineRef 里的 SHA 重新拉取
+      （仓库里只留了 LICENSE，不存源码快照），别指望本脚本提醒。
     - 本项目前身 `dsh-intranet-browser`（主人自己的仓库，已归档只读）已从基线除名，不是上游。
 
   安全约定：
@@ -20,7 +21,7 @@
       本脚本只读它，不在代码里维护第二份。
     - -UpdateBaseline 只写 upstream-baseline.json（pinnedSha/pinnedAt），不碰任何源码。
     - "根据上游提交修改合并源码"必须走单独的审批流程：先向用户报告改了什么/影响面，
-      用户确认后由 agent 手工执行 re-vendor + 合并 + typecheck，并同步推进本基线。
+      用户确认后由 agent 手工执行 re-vendor（按 SHA 取源码）+ 合并 + typecheck，并同步推进本基线。
 
   兼容性（2026-10-10 实撞；三项都会让自检"看起来跑了、其实什么都没查到"）：
     - 本文件**必须带 UTF-8 BOM**：Windows PowerShell 5.1 把无 BOM 的非 ASCII .ps1 按 ANSI 解码，
