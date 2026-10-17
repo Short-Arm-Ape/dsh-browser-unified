@@ -115,12 +115,36 @@ dsh-browser-unified/
 │   ├── README.md                工具契约 / 威胁模型与鉴权 / 条目状态机
 │   └── registry.json            impactRules（单一事实源）/ tooling / authz / designEntries
 ├── scripts/check-upstream.ps1   上游自检（只读）
+├── .github/workflows/ci.yml     CI：三包构建 + tests/ 全部套件（宿主侧，不碰真浏览器）
+├── tests/                       回归套件 10 套（323 项断言）+ run-all.mjs 汇总入口
 ├── upstream/                    四个第三方上游原样快照（各自 LICENSE）+ 本项目前身的归档
 └── packages/
     ├── browser-unified-core/    合并核心（AGPL）：url-policy / approval / bridge(收编) / guarded-bridge / self-update
     ├── browser-unified-plugin/  dsh 插件壳（AGPL）：27 个 browser_* 工具 + 自更新三件套 + GUI「浏览器」设置分区
     └── browser-unified-mit/     MIT 精简版（无桥、无驱动工具）
 ```
+
+## 自动验证
+
+两条线，别混在一起：
+
+| 层 | 跑什么 | 什么时候 |
+|---|---|---|
+| **CI**（GitHub Actions，ubuntu + node 22） | 三个包 `npm ci` + 构建（走仓库自己的 `build-pack`）+ `tests/` 全部 10 套（323 项断言）+ `lib/client.js` 与 `client/client.js` 字节一致 | 每次 push 到 main、每个 PR、手动触发 |
+| **本机台子**（Windows 真 Edge） | 只有它验得了的那层：浮层、硬锁、导航完成判定、div 化 SPA 元素识别 | 改扩展或改闸门时手动跑（做法见 `design/`） |
+
+本地一条命令：`node tests/run-all.mjs`（可带过滤词，例如 `node tests/run-all.mjs tool`）。
+每个套件都是独立进程、自己数断言、自己用退出码交代结果，所以 CI 里不需要额外的断言解析。
+
+CI **不**做的事（免得看到绿就以为能上线）：
+
+- **不跑真浏览器**：runner 上没有你的浏览器和已加载的扩展，「扩展装上去之后到底能不能点」它验不了；
+- **不打 Release**：`node scripts/build-release.mjs` 是本机发布流程（要真扩展 zip、要上传资产）。
+
+CI 里有两处不那么直觉、但必须这样的地方（YAML 里也写了注释）：
+
+1. `packages/browser-unified-plugin` 用裸包名 `import 'browser-unified-core'`，而 core **不是**它的 package.json 依赖（本地也是手工装的）。npm 不管这条链接，CI 里用一条 `ln -s` 复原同一布局；
+2. 构建走 `node scripts/build-pack.mjs --no-pack` 而不是裸 `tsc`：客户端那一半（`client/client.js → lib/client.js`）只有前者会复制，单跑 `tsc` 会让设置页测试读到旧文件。
 
 ## 上游与许可
 
