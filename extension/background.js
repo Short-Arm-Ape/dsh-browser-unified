@@ -2242,10 +2242,32 @@ function pageShowHold(payload) {
 		abort.focus({ preventScroll: true });
 		state.prevFocus = prevFocus && prevFocus !== document.body ? true : false;
 	} catch (err) { /* 页面不允许聚焦就算了，鼠标照旧可用 */ }
-	// Esc = 接管（与双击等价），给没有鼠标的人一条明确的退路
+	// Esc 也要"两下"或"长按"才算接管 —— 单次 Esc 在页面里太常见（关弹窗、取消输入、
+	// 退出全屏），一下就交出控制权等于把误触从鼠标搬到了键盘。规则与双击一致：800ms 内
+	// 连按两下，或按住 600ms。给没有鼠标的人留一条明确退路，但不给误触留。
+	var escLastUp = 0
+	var escLongPress = 0
+	var escDown = false
 	wrap.addEventListener('keydown', function (e) {
-		if (e.key === 'Escape') { e.preventDefault(); cleanup('user'); }
-	}, true);
+		if (e.key !== 'Escape') return
+		e.preventDefault()
+		if (escDown) return // 长按期间系统重复的 keydown 不算"第二下"
+		escDown = true
+		escLongPress = setTimeout(function () {
+			escLongPress = 0
+			escDown = false
+			cleanup('user')
+		}, 600)
+	}, true)
+	wrap.addEventListener('keyup', function (e) {
+		if (e.key !== 'Escape') return
+		e.preventDefault()
+		escDown = false
+		if (escLongPress) { clearTimeout(escLongPress); escLongPress = 0 }
+		var now = Date.now()
+		if (now - escLastUp <= 800) { escLastUp = 0; cleanup('user'); return }
+		escLastUp = now
+	}, true)
 	return { active: true, id: ID, shadow: host.shadowRoot !== null && host.shadowRoot !== undefined, blockKeys: payload.blockKeys === true, focused: true };
 }
 
@@ -2357,7 +2379,7 @@ async function cmdHoldOn(params) {
 		title: HOLD_FIXED_TITLE,
 		text: typeof params.text === 'string' ? params.text : '',
 		meta: params.meta && typeof params.meta === 'object' ? params.meta : null,
-		hint: typeof params.hint === 'string' && params.hint.length > 0 ? params.hint : '双击任意处接管页面（键盘：Esc 接管，Enter 中止）',
+		hint: typeof params.hint === 'string' && params.hint.length > 0 ? params.hint : '双击任意处接管页面（键盘：连按两下 Esc 或长按 Esc 接管，Enter 中止）',
 		hintOne: typeof params.hintOne === 'string' && params.hintOne.length > 0 ? params.hintOne : '再双击一次接管页面（或按 Esc）',
 		dblMs: Number.isFinite(Number(params.dblMs)) && Number(params.dblMs) >= 120 && Number(params.dblMs) <= 1200 ? Number(params.dblMs) : 500,
 		abortLabel: typeof params.abortLabel === 'string' && params.abortLabel.length > 0 ? params.abortLabel : '中止操作',
