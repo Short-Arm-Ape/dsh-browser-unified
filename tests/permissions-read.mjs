@@ -75,9 +75,18 @@ check('无记录的类如实留空（不编造）',
 	&& otherByPref.get('geolocation')?.exception !== undefined)
 
 // ---- 时间戳 -------------------------------------------------------------------
-check('Chromium 时间戳换算正确（本机那次 LNA 授权 = 2026-09-29 14:01:15）',
-	permissions.chromiumTime('13435135275374948') === '2026-09-29 14:01:15',
-	permissions.chromiumTime('13435135275374948'))
+// 这个函数是**给人看的本机时间**（`toLocaleString('sv-SE')`），所以断言只能钉「瞬间」，
+// 不能写死某个时区的人眼时间。第一版就把 `2026-09-29 14:01:15`（作者在东八区）写进了断言，
+// 于是在 CI（UTC runner）上算出 `06:01:15` 直接翻红 —— 换台机器跑就红的断言不是断言。
+const CHROMIUM_STAMP = '13435135275374948'
+const EXPECTED_MS = Date.UTC(2026, 8, 29, 6, 1, 15) // 2026-09-29T06:01:15Z，即东八区的 14:01:15
+const stampText = permissions.chromiumTime(CHROMIUM_STAMP)
+check('Chromium 时间戳换算到正确瞬间（与时区无关）',
+	// 返回值就是本机时区的墙上时间，按本机时区解析回来才可比
+	new Date(stampText.replace(' ', 'T')).getTime() === EXPECTED_MS,
+	`${stampText}（本机时区） 期望瞬间 ${new Date(EXPECTED_MS).toISOString()}`)
+check('Chromium 时间戳按 YYYY-MM-DD HH:MM:SS 显示给人看',
+	/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(stampText), stampText)
 
 // ---- 配置错法：可行动指引（bi-013 之后，指引在**容错读取器**里，且不再冤枉配置） --------
 let threw = ''

@@ -1,0 +1,66 @@
+name: verify
+
+# 宿主侧构建 + tests/ 下全部回归套件。刻意**不**碰真浏览器：这个 job 只证明
+# 「代码在这台干净机器上能构建、能自洽」，真浏览器/真扩展那一层要跑本机的台子
+# （见 README「自动验证」一节），塞进 GitHub runner 只会变成假绿。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 三个包各自有 package-lock.json：用 npm ci 而不是 install，
+      # 这样 CI 装的版本与本机/发布时一致，锁文件失效会在这里当场红。
+      - name: 构建 core
+        working-directory: packages/browser-unified-core
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: 构建 plugin
+        working-directory: packages/browser-unified-plugin
+        run: |
+          npm ci --no-audit --no-fund
+          # 插件用裸包名 import 'browser-unified-core'，npm 不管这条链接
+          # （core 不是它的依赖，本地也是手工装的），所以这里补上，与本地布局一致：
+          #   packages/browser-unified-plugin/node_modules/browser-unified-core -> packages/browser-unified-core
+          ln -s "$(cd ../browser-unified-core && pwd)" node_modules/browser-unified-core
+          # 走仓库自己的构建口：tsc + 把 client/client.js 复制成 lib/client.js
+          # （单跑 tsc 不会复制客户端那一半，设置页测试会用旧文件）
+          node scripts/build-pack.mjs --no-pack
+
+      - name: 构建 mit 变体
+        working-directory: packages/browser-unified-mit
+        run: |
+          npm ci --no-audit --no-fund
+          node scripts/build-pack.mjs --no-pack
+
+      # runner 是 UTC，这是**故意**不修的：任何依赖本机时区的断言都会在这里翻红
+      # （第一次跑就抓到一条：permissions-read 把作者东八区的人眼时间写进了断言）。
+      - name: 回归测试
+        run: node tests/run-all.mjs
+
+      # 产物形态检查：lib/client.js 必须与 client/client.js 一致，
+      # 否则发出去的包与源码不一致（这种偏差不会让任何测试报错）。
+      - name: 客户端半区与源码一致
+        run: |
+          cmp packages/browser-unified-plugin/client/client.js packages/browser-unified-plugin/lib/client.js
+          echo "lib/client.js 与 client/client.js 字节一致"
