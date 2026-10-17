@@ -829,7 +829,7 @@
       "decidedBy": "user",
       "createdAt": "2026-09-29",
       "updatedAt": "2026-09-29T06:30:00.000Z",
-      "scope": "**独立插件**，不并入浏览器插件。用户描述：类似老机的「爱丽丝记忆插件」；每个会话可查/可提条目，会话之间像 GitHub 协作（issue/PR/评论，会话=贡献者；早先的 PM 构想里经理充当 GitHub 的角色）。本插件的 issues 登记簿可视为该构想的雏形：会话级标记 + 首调用摘要 + 按需读写。",
+      "scope": "**独立插件**，不并入浏览器插件。用户描述：类似「记忆插件」那类做法；每个会话可查/可提条目，会话之间像 GitHub 协作（issue/PR/评论，会话=贡献者；早先的 PM 构想里经理充当 GitHub 的角色）。本插件的 issues 登记簿可视为该构想的雏形：会话级标记 + 首调用摘要 + 按需读写。",
       "affectedModules": [
         "（未来独立插件）"
       ],
@@ -909,7 +909,7 @@
         "registry/baseline",
         "registry/impactRules"
       ],
-      "summary": "用户 2026-10-10 指示\"看看上游\"：实测 4/5 上游 UP-TO-DATE，仅 jonah791/dsh-agent-webops DRIFT（8603a0a → 31e5c17aa，13 提交 +1275/−142）。按流程只做\"归档 + 推进 pin + 记账\"，不并入 core（mergedIntoCore=false）。归档刷新在老机 F:\\Work\\Objects\\dsh-browser-unified\\upstream\\ 完成（旧快照备份为 dsh-agent-webops.bak-20261010，新快照经 robocopy /L 幂等复核：14 文件全部 skipped）。本次增量价值点：attach 外部 CDP 端点（我们目前只有\"自己拉起\"路线）、src/pure.ts 纯逻辑层 + 337 例离线测试、docs/semantic.md 的可证伪验收写法；已吸收的（我们独立做得更全）：wait 谓词轮询 → browser_wait、临时干净实例 → autoLaunchTempProfile。Fabric 骨架（dsh-plugin.json）自陈不可运行，**不跟**。",
+      "summary": "用户 2026-10-10 指示\"看看上游\"：实测 4/5 上游 UP-TO-DATE，仅 jonah791/dsh-agent-webops DRIFT（8603a0a → 31e5c17aa，13 提交 +1275/−142）。按流程只做\"归档 + 推进 pin + 记账\"，不并入 core（mergedIntoCore=false）。归档刷新完成（旧快照备份为 dsh-agent-webops.bak-20261010；新快照经幂等复核，14 文件全部 skipped）。本次增量价值点：attach 外部 CDP 端点（我们目前只有\"自己拉起\"路线）、src/pure.ts 纯逻辑层 + 337 例离线测试、docs/semantic.md 的可证伪验收写法；已吸收的（我们独立做得更全）：wait 谓词轮询 → browser_wait、临时干净实例 → autoLaunchTempProfile。Fabric 骨架（dsh-plugin.json）自陈不可运行，**不跟**。",
       "notes": [
         "顺带修正：webops 的 impactRules 此前是注册表**顶层孤儿键**（不在 impactRules 里），已挪回 impactRules。",
         "pin 推进同时改了归档快照与 upstream-baseline.json —— 两边必须同步，否则 check-upstream 会误报。"
