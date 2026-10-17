@@ -13,7 +13,7 @@
       "license": "AGPL-3.0",
       "mergedIntoCore": true,
       "baselineVerifiedFileDiff": 0,
-      "note": "2026-10-10 归档刷新：v1.0.7 (2763148) → v1.0.8 (43e6325)，9 提交 / 27 文件（+524/−23 计 lib 产物）。其中两条是安全强化 —— HTTP 命令面/清理端点要求 Token（Authorization: Bearer / X-Token / ?token=，timingSafeEqual）、全部移除 `Access-Control-Allow-Origin: *`、WebSocket 升级加 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与网页拨号）；另修 settings.register 特性探测(#8)、lib 落后 src（v1.0.7 的 npm 包只注册 11/16 工具）、包内 patch 的 enabled 覆盖(#4)、发布资产 zip 前言(#2)、文档口径(#5)。本轮已把 Host/Origin 校验与 token 形式并入 browser-unified-core 的 bridge/server.ts（保留 guardCommand 与回环 CORS 回显两处差异，见 NOTICE.md）。旧快照备份：F:\\Work\\Objects\\__archive-backups\\dsh-browser-control-caob23-2763148-20261010",
+      "note": "2026-10-10 归档刷新：v1.0.7 (2763148) → v1.0.8 (43e6325)，9 提交 / 27 文件（+524/−23 计 lib 产物）。其中两条是安全强化 —— HTTP 命令面/清理端点要求 Token（Authorization: Bearer / X-Token / ?token=，timingSafeEqual）、全部移除 `Access-Control-Allow-Origin: *`、WebSocket 升级加 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与网页拨号）；另修 settings.register 特性探测(#8)、lib 落后 src（v1.0.7 的 npm 包只注册 11/16 工具）、包内 patch 的 enabled 覆盖(#4)、发布资产 zip 前言(#2)、文档口径(#5)。本轮已把 Host/Origin 校验与 token 形式并入 browser-unified-core 的 bridge/server.ts（保留 guardCommand 与回环 CORS 回显两处差异，见 NOTICE.md）。旧快照备份：__archive-backups\\dsh-browser-control-caob23-2763148-20261010",
       "role": "merge"
     },
     {

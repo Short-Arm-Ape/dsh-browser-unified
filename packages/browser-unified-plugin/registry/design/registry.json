@@ -296,7 +296,7 @@
       "summary": "用户明示（source=user）：把插件里此前只存在于 schema/profile 配置的设置项（enabled/urlMode/port/token/shotsDir/registryDir + 云元数据端点）聚合到 DSH 设置对话框，新增独立分区「浏览器」页，仿 better-sidebar「侧边卡片」的 settings.section 模式；改动即时生效。",
       "notes": [
         "client 半区以 __ModuleLoader__ 格式手写（client/client.js -> lib/client.js），仅 require('react')，无新增构建工具链",
-        "配套把 profile cordis.patch.yml 的 registryDir 修正到新仓库路径（旧 F:\\Work\\DeepSeek_Harness_Workspace 路径已失效）",
+        "配套把 profile cordis.patch.yml 的 registryDir 修正到新仓库路径（旧工作区路径已失效）",
         "2026-09-05 重启 dsh web 后 GUI 验证通过：设置对话框出现「浏览器」分区，字段齐全、编辑持久化、即时生效（含渲染错误边界）"
       ],
       "history": [

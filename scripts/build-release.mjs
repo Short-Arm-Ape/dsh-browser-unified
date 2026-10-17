@@ -70,7 +70,7 @@ function run(command, args, cwd) {
 
 const read = (p) => readFileSync(p, 'utf8')
 const readJson = (p) => JSON.parse(read(p))
-/** 换行归一化：老机的 core.autocrlf=true 会让同一个文件在不同机器上 CRLF/LF 混着来，
+/** 换行归一化：core.autocrlf=true 会让同一个文件在不同机器上 CRLF/LF 混着来，
  *  逐字节比较会全盘假红。文本一致性判断一律先归一化。 */
 const norm = (s) => s.replace(/\r\n/g, '\n')
 const exists = (p) => existsSync(p)
@@ -443,7 +443,7 @@ try {
   const out = execFileSync('dsh', ['--profile', 'web', '--dump-config'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
   const skipped = out.split(/\r?\n/).filter((l) => /skipping profile bundle/.test(l))
   // 只对本包相关的跳过报错：别人的 bundle 与 dsh 版本不兼容不该拦住我们的发布
-  // （老机那份 profile 还是旧的 Windows 装机，实测会跳过别家 bundle）。
+  // （另一台机器上的 profile 是旧的 Windows 装机，实测会跳过别家 bundle）。
   const ours = skipped.filter((l) => /dsh-browser-unified|browser-unified-core|browser-bridge/.test(l))
   if (ours.length === 0) ok(`G8 dump-config：本插件零跳过${skipped.length > 0 ? `（整体跳过 ${skipped.length} 条，均非本包）` : ''}`)
   else bad(`G8 dump-config 跳过了本插件：${ours[0].trim().slice(0, 140)}`)
