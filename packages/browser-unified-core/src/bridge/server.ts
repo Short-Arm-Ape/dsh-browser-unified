@@ -87,6 +87,8 @@ export interface BridgeServerStatus {
    * 因为**回环绑定不是边界，token 才是**（上游 v1.0.8 的口径）。
    */
   readonly insecureToken: boolean
+  /** 运行中**正在生效**的策略快照（来自 `BridgeServerOptions.describePolicy`）；没提供就是 undefined。 */
+  readonly policy?: Record<string, unknown>
 }
 
 /** Caller controls for one {@link BridgeServer.execute} round-trip. */
@@ -132,6 +134,39 @@ export interface BridgeServerOptions {
    * @returns 拒绝原因（非空字符串即拒绝 → HTTP 403）；undefined 表示放行。
    */
   readonly guardCommand?: (command: string, params: Record<string, unknown>) => string | undefined | Promise<string | undefined>
+  /**
+   * Optional read-only "what is in force right now" snapshot for the status face.
+   *
+   * 为什么需要它（2026-10-17）：设置页里存下来的值 ≠ 运行中生效的值 —— 改完没重启时两者会
+   * 不一致，而设置页原来只能显示"存下来的"，于是用户看到"已开启"、实际仍被拒（`WEB_DSH_DISABLED`）。
+   * 让桥把**生效值**一起吐出来，设置页就能把差异显式标出来（"改动需重启才生效"），
+   * 而不用靠人猜。
+   *
+   * 只放只读、非机密的字段（策略开关与名单）；调用方必须容错：抛错就当没有。
+   */
+  readonly describePolicy?: () => Record<string, unknown> | undefined
+}
+
+/**
+ * 校验并规范化扩展发来的 `hello` 帧。
+ *
+ * **为什么单独抽出来（2026-10-17 实测发现）**：这段原来内联在 WS 消息处理里、逐字段手抄，
+ * 抄的时候**漏了 `protocol`** —— 于是 `extensionProtocol` 恒为 0。扩展明明在 hello 里声明了
+ * `protocol: 1`（rig 里 hello 帧也确实是 1），桥却在落库时把它丢了，协议协商从来没真正生效过。
+ * 手抄字段这种活最容易漏，所以抽成纯函数并单测。
+ */
+export function normalizeHello(msg: Record<string, unknown>): BridgeHello {
+  const browser = (msg.browser ?? { name: 'unknown', version: 'unknown', ua: '' }) as BridgeHello['browser']
+  const protocol = typeof msg.protocol === 'number' && Number.isFinite(msg.protocol) && msg.protocol >= 0
+    ? Math.trunc(msg.protocol)
+    : undefined
+  return {
+    client: typeof msg.client === 'string' ? msg.client : 'unknown',
+    version: typeof msg.version === 'string' ? msg.version : 'unknown',
+    browser,
+    ...(protocol === undefined ? {} : { protocol }),
+    ...(typeof msg.extensionId === 'string' && msg.extensionId.length > 0 ? { extensionId: msg.extensionId } : {}),
+  }
 }
 
 /** Agent scratch-file convention: `__name.mjs`-style temp artifacts at the top level only. */
@@ -187,6 +222,13 @@ export class BridgeServer {
 
   /** Current link state, also served verbatim as `/api/status`. */
   get status(): BridgeServerStatus {
+    // 生效值快照：读失败就当没有（状态面不能因为策略探针抛错而挂掉）
+    let policy: Record<string, unknown> | undefined
+    try {
+      policy = this.options.describePolicy?.()
+    } catch {
+      policy = undefined
+    }
     return {
       listening: this.httpServer !== undefined,
       port: this.httpServer !== undefined ? this.options.port : undefined,
@@ -200,6 +242,7 @@ export class BridgeServer {
       pendingCommands: this.pending.size,
       lastError: this.lastError,
       insecureToken: isWeakToken(this.options.token ?? ''),
+      policy,
     }
   }
 
@@ -635,12 +678,7 @@ export class BridgeServer {
       return
     }
     if (msg.type === 'hello') {
-      this.hello = {
-        client: typeof msg.client === 'string' ? msg.client : 'unknown',
-        version: typeof msg.version === 'string' ? msg.version : 'unknown',
-        browser: (msg.browser ?? { name: 'unknown', version: 'unknown', ua: '' }) as BridgeHello['browser'],
-        ...(typeof msg.extensionId === 'string' && msg.extensionId.length > 0 ? { extensionId: msg.extensionId } : {}),
-      }
+      this.hello = normalizeHello(msg as unknown as Record<string, unknown>)
       this.log(`hello: client=${this.hello.client} v${this.hello.version} browser=${this.hello.browser.name} ${this.hello.browser.version}`
         + `${this.hello.extensionId !== undefined ? ` id=${this.hello.extensionId}` : ''}`)
       return

@@ -818,6 +818,27 @@ class BridgeController {
                     // X18：HTTP 命令面（`POST /api/command`）过去完全不过策略，同伴件的 frames/eval
                     // 就走它 —— 等于"带 token 就能对任意标签页 eval/nav"。这里把策略接回去。
                     guardCommand: (command, params) => this.guardHttpCommand(command, params),
+                    // 设置页要用「存下来的值 vs 正在生效的值」把"改动需重启"显出来（2026-10-17：
+                    // 用户开了「允许访问本 DSH 页面」、页面显示已保存，实际仍被 `WEB_DSH_DISABLED` 拒）。
+                    // 读 `this.current`（reconcile 里更新）而不是 reconcile 的参数：策略变更时监听器
+                    // 不重建，闭包捕获的旧 config 会过期。只放只读、非机密字段；dshOrigins 不放 ——
+                    // 生效值里含宿主推导出来的控制页地址，与用户列表天然不同，比了会误报。
+                    describePolicy: () => {
+                        const c = this.current;
+                        if (c === undefined)
+                            return undefined;
+                        return {
+                            enabled: c.enabled !== false,
+                            dshAccessEnabled: c.dshAccessEnabled === true,
+                            internetAccess: c.internetAccess,
+                            lanAccess: c.lanAccess,
+                            localAccess: c.localAccess,
+                            askMode: c.askMode,
+                            blockMetadata: c.blockMetadata !== false,
+                            allowHosts: [...(c.allowHosts ?? [])],
+                            denyHosts: [...(c.denyHosts ?? [])],
+                        };
+                    },
                 });
                 try {
                     await attempt.start();
@@ -2086,7 +2107,8 @@ function applyBrowserTools(ctx, controller, getConfig) {
         description: 'List tabs, or open/close/activate/group/ungroup. Actions act on real browser windows. '
             + 'close 支持批量：给 `tabIds`（数组）、`urlPattern`（URL 子串或 /正则/）、或 `others: true`（关掉除 `tabId` 外的全部）—— '
             + '一条命令关一批，并且对每个 id 都有交代（关掉的 / 早就没了的 / 失败的），重试安全。'
-            + 'agent 自己开的标签默认收进当前窗口里一个 `DSH` 蓝色分组（`group:false` 可不归组），`ungroup` **只解除归属、不关任何标签页**。',
+            + 'agent 自己开的标签默认收进当前窗口里一个 `DSH` 蓝色分组（`group:false` 可不归组），`ungroup` **只解除归属、不关任何标签页**。'
+            + '`list` 会带上每个标签的分组归属（组名/颜色），也能用 `groupTitle` 只列某个组的标签。',
         parameters: {
             action: { type: 'string', required: true, description: 'One of: list, open, close, activate, group, ungroup.' },
             url: { type: 'string', description: 'URL for the open action.' },
@@ -2097,12 +2119,14 @@ function applyBrowserTools(ctx, controller, getConfig) {
             active: { type: 'boolean', description: 'Whether a newly opened tab becomes active; defaults to true.' },
             group: { type: 'boolean', description: 'open: put the new tab in the DSH group (default true); pass false to keep it loose.' },
             windowId: { type: 'number', description: 'ungroup: dissolve only that window\'s DSH group; omit to clear every window.' },
+            groupTitle: { type: 'string', description: 'list: only tabs whose tab-group title equals this value (e.g. "DSH").' },
         },
         output: {
             schema: { type: 'object', additionalProperties: true },
             render: (_args, value) => {
                 const tabs = Array.isArray(value?.tabs) ? value.tabs : [];
                 // 归组/拆组/开标签的结果也给人话，不落回 JSON（模型读 JSON 容易漏字段）。
+                // 分组归属直接标在每行开头：`[DSH]` —— 原来看不见组，只能靠人眼看浏览器窗口顶部。
                 if (value && typeof value.ungrouped === 'number') {
                     return textBlock(`已解除 ${value.ungrouped} 个标签的归属（${value.groups ?? 0} 个 DSH 分组）`
                         + `${value.reason === undefined ? '' : ` —— ${String(value.reason)}`}`
@@ -2133,17 +2157,36 @@ function applyBrowserTools(ctx, controller, getConfig) {
                     }
                     return textBlock(JSON.stringify(value));
                 }
-                const lines = tabs.map((tab) => `${tab.id}\t${tab.active === true ? 'active' : '      '}\t${String(tab.title ?? '')} — ${String(tab.url ?? '')}`);
+                const lines = tabs.map((tab) => {
+                    const badge = typeof tab.groupTitle === 'string' && tab.groupTitle.length > 0 ? `[${tab.groupTitle}] ` : '';
+                    return `${tab.id}\t${tab.active === true ? 'active' : '      '}\t${badge}${String(tab.title ?? '')} — ${String(tab.url ?? '')}`;
+                });
+                const groups = Array.isArray(value.groups) ? value.groups : [];
+                const groupLine = groups.length === 0
+                    ? ''
+                    : `\n分组：${groups.map((g) => `${String(g.title ?? '') || '(无标题)'}（${tabs.filter((t) => t.groupId === g.id).length} 个标签）`).join(' / ')}`;
                 const head = `窗口 ${value.windows ?? '?'} 个，标签页 ${value.count ?? tabs.length} 个`
                     + `（activeTabId=${value.activeTabId ?? '?'}${value.noWindow === true ? '，当前没有任何窗口' : ''}）`;
-                return textBlock(`${head}\n${lines.join('\n')}`);
+                return textBlock(`${head}${groupLine}\n${lines.join('\n')}`);
             },
         },
         presentCall: args => ({ card: 'generic', title: `Browser tabs: ${args.action}`, kind: 'other' }),
         async execute(args, exec) {
             switch (args.action) {
-                case 'list':
-                    return await controller.execute('tabs.list', {}, exec.signal);
+                case 'list': {
+                    const listed = await controller.execute('tabs.list', {}, exec.signal);
+                    const wantGroup = typeof args.groupTitle === 'string' && args.groupTitle.length > 0 ? args.groupTitle : undefined;
+                    if (wantGroup === undefined)
+                        return listed;
+                    const all = Array.isArray(listed.tabs) ? listed.tabs : [];
+                    const kept = all.filter((tab) => (tab.groupTitle ?? '') === wantGroup);
+                    return {
+                        ...listed,
+                        count: kept.length,
+                        tabs: kept,
+                        note: `只列分组「${wantGroup}」：匹配 ${kept.length} 个（全部 ${all.length} 个）`,
+                    };
+                }
                 case 'open': {
                     if (typeof args.url !== 'string' || args.url.length === 0)
                         throw new Error('open requires url');

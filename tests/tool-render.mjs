@@ -543,6 +543,28 @@ console.log('\n[11] 2026-10-13 第三段：tabs 的归组/批量关闭/打开，
 	check('没归组时把原因说出来', openedNoGroup.includes('没归组') && openedNoGroup.includes('group:false'))
 }
 
+console.log('\n[12] 2026-10-17：tabs.list 要看得见分组（原来只能建组/解散，看不出谁在组里）')
+{
+	const grouped = renderText('browser_tabs', { action: 'list' }, {
+		count: 3, windows: 1, activeTabId: 11,
+		groups: [{ id: 42, title: 'DSH', color: 'blue', windowId: 1 }],
+		tabs: [
+			{ id: 11, url: 'https://a.example/', title: 'A', active: true, groupId: 42, groupTitle: 'DSH', groupColor: 'blue' },
+			{ id: 12, url: 'https://b.example/', title: 'B', active: false, groupId: 42, groupTitle: 'DSH', groupColor: 'blue' },
+			{ id: 13, url: 'https://c.example/', title: 'C', active: false },
+		],
+	})
+	check('归组的标签行首带组名徽标', grouped.includes('[DSH] A') && grouped.includes('[DSH] B'))
+	check('未归组的标签没有徽标', !grouped.includes('[DSH] C'))
+	check('列表头有一行分组一览（含组内标签数）', /分组：DSH（2 个标签）/.test(grouped), grouped.split('\n')[0])
+
+	const plain = renderText('browser_tabs', { action: 'list' }, {
+		count: 1, windows: 1, activeTabId: 9, groups: [],
+		tabs: [{ id: 9, url: 'https://x.example/', title: 'X', active: true }],
+	})
+	check('没有分组时不多出一行', !plain.includes('分组：'))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {

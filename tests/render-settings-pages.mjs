@@ -401,6 +401,43 @@ console.log('\n[3] 页面侧探测（fetch 桩返回一座在 9778 的桥）')
 		/if \(capsuleTimer\.current\) window\.clearTimeout\(capsuleTimer\.current\)/.test(src))
 }
 
+// ---- [生效值] 2026-10-17：存的 vs 正在生效的（「允许访问本 DSH 页面」那次真踩到） ----
+{
+	const mod = loadClient(vendorClient, React)
+	const T3 = mod.__test
+	check('导出 stalePolicyKeys（可单测）', T3 !== undefined && typeof T3.stalePolicyKeys === 'function')
+	if (T3) {
+		const stored = {
+			enabled: true, dshAccessEnabled: true, blockMetadata: true,
+			internetAccess: 'allow', lanAccess: 'allow', localAccess: 'allow', askMode: 'inherit',
+			allowHosts: [], denyHosts: [], dshOrigins: ['http://127.0.0.1:3080'],
+		}
+		const inForce = {
+			enabled: true, dshAccessEnabled: true, blockMetadata: true,
+			internetAccess: 'allow', lanAccess: 'allow', localAccess: 'allow', askMode: 'inherit',
+			allowHosts: [], denyHosts: [],
+		}
+		check('完全一致 ⇒ 没有未生效项', T3.stalePolicyKeys(stored, inForce).length === 0)
+		// 正是这次的现场：文件里是 true、运行中仍是 false
+		const stale = T3.stalePolicyKeys(stored, Object.assign({}, inForce, { dshAccessEnabled: false }))
+		check('「允许访问本 DSH 页面」存 true / 生效 false ⇒ 报出来', stale.length === 1 && stale[0] === 'dshAccessEnabled', stale.join(','))
+		check('某档改了就报那一档',
+			T3.stalePolicyKeys(Object.assign({}, stored, { lanAccess: 'deny' }), inForce)[0] === 'lanAccess')
+		check('名单变了也报', T3.stalePolicyKeys(Object.assign({}, stored, { allowHosts: ['a.com'] }), inForce)[0] === 'allowHosts')
+		check('dshOrigins 刻意不比（生效值含宿主推导的控制页地址）',
+			T3.stalePolicyKeys(Object.assign({}, stored, { dshOrigins: [] }), inForce).length === 0)
+		check('blockMetadata 缺省＝开，不算未生效', T3.stalePolicyKeys(Object.assign({}, stored, { blockMetadata: undefined }), inForce).length === 0)
+		check('桥没给 policy ⇒ 不结论（返回空）', T3.stalePolicyKeys(stored, null).length === 0)
+	}
+	const src2 = readFileSync(vendorClient, 'utf8')
+	check('访问控制卡里插入了「有改动还没生效」提示条',
+		src2.includes("staleTitle: '有改动还没生效'") && /id: 'access'[\s\S]{0,200}staleBanner/.test(src2))
+	check('桥没报生效值时有灰色说明（不装作没事）',
+		src2.includes("staleBridgeDown: '桥没报出生效值") && src2.includes('noPolicyNote'))
+	check('「允许访问本 DSH 页面」的说明改短并写清风险与可逆性',
+		src2.includes('开启后模型可以打开并操作本机 DSH 控制页') && src2.includes('关闭即时生效，开启需二次确认'))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {
