@@ -1033,7 +1033,7 @@
       ],
       "summary": "用户明示（source=user，2026-10-13）：「按你倾向做」。两处语义冲突的处理：① `browser_wait` —— 我们 2026-09 的自研版（selector/text/fn 三选一、明确的超时与中止语义、siteUnreachable 兜底）**保留**，只把上游 v1.0.9 描述里「SPA 路由与懒渲染：navigate 不会等它们」那半句并进我们的描述；上游那版（返回原始 JSON）不采纳。② `browser_snapshot` —— 上游 v1.0.11 的 `mode:ax`（无障碍树 role + 可访问名）**作为可选参数加进来**，默认仍是我们的 DOM 判据（含 why=cursor 的 div 化 SPA 识别），两个判据并存。移植时保持**我们的 ref 契约**：AX 模式也把 `data-dsh-ref` 打到真实 DOM 节点上（DOM.resolveNode + Runtime.callFunctionOn 盖章），因此 browser_click ref=… 在两种模式下都照旧可用。另采纳上游 v1.0.15 的教训：**旧扩展会静默忽略 mode:ax**，插件必须自己把降级说出来 —— 抽成导出纯函数 snapshotModeOf(rawMode, rawFallback, wantAx)，可单测。",
       "notes": [
-        "真机核对（rig：真 Edge 155 + 真扩展 1.0.93 + 假桥）：seg2-contract.mjs **12/12** —— dom 老行为不变；ax 回 mode=ax 且 3 条带 role（input→textbox、button→button + 可访问名 go）；[data-dsh-ref] 属性数 == items 数；**按 ax 给的 ref（经属性选择器）点得动**，/press 的表单 submit=1。",
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**12/12** —— dom 老行为不变；ax 回 mode=ax 且 3 条带 role（input→textbox、button→button + 可访问名 go）；[data-dsh-ref] 属性数 == items 数；**按 ax 给的 ref（经属性选择器）点得动**，/press 的表单 submit=1。",
         "渲染没沿用上游的 JSON.stringify(value)：ax 条目打印 [role] 可访问名，并在头部标明这是 a11y 树；落回 dom 时把原因写进模型可见文本。",
         "why=ax 在渲染里不再当成 cursor 兜底打印（否则会误导成「这是靠样式边界猜出来的元素」）。",
         "扩展侧 AX 实现移植自上游 v1.0.11（AGPL-3.0，同许可），文件内已注明来源与角色白名单的取舍（GenericContainer/StaticText 会把额度吃光）。"
@@ -1057,12 +1057,12 @@
         "extension",
         "tooling/tools"
       ],
-      "summary": "用户先问「上游欠账补完后就是路线问题了」，随后「开始」。先把**净差量出来**再决定怎么补：命令表对比 = 上游多 tabs.group/tabs.ungroup/tabs.closeMany，我们多 content.debug/window.ensure；函数表对比 = 上游独有的只有 6 个归组函数 + parseKeySpec + closeMany + 四个通用小助手，我们独有的是端口自动发现（3 函数）、frames（cmdFrames/buildContentScript）、content.debug、window.ensure、弹窗策略等。结论：**手工挑比 re-vendor 更划算** —— ① 本段补完后上游独有面几乎清零，re-vendor 换不来新能力；② re-vendor 会把我们 8 处独有改动全部变成需要重新打补丁的对象，风险大于收益；③ 我们这条线每一步都有 rig 真机取证，re-vendor 等于把已验证的基线推倒重来。因此按上游语义逐件移植，并在需要处**明确保留我们的差异**（host_permissions、端口发现、frames、cmdTabsOpen 的无窗口自愈分支）。",
+      "summary": "用户先问「上游欠账补完后就是路线问题了」，随后「开始」。先把**净差量出来**再决定怎么补：命令表对比 = 上游多 tabs.group/tabs.ungroup/tabs.closeMany，我们多 content.debug/window.ensure；函数表对比 = 上游独有的只有 6 个归组函数 + parseKeySpec + closeMany + 四个通用小助手，我们独有的是端口自动发现（3 函数）、frames（cmdFrames/buildContentScript）、content.debug、window.ensure、弹窗策略等。结论：**手工挑比 re-vendor 更划算** —— ① 本段补完后上游独有面几乎清零，re-vendor 换不来新能力；② re-vendor 会把我们 8 处独有改动全部变成需要重新打补丁的对象，风险大于收益；③ 我们这条线每一步都做过端到端核对，re-vendor 等于把已验证的基线推倒重来。因此按上游语义逐件移植，并在需要处**明确保留我们的差异**（host_permissions、端口发现、frames、cmdTabsOpen 的无窗口自愈分支）。",
       "notes": [
         "四件：① hello 声明 protocol=1（与 core 0.1.5 的桥协议协商配对）；② parseKeySpec（Ctrl+A 写法）+ 未知键/未知修饰键**明确报错**（以前静默发 undefined keyCode 却回成功）；③ 标签归组（tabGroups 权限 + DSH 蓝色组 + 50/150/400ms 退避最多 4 枪 + groupId 只存内存并按标题反查重建 + ungroup 只解除归属不关标签）；④ tabs.closeMany（**我们提给上游的 PR #11** 搬回自己的扩展线）+ 通用 withBudget/landsAt/failureText/sleep。",
         "顺带修掉 bi-036（nav 探针无预算），以及一个同类正确性问题：waitForNavigationComplete 现在带 expectedUrl，用 landsAt 区分「新文档快到没采样到 loading」与「根本没导航过去」（链接变下载、同 URL 空操作）—— 后者以前会被判成 settled。",
         "插件侧：browser_tabs 增 group/ungroup 两个动作、open 支持 group:false；批量关闭改为**匹配在插件侧、关闭走扩展的 tabs.closeMany**（一条命令 + 逐 id 交代 closed/alreadyGone/failed），比原来的逐个关、失败即停既快又不丢账。",
-        "真机核对（rig：真 Edge 155 + 真扩展 1.0.94 + 假桥）：seg3-contract.mjs **16/16** —— hello.protocol=1；开标签自动归组（created=true, groupId）→ ungroup 解散（groups=1）且**标签页数不变**、再拆一次幂等；tabs.group 对已有标签有效；Ctrl+A 页面收到 ctrlKey=true（modifiers 数组写法同样有效）；未知键/未知修饰键各自报错并给出可用值；closeMany requested=3 → closed=2 + alreadyGone=1；**/hang 下 nav 从 25s 无回答变成 5.7s 返回**且 loadPending=true/pendingUrl=…/hang。",
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**16/16** —— hello.protocol=1；开标签自动归组（created=true, groupId）→ ungroup 解散（groups=1）且**标签页数不变**、再拆一次幂等；tabs.group 对已有标签有效；Ctrl+A 页面收到 ctrlKey=true（modifiers 数组写法同样有效）；未知键/未知修饰键各自报错并给出可用值；closeMany requested=3 → closed=2 + alreadyGone=1；**/hang 下 nav 从 25s 无回答变成 5.7s 返回**且 loadPending=true/pendingUrl=…/hang。",
         "扩展版本 1.0.20 → **1.0.21**（三处副本同步、sha256 一致）。"
       ],
       "history": [
@@ -1142,7 +1142,7 @@
       "summary": "用户 2026-10-17 问「目前插件有分组功能吗？」，答：有（0.11.22 起 `tabs.group`/`tabs.ungroup`/开标签自动进 `DSH` 蓝色组），但 `tabs.list` 只回 id/url/title/active ⇒ **分组能做但看不见**（建了组也确认不了谁在组里，只能靠人眼看窗口顶部）。本条把\"看得见\"补上：扩展侧按标签补 `groupId/groupTitle/groupColor`（未归组的标签不加字段，保持紧凑），并回一份 `groups` 一览（id/title/color/windowId）；插件侧渲染成行首 `[DSH]` + 头部一行「分组：DSH（2 个标签）」，另加 `groupTitle` 参数只列某个组。",
       "notes": [
         "`group` 这个参数名已被 open 的布尔占用（`group: false` 不归组），所以 list 的过滤参数叫 **`groupTitle`** —— 同一工具里不混用两种类型。",
-        "真机核对（rig：真 Edge 155 + 真扩展 1.0.95 + 假桥）：`seg4-contract.mjs` **11/11** —— 开标签自动归组后 list 带 `groupTitle: DSH`（color=blue）、`tabs.group` 把已有标签拉进去后同样看得见（两个标签同 groupId）、`ungroup` 后字段消失且**标签页数不变**、未归组标签不带字段。",
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**11/11** —— 开标签自动归组后 list 带 `groupTitle: DSH`（color=blue）、`tabs.group` 把已有标签拉进去后同样看得见（两个标签同 groupId）、`ungroup` 后字段消失且**标签页数不变**、未归组标签不带字段。",
         "分组的\"能做\"与\"看得见\"现在闭环；`ungroup` 依旧只解除归属、不关标签。"
       ],
       "history": [
@@ -1167,7 +1167,7 @@
       ],
       "summary": "用户 2026-10-17 需求原话：「模型操作标签页时可以通过调用工具让标签页加个可取消的浮层防止用户误触（画面变暗并在中央显示提示和信息），用户连续两次点击任意处取消浮层用户直接操作标签页」；随后追加硬约束：「**不能改页面本身的逻辑** —— 这玩意是在页面之上的，不影响前端元素」。⇒ 实现：往 `<html>` 追加**一个** host 元素，内容全在 **Shadow DOM** 里（页面 CSS 进不来、我们的样式漏不出去），撤掉时只删它自己；指针/滚轮只在我们这层的监听里拦；**默认不抢焦点、不拦键盘**（`blockKeys: true` 才临时挂 window 拦截器，撤销时移除）；用户 600ms 内连点两下 ⇒ 撤掉并记 `dismissedBy: user`（`hold.status` 可查，模型据此知道\"用户接管了\"）。模型自己的点击能穿过：扩展在派发前把浮层临时设 `pointer-events:none`，派发完 120ms 恢复（否则 `elementFromPoint` 会命中浮层）。",
       "notes": [
-        "真机核对（rig：真 Edge 155 + 真扩展 1.0.96 + 假桥）：`seg5-contract.mjs` **20/20** —— 浮层铺满视口且 z-index 最高；**页面 body 长度/节点数/样式表数/计数器在装与撤前后完全一致**（\"页面一字未动\"）；按钮中心点的 `elementFromPoint` 命中浮层 host（防误触）；locked 状态下模型 click 仍成功（submit=1）；连点两下后浮层消失、`dismissedBy=user`、页面恢复可点；agent `hold.off` 与\"导航后不假报\"也都对。",
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**20/20** —— 浮层铺满视口且 z-index 最高；**页面 body 长度/节点数/样式表数/计数器在装与撤前后完全一致**（\"页面一字未动\"）；按钮中心点的 `elementFromPoint` 命中浮层 host（防误触）；locked 状态下模型 click 仍成功（submit=1）；连点两下后浮层消失、`dismissedBy=user`、页面恢复可点；agent `hold.off` 与\"导航后不假报\"也都对。",
         "`hold.status` 以 **DOM 是否存在**为准：页面导航/刷新把浮层带走后不再假报\"还锁着\"。",
         "测到的一个坑：浮层在场时 `elementFromPoint` 会命中浮层，所以模型的 click 必须\"先透明后派发\"，否则命中测试会报冲突而不是真的点到。",
         "**样式二次调整（2026-10-17，主人两条口径）**：①「中间要不加个透明度，要不直接裸文字+反色，我之所以是加的变暗效果就是为了让用户看到模型在干嘛」；②样张复查发现纯裸白字压在浅色页面上对比度只有 ~2:1、标题压着阿拉伯文那行会糊，试文字描边又把 13px 正文填死。⇒ 最终定：**整页黑幕 0.62→0.45**（更透，页面看得清）+ **中央半透明毛玻璃**（`rgba(10,12,16,0.42)` + `backdrop-filter: blur(6px)`），页面透过它仍可辨认、白字有深底；**不用描边**；标题 19px。rig 断言改为量 alpha（0.25~0.6）、blur 在位、黑幕 ≤0.5、描边 = 0。",

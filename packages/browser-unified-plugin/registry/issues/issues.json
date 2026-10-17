@@ -525,7 +525,7 @@
         "receipt",
         "ux"
       ],
-      "evidence": "2026-10-10 16:02 实测（本机 WSL 宿主 + Edge 155）：那次 browser_* 调用触发唤起，1 秒后扩展连上（`connectedAt=16:02:09`），但窗口停在 about:blank；桥的 HTTP 面 `tabs.list` 读到 1 窗口 2 标签页（about:blank 活动 + 用户/另一会话的 Android 页）。代码出处：宿主 `spawnBrowser` 的 `args.push('about:blank')`、扩展 `ensureWindow` 的 `chrome.windows.create({url:'about:blank',focused:true})`。",
+      "evidence": "2026-10-10 16:02 实测（WSL 宿主 + Edge 155）：那次 browser_* 调用触发唤起，1 秒后扩展连上（`connectedAt=16:02:09`），但窗口停在 about:blank；桥的 HTTP 面 `tabs.list` 读到 1 窗口 2 标签页（about:blank 活动 + 用户/另一会话的 Android 页）。代码出处：宿主 `spawnBrowser` 的 `args.push('about:blank')`、扩展 `ensureWindow` 的 `chrome.windows.create({url:'about:blank',focused:true})`。",
       "history": [
         {
           "at": "2026-10-10T08:30:00.000Z",
@@ -869,7 +869,7 @@
         "keyboard",
         "silent-failure"
       ],
-      "evidence": "根因：CDP `Input.dispatchKeyEvent` 的 `type:'keyDown'` **带 `text` 时 Chrome 自己会补一个 char/keypress**（`rawKeyDown` 才不补），而 `cmdPress` 在这之后又显式发了一条 `type:'char'` ⇒ 一次按键插入两遍。上游 caob23 是同一个坑（其 issue #14），2026-10-13 他自己以同样方式修掉（`908a149f9`）。真机前后对照（rig：真 Edge 155 headless=new + 真扩展 sideload + 假桥 `__pr-d-rig/stub.mjs`@9781；页面 `/press` 数事件；改前 9 项 6 失败 → 改后 9/9）：`x` → `\"xx\"`→`\"x\"`；`7` → `\"77\"`→`\"7\"`；表单内 `Enter` → submit 2→**1**；对照项 `ArrowRight`（不带 text）两版都不插字符、keydown 均 1。证据文件 `__pr-d-rig/evidence-unified-UB0.json` / `-UC1.json`，场景脚本 `unified-bugs-real.mjs`，收官 `rig edge killed: 16; left: 0`。顺带发现（本版未动）：`Shift+X` 落成小写 `x`（`text` 直接取 `key` 原文）。",
+      "evidence": "根因：CDP `Input.dispatchKeyEvent` 的 `type:'keyDown'` **带 `text` 时 Chrome 自己会补一个 char/keypress**（`rawKeyDown` 才不补），而 `cmdPress` 在这之后又显式发了一条 `type:'char'` ⇒ 一次按键插入两遍。上游 caob23 是同一个坑（其 issue #14），2026-10-13 他自己以同样方式修掉（`908a149f9`）。真机前后对照（真浏览器 + 真扩展，桩桥；页面 `/press` 数事件；改前 9 项 6 失败 → 改后 9/9）：`x` → `\"xx\"`→`\"x\"`；`7` → `\"77\"`→`\"7\"`；表单内 `Enter` → submit 2→**1**；对照项 `ArrowRight`（不带 text）两版都不插字符、keydown 均 1。证据文件 `__pr-d-rig/evidence-unified-UB0.json` / `-UC1.json`，场景脚本 `unified-bugs-real.mjs`，收官 `rig edge killed: 16; left: 0`。顺带发现（本版未动）：`Shift+X` 落成小写 `x`（`text` 直接取 `key` 原文）。",
       "history": [
         {
           "at": "2026-10-13T02:00:00.000Z",
@@ -914,7 +914,7 @@
       "id": "bi-036",
       "title": "`browser_navigate` 遇到「永远加载中」的页面会挂住：扩展的落地探针没有超时，整次调用只能等桥的 60s 兜底",
       "status": "fixed",
-      "symptom": "导航到一个**接受连接但永不回正文**的地址时（真机上如被丢包的 `example.com:81`，rig 里如假桥的 `/hang`），`browser_navigate` 不会在扩展自己那个「落地等待」预算内返回，而是一路挂到桥的 60s 兜底（新版本会报 `[command_timeout] … effectState=unknown`）。页面卡在加载态，随后的 `browser_read` 只能读到空正文。",
+      "symptom": "导航到一个**接受连接但永不回正文**的地址时（真机上如被丢包的 `example.com:81`，桩桥里如 `/hang`），`browser_navigate` 不会在扩展自己那个「落地等待」预算内返回，而是一路挂到桥的 60s 兜底（新版本会报 `[command_timeout] … effectState=unknown`）。页面卡在加载态，随后的 `browser_read` 只能读到空正文。",
       "workaround": "（已修）扩展 1.0.21：导航后的落地探针包上了 withBudget(promise, 2500, null) —— 文档卡在 commit 之前时最多等 2.5s，然后按「探不到落地地址」继续，loadPending/pendingUrl 仍然如实交代。旧版本上：别连续重试同一地址（effectState=unknown），用 browser_tabs action=list 看目标标签是不是还在 loading，必要时 action=close 掉它。",
       "match": "command_timeout|loadPending|永远加载",
       "affected": "扩展 ≤1.0.20（全版本）",
@@ -925,7 +925,7 @@
         "navigation",
         "timeout"
       ],
-      "evidence": "2026-10-13 rig 实测（真 Edge 155 headless=new + 真扩展 1.0.92 + 假桥 9781）：`nav` 到 `http://localhost:9781/hang`（接受连接、60s 不回正文）时，`/ctl/cmd` 在 25s 预算内没有拿到任何回答（`rig timeout after 25000ms`），随后 `content` 读到 `len=0`。同一台子上「慢但有限」的 `/slow?ms=8000`（落地预算给 1500ms）正常返回 `{loadPending:true, pendingUrl:…/slow?ms=8000}` —— 差异只在「页面是否永远不完成」。定位：`cmdNav` 落地等待结束后用 `withCDP` 做落地 URL 探针（读 `location.href` 与 `#main-frame-error`），那次 `Runtime.evaluate` **没有超时预算**，文档一直不 commit 时它就挂着（对比：`cmdEval` 早就有 `evalTimeoutMs` 兜底）。上游扩展同源但另属一套实现，未核。",
+      "evidence": "2026-10-13 实测（真浏览器 + 真扩展 1.0.92，桩桥）：`nav` 到 `http://localhost:9781/hang`（接受连接、60s 不回正文）时，`/ctl/cmd` 在 25s 预算内没有拿到任何回答（`rig timeout after 25000ms`），随后 `content` 读到 `len=0`。同一个环境里「慢但有限」的 `/slow?ms=8000`（落地预算给 1500ms）正常返回 `{loadPending:true, pendingUrl:…/slow?ms=8000}` —— 差异只在「页面是否永远不完成」。定位：`cmdNav` 落地等待结束后用 `withCDP` 做落地 URL 探针（读 `location.href` 与 `#main-frame-error`），那次 `Runtime.evaluate` **没有超时预算**，文档一直不 commit 时它就挂着（对比：`cmdEval` 早就有 `evalTimeoutMs` 兜底）。上游扩展同源但另属一套实现，未核。",
       "history": [
         {
           "at": "2026-10-13T12:20:00.000Z",
