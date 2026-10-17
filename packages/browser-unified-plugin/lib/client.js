@@ -466,16 +466,23 @@ window.__ModuleLoader__.load({
 
 		// One settings row: title/desc on the left, control on the right.
 		function Row(props) {
+			// `stack`：标签在上、控件占满下一行。列表编辑器（每行一个输入框 + 三个按钮）
+			// 宽度不受控，放在右侧会把标题挤成竖排 —— 2026-10-18 在「启动时已展开的组」上撞到。
+			var stacked = props.stack === true
 			return createElement(
 				'div',
-				{ style: rowStyle },
+				{ style: stacked ? Object.assign({}, rowStyle, { flexDirection: 'column', alignItems: 'stretch' }) : rowStyle },
 				createElement(
 					'div',
-					{ style: rowTextStyle },
+					{ style: stacked ? Object.assign({}, rowTextStyle, { marginBottom: '6px' }) : rowTextStyle },
 					createElement('div', { style: rowTitleStyle }, props.title),
 					props.desc ? createElement('div', { style: rowDescStyle }, props.desc) : null,
 				),
-				createElement('div', { style: rowControlStyle }, props.children),
+				createElement(
+					'div',
+					{ style: stacked ? Object.assign({}, rowControlStyle, { width: '100%', display: 'block' }) : rowControlStyle },
+					props.children,
+				),
 			)
 		}
 
@@ -1264,7 +1271,7 @@ window.__ModuleLoader__.load({
 						onChange: function (on) { setField('layeredTools', on) },
 					}),
 				),
-				createElement(Row, { title: t('enabledGroups'), desc: t('enabledGroupsDesc') },
+				createElement(Row, { title: t('enabledGroups'), desc: t('enabledGroupsDesc'), stack: true },
 					createElement(StringListEditor, {
 						value: Array.isArray(value.enabledGroups) ? value.enabledGroups : [],
 						placeholder: 'frames',

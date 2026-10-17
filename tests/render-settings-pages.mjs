@@ -437,6 +437,10 @@ console.log('\n[3] 页面侧探测（fetch 桩返回一座在 9778 的桥）')
 	check('桥没报生效值时有灰色说明（不装作没事）',
 		/staleBridgeDown: '[^']*桥没回报当前生效值/.test(src2) && src2.includes('noPolicyNote'))
 	// 2026-10-18 文案压缩：行内只留一句（控制页 + 需二次确认），风险细节移进确认弹窗与 README。
+	// 2026-10-18：列表编辑器放在 Row 的右侧会把标题挤成竖排（真机截图），固定用上下布局。
+	check('列表编辑器那一行用上下布局（Row stack）',
+		src2.includes("title: t('enabledGroups'), desc: t('enabledGroupsDesc'), stack: true")
+		&& src2.includes('props.stack === true'))
 	check('「允许访问本 DSH 页面」的说明写清范围与二次确认',
 		/模型可以打开并操作本机控制页[^']*开启需二次确认/.test(src2))
 	check('二次确认弹窗写清风险（会话列表与审批界面）',
