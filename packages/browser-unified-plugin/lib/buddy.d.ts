@@ -75,6 +75,8 @@ export declare function applyBuddyFeatures(options: any): {
         residentTools: string[];
         groups: any;
         bridgeCommandTimeoutMs: any;
+        readOnly: boolean;
+        allowScript: boolean;
     };
     allowedTools: () => Set<string>;
     probeBridge: (force?: boolean) => Promise<any>;
@@ -91,5 +93,7 @@ export declare function applyBuddyFeatures(options: any): {
         residentTools: string[];
         groups: any;
         bridgeCommandTimeoutMs: any;
+        readOnly: boolean;
+        allowScript: boolean;
     };
 };

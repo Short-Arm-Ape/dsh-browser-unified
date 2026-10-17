@@ -145,6 +145,8 @@ export interface BridgeServerOptions {
    * 只放只读、非机密的字段（策略开关与名单）；调用方必须容错：抛错就当没有。
    */
   readonly describePolicy?: () => Record<string, unknown> | undefined
+  /** 本机插件版本（设置页「检查更新」拿它和最新发布比）。 */
+  readonly pluginVersion?: string
 }
 
 /**
@@ -242,6 +244,7 @@ export class BridgeServer {
       pendingCommands: this.pending.size,
       lastError: this.lastError,
       insecureToken: isWeakToken(this.options.token ?? ''),
+      ...(typeof this.options.pluginVersion === 'string' ? { pluginVersion: this.options.pluginVersion } : {}),
       policy,
     }
   }

@@ -346,8 +346,18 @@ function handleBridgeMessage(msg) {
 }
 
 async function runCommand(command, params) {
+	await ensureHardLock();
 	const handler = COMMANDS[command];
 	if (!handler) throw new Error(`unknown command: ${command}`);
+	// 硬锁：扩展照常连着，但除了身份/状态查询之外一律拒绝 —— 解锁只能由用户在扩展图标里做。
+	if (hardLocked && !HARD_LOCK_ALLOWED.has(command)) {
+		throw new Error('浏览器扩展已被用户在本地锁定，拒绝一切操作。请在浏览器右上角的扩展图标里解除锁定后再试。');
+	}
+	// 反向也不许：桥（＝模型侧）永远不能**解锁**，否则这把锁对跑偏的模型毫无意义。
+	// 加锁方向放行（fail-safe：模型把自己锁上也只会更安全）。
+	if (command === 'lock.set' && (params === null || typeof params !== 'object' || params.locked !== true)) {
+		throw new Error('解锁只能在浏览器右上角的扩展图标里做；桥侧只能加锁。');
+	}
 	return handler(params);
 }
 
@@ -1098,6 +1108,11 @@ async function cmdNav(params) {
 	// 带上目标网址：万一此刻没有任何窗口，自愈建出来的窗口直接落在它上面（bi-022）
 	const tab = await resolveTab(params.tabId, params.url);
 	const timeoutMs = Number(params.timeoutMs) || 15_000;
+	// 用户按过「中止操作」时，导航也一并拦下（中止＝别再动这个页面）
+	await withCDP(tab.id, (send) => assertNotAborted(send, 'nav')).catch((error) => {
+		if (error instanceof Error && error.message.includes('用户终止控制')) throw error
+		// 探不到（页面正在导航/已崩）就不拦：不能因为探针失败把正常导航也禁掉
+	})
 	// 先把"等新导航完成"的轮询挂上，**再**触发导航（顺序反了就会读到旧文档的 complete）。
 	const settling = params.wait === false ? Promise.resolve(true) : waitForNavigationComplete(tab.id, timeoutMs, params.url);
 	await chrome.tabs.update(tab.id, { url: params.url });
@@ -1425,14 +1440,16 @@ async function cmdContent(params) {
 	const frameSpec = params.frame === undefined ? null : String(params.frame);
 	const flatten = params.flattenFrames !== false;
 	const script = buildContentScript(mode, frameSpec, flatten);
-	const payload = await withCDP(tab.id, (send) =>
-		send('Runtime.evaluate', {
+	const payload = await withCDP(tab.id, async (send) => {
+		await assertNotAborted(send, 'input')
+		return await send('Runtime.evaluate', {
 			expression: script,
 			awaitPromise: false, returnByValue: true, userGesture: true,
 		}).then((res) => {
 			if (res.exceptionDetails) throw new Error(`page exception: ${pageExceptionText(res.exceptionDetails)}`);
 			return JSON.parse(res.result.value);
-		}));
+		});
+	});
 	return { tabId: tab.id, mode, ...payload };
 }
 
@@ -1514,7 +1531,8 @@ async function cmdClick(params) {
 	// Mouse events land on whatever is under the viewport coordinates of the
 	// focused tab; ensure our tab is frontmost so coordinates are meaningful.
 	await activateTabWindow(tab.id);
-	return withCDP(tab.id, async (send) => {
+	return withCDP(tab.id, async (send) => withHoldPassthrough(send, async () => {
+		await assertNotAborted(send, 'click')
 		const hit = await send('Runtime.evaluate', {
 			expression: `(() => {
 				const el = document.querySelector(${JSON.stringify(String(params.selector))});
@@ -1546,7 +1564,7 @@ async function cmdClick(params) {
 			...(hit.isTop ? {} : { hitInstead: hit.hitTag }),
 			dialogsAnswered: dialogLog.filter((d) => d.tabId === tab.id && Date.now() - d.t < 5000).length,
 		};
-	});
+	}));
 }
 
 async function cmdInput(params) {
@@ -1720,6 +1738,7 @@ async function cmdPress(params) {
 		throw new Error(`unknown key "${rawKey}". 可用 ${Object.keys(KEY_CODES).join(', ')}、单个字符，或 "Ctrl+A" / "Shift+ArrowRight" 这类组合。`);
 	}
 	return withCDP(tab.id, async (send) => {
+		await assertNotAborted(send, 'press')
 		// `type:'keyDown'` 带 `text` 时，Chrome 自己就会补一个 char/keypress —— 这里**不能再显式发
 		// 一条 `char`**（`rawKeyDown` 才是不补 char 的那个）。多发一次的后果是每个字符插两遍：
 		// 输入框里按一次 `x` 得到 `xx`，按一次 `Enter` 表单提交两次（`browser_type` 的
@@ -2006,6 +2025,373 @@ async function cmdSnapshot(params) {
 	});
 }
 
+/* ------------------------------------------------------ 本地硬锁（panic switch） */
+
+/**
+ * 用户在扩展图标里按下的「锁定」开关：**扩展保持连接，但拒绝一切操作**，
+ * 直到用户回到扩展图标解除。存在 `chrome.storage.local`，浏览器重启也还在。
+ *
+ * 为什么锁与解锁都在扩展侧：真正的边界要落在模型够不到的地方。DSH 设置页对模型是可达的
+ * （「允许访问本 DSH 页面」开着时更是如此），把解锁放在页面里等于"跑偏的模型可以自己解锁"。
+ */
+const HARD_LOCK_KEY = 'hardLock';
+/** 锁定期间仍放行的命令：只读的身份/状态查询，让用户与模型都看得到"锁着"。 */
+const HARD_LOCK_ALLOWED = new Set(['ping', 'browser.info', 'lock.status']);
+
+let hardLocked = false;
+let hardLockLoaded = false;
+
+async function readHardLock() {
+	try {
+		const got = await chrome.storage.local.get(HARD_LOCK_KEY);
+		hardLocked = got && got[HARD_LOCK_KEY] === true;
+	} catch { hardLocked = false; }
+	hardLockLoaded = true;
+	return hardLocked;
+}
+
+/**
+ * 保证锁定状态已从 storage 读回（幂等）。
+ *
+ * 为什么必须这样：MV3 的 service worker 会被浏览器回收再唤醒，`let hardLocked` 会回到 false。
+ * 早先的实现是在模块顶层 `void readHardLock()`，但那一行落在 `let hardLocked` **之前**，
+ * 于是每次唤醒都抛 `Cannot access 'hardLocked' before initialization`，读也没读成 ——
+ * 结果就是"重启一次浏览器/扩展后，锁看着还在、其实已经失效"。现在每次命令执行前都先确保读回。
+ */
+async function ensureHardLock() {
+	if (hardLockLoaded) return hardLocked;
+	return readHardLock();
+}
+
+async function setHardLock(next) {
+	hardLocked = next === true;
+	try { await chrome.storage.local.set({ [HARD_LOCK_KEY]: hardLocked }); } catch { /* 存不下也本次生效 */ }
+	return hardLocked;
+}
+
+/* ------------------------------------------------------------ 防误触浮层（hold） */
+
+/**
+ * 在页面里装一个"防误触浮层"：整页变暗 + 中央一张卡片写清"模型在做什么"，
+ * **用户连续点两下任意处（600ms 内）即可撤掉浮层接管页面**。
+ *
+ * 设计原则（2026-10-17 按主人要求定）：**它是页面之上的一层，不改页面本身的逻辑。**
+ *  - 只往 `<html>` 追加**一个**元素，撤掉时**只删它自己**；页面已有的元素、样式、事件监听一概不碰；
+ *  - 内容全部装在 **Shadow DOM** 里 ⇒ 双向隔离：页面 CSS 进不来（不会被你的全局样式搞变形），
+ *    我们的样式也漏不出去（不会命中页面的选择器）；
+ *  - 指针/滚轮只在**我们自己这层**上拦（拦的是"点在浮层上"的那些事件），页面自己的监听照常存在；
+ *  - **不抢焦点、不拦键盘**（默认）：键盘输入仍会落到当前焦点，这是为"零干扰"付的代价；
+ *    真要连输入一起冻住，调用方可以传 `blockKeys: true`（那时才临时在 window 上加一个拦截器，撤销时移除）；
+ *  - 用 shadow root 内的 `dataset` 记状态，导出一份只读的 `window.__dshHold` 供 `hold.status` 查"谁撤的"。
+ */
+function pageShowHold(payload) {
+	const ID = '__dsh_hold_overlay__';
+	const prev = document.getElementById(ID);
+	if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+	const host = document.createElement('div');
+	host.id = ID;
+	host.setAttribute('data-dsh-hold', '1');
+	host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;display:block';
+	const root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
+	const wrap = document.createElement('div');
+	// 页面只压暗（0.45），中央是**半透明面板、不做毛玻璃**；页面内容透过它看得见。
+	wrap.style.cssText = [
+		'position:fixed', 'inset:0', 'display:flex', 'align-items:center', 'justify-content:center',
+		'background:rgba(8,10,14,0.45)', 'cursor:pointer', 'transition:background 120ms ease',
+		'font:14px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif', 'color:#ffffff',
+	].join(';');
+	const card = document.createElement('div');
+	card.style.cssText = [
+		'max-width:min(620px,88vw)', 'padding:14px 20px', 'border-radius:14px',
+		'background:rgba(10,12,16,0.58)', 'border:1px solid rgba(255,255,255,0.16)',
+		'box-shadow:0 8px 28px rgba(0,0,0,0.28)',
+		'text-align:center', 'pointer-events:none',
+		'text-shadow:0 1px 2px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6)',
+	].join(';');
+	const title = document.createElement('div');
+	// 标题由扩展在调本函数前填成固定常量（模型传的 title 一律忽略）。
+	// 注意：本函数是 stringify 后注入页面的，不能引用扩展作用域变量（会 ReferenceError）。
+	title.textContent = payload.title;
+	title.style.cssText = 'font-size:19px;font-weight:600;line-height:1.45;margin-bottom:6px';
+	const body = document.createElement('div');
+	body.textContent = payload.text || '';
+	body.style.cssText = 'font-size:14px;opacity:0.96;white-space:pre-wrap;word-break:break-word';
+	const hint = document.createElement('div');
+	hint.textContent = payload.hint;
+	hint.style.cssText = 'margin-top:12px;font-size:12.5px;opacity:0.9;'
+		+ 'border-top:1px solid rgba(255,255,255,0.18);padding-top:10px';
+	card.appendChild(title);
+	if (payload.text) card.appendChild(body);
+	card.appendChild(hint);
+
+	// 底部身份行：由插件从运行时上下文填（会话标题 / 目录 / 桥端口 / 时间），不经过模型 ⇒ 伪造不了。
+	const meta = payload.meta && typeof payload.meta === 'object' ? payload.meta : null;
+	if (meta) {
+		const parts = [];
+		if (meta.session) parts.push('会话 ' + meta.session);
+		if (meta.cwd) parts.push(meta.cwd);
+		if (meta.port) parts.push('桥 ' + meta.port);
+		if (meta.at) parts.push(new Date(meta.at).toLocaleTimeString());
+		if (parts.length > 0) {
+			const who = document.createElement('div');
+			who.textContent = parts.join(' · ');
+			who.style.cssText = 'margin-top:8px;font-size:11px;line-height:1.5;opacity:0.72;'
+				+ 'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all';
+			card.appendChild(who);
+		}
+	}
+
+	// 「中止操作」按钮：**双击确认**（点一次变「点击确认」，3 秒不点回默认态）。
+	// 确认后撤掉浮层并把 aborted 记进页面状态 ⇒ 扩展在之后的 click/input/press 上会拦下模型，
+	// 直到模型调 hold.off 解除（等于"确认继续"）。
+	const abort = document.createElement('button');
+	abort.type = 'button';
+	abort.textContent = payload.abortLabel;
+	abort.style.cssText = 'margin-top:12px;pointer-events:auto;cursor:pointer;border-radius:999px;'
+		+ 'padding:6px 16px;font:12.5px/1.4 inherit;color:#fff;background:rgba(255,255,255,0.12);'
+		+ 'border:1px solid rgba(255,255,255,0.28);transition:background 120ms ease,border-color 120ms ease;'
+		+ 'outline:none';
+	abort.addEventListener('focus', function () { abort.style.boxShadow = '0 0 0 3px rgba(120,180,255,0.85)' });
+	abort.addEventListener('blur', function () { abort.style.boxShadow = 'none' });
+	card.appendChild(abort);
+	// 组装：wrap ← card ← 内容；host ← shadow root ← wrap（这几行漏了就等于浮层是空的，只压了一层黑）
+	wrap.appendChild(card);
+	root.appendChild(wrap);
+
+	const state = { active: true, dismissedBy: null, aborted: false, at: Date.now(), text: payload.text || '' };
+	let clicks = 0;
+	let firstClickAt = 0;
+	let timer = null;
+	let armed = false;
+	let armTimer = null;
+	// 按钮上的点击必须能到达按钮自己：wrap 的捕获期监听如果无脑 stopPropagation，
+	// 事件根本到不了 target ⇒ 按钮永远点不动（rig 实测踩到）。所以先看路径里有没有按钮。
+	function fromAbort(e) {
+		try { return typeof e.composedPath === 'function' && e.composedPath().indexOf(abort) !== -1 } catch (err) { return false }
+	}
+	function block(e) {
+		if (fromAbort(e)) return;
+		e.preventDefault();
+		e.stopPropagation();
+	}
+	function resetArm() {
+		armed = false;
+		abort.textContent = payload.abortLabel;
+		abort.style.background = 'rgba(255,255,255,0.12)';
+		abort.style.borderColor = 'rgba(255,255,255,0.28)';
+	}
+	function cleanup(by) {
+		try { window.removeEventListener('keydown', block, true); } catch (e) { /* 已移除 */ }
+		if (timer) clearTimeout(timer);
+		if (armTimer) clearTimeout(armTimer);
+		if (host.parentNode) host.parentNode.removeChild(host);
+		state.active = false;
+		state.dismissedBy = by;
+		state.closedAt = Date.now();
+		window.__dshHold = state;
+	}
+	// **双击**接管：两次点击的间隔必须 ≤ payload.dblMs，否则当新的第一次。
+	function onTap(e) {
+		if (fromAbort(e)) return;
+		block(e);
+		const now = Date.now();
+		if (clicks === 0) {
+			clicks = 1;
+			firstClickAt = now;
+			hint.textContent = payload.hintOne;
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(function () { clicks = 0; hint.textContent = payload.hint; }, payload.dblMs + 300);
+			return;
+		}
+		if (now - firstClickAt <= payload.dblMs) { cleanup('user'); return; }
+		clicks = 1;
+		firstClickAt = now;
+		hint.textContent = payload.hintOne;
+	}
+	['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'dblclick', 'contextmenu', 'selectstart'].forEach(function (type) {
+		wrap.addEventListener(type, block, true);
+	});
+	wrap.addEventListener('click', onTap, true);
+	wrap.addEventListener('wheel', block, { passive: false, capture: true });
+	abort.addEventListener('click', function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (!armed) {
+			armed = true;
+			abort.textContent = payload.abortConfirmLabel;
+			abort.style.background = 'rgba(214,58,58,0.6)';
+			abort.style.borderColor = 'rgba(255,130,130,0.9)';
+			armTimer = setTimeout(resetArm, payload.armMs);
+			return;
+		}
+		if (armTimer) clearTimeout(armTimer);
+		state.aborted = true;
+		cleanup('abort');
+	}, true);
+	['pointerdown', 'mousedown', 'mouseup', 'pointerup'].forEach(function (type) {
+		abort.addEventListener(type, function (e) { e.stopPropagation(); }, true);
+	});
+	if (payload.blockKeys) window.addEventListener('keydown', block, true);
+	window.__dshHold = state;
+	document.documentElement.appendChild(host);
+	// 纯键盘可达：把焦点交给浮层里的按钮 ——
+	//  · Tab 进不来也没关系（焦点已在浮层内），Enter/Space 触发按钮，Esc 直接接管；
+	//  · 副作用是页面里原本聚焦的输入框失焦（这是"冻结输入"的意思，比全局拦键更干净）。
+	try {
+		const prevFocus = document.activeElement;
+		abort.focus({ preventScroll: true });
+		state.prevFocus = prevFocus && prevFocus !== document.body ? true : false;
+	} catch (err) { /* 页面不允许聚焦就算了，鼠标照旧可用 */ }
+	// Esc = 接管（与双击等价），给没有鼠标的人一条明确的退路
+	wrap.addEventListener('keydown', function (e) {
+		if (e.key === 'Escape') { e.preventDefault(); cleanup('user'); }
+	}, true);
+	return { active: true, id: ID, shadow: host.shadowRoot !== null && host.shadowRoot !== undefined, blockKeys: payload.blockKeys === true, focused: true };
+}
+
+/** 撤掉浮层（由 agent 主动解除时用；用户双击走页面内的 cleanup）。只删我们自己那个 host。 */
+function pageHideHold(by) {
+	const ID = '__dsh_hold_overlay__';
+	const host = document.getElementById(ID);
+	if (host && host.parentNode) host.parentNode.removeChild(host);
+	const prev = window.__dshHold || { at: Date.now() };
+	// agent 主动 off = **确认继续**：把"用户已中止"的标记清掉（否则之后的点击都会被拦）。
+	window.__dshHold = {
+		active: false,
+		dismissedBy: prev.active === true ? (by || 'agent') : (prev.dismissedBy || null),
+		aborted: false,
+		at: prev.at, closedAt: Date.now(), text: prev.text || '',
+	};
+	return window.__dshHold;
+}
+
+/**
+ * 读浮层状态。**以 DOM 是否存在为准** —— 页面导航/刷新会把浮层一起带走，这时不能继续报"还在锁着"。
+ * `dismissedBy: 'user'` 表示用户双击接管过（这是模型继续驱动页面前该知道的）。
+ */
+function pageHoldStatus() {
+	const host = document.getElementById('__dsh_hold_overlay__');
+	const st = window.__dshHold || null;
+	return {
+		active: host !== null,
+		dismissedBy: st ? st.dismissedBy : null,
+		aborted: st ? st.aborted === true : false,
+		text: st ? st.text : '',
+		at: st ? st.at : null,
+		closedAt: st ? st.closedAt : null,
+		shadow: host !== null && host.shadowRoot !== null && host.shadowRoot !== undefined,
+	};
+}
+
+/** 浮层标题写死在这里，**不接受模型输入**。 */
+const HOLD_FIXED_TITLE = '模型正在操作此标签页';
+
+const HOLD_PASSTHROUGH_ON = '(() => { var el = document.getElementById("__dsh_hold_overlay__"); if (!el) return false; el.style.pointerEvents = "none"; return true; })()';
+const HOLD_PASSTHROUGH_OFF = '(() => { var el = document.getElementById("__dsh_hold_overlay__"); if (!el) return false; el.style.pointerEvents = ""; return true; })()';
+
+/**
+ * 在有浮层时执行一次"模型自己的"输入：先把浮层临时设为 `pointer-events:none` 再派发，
+ * 派发完（留 120ms 让事件走完）恢复。没有浮层时就是直通。
+ *
+ * 为什么必须这样做：CDP 派发的鼠标事件走的是**真实命中测试**，浮层盖在上面就会被打中 ——
+ * 那等于"锁住之后模型自己也不能动了"。用户的手动点击不受影响（浮层对人是实心的）。
+ */
+/**
+ * 「用户按了中止操作」的闸门：浮层上的『中止操作』双击确认后会把 `aborted: true` 记进页面状态，
+ * 之后模型对这个标签页的 click / input / press / nav 一律**先拒**，并把用户填的说明带回去 ——
+ * 直到模型调 `hold.off`（＝确认继续，会清掉这个标记）。
+ *
+ * 为什么放在扩展这一层：中止是"用户对着页面按的"，模型无从得知；让它下一次动手时立刻撞上错误，
+ * 比等它在状态里自己发现要可靠。
+ */
+const HOLD_ABORT_PROBE = '(() => { var s = window.__dshHold; return (s && s.aborted === true) ? JSON.stringify({ text: String(s.text || "") }) : ""; })()';
+
+/**
+ * 中止闸门：浮层上的『中止操作』双击确认后会把 `aborted: true` 记进页面状态，
+ * 之后模型对这个标签页的 click / input / press / nav 一律**先拒**，并把用户填的说明带回去 ——
+ * 直到模型调 `hold.off`（＝确认继续，会清掉这个标记）。
+ *
+ * 为什么放在扩展这一层：中止是"用户对着页面按的"，模型无从得知；让它下一次动手时立刻撞上错误，
+ * 比等它在状态里自己发现要可靠。
+ */
+async function assertNotAborted(send, action) {
+	const raw = await send('Runtime.evaluate', { expression: HOLD_ABORT_PROBE, returnByValue: true })
+		.then((r) => String((r && r.result) ? (r.result.value ?? '') : ''))
+		.catch(() => '');
+	if (raw === '') return;
+	let text = '';
+	try { text = String((JSON.parse(raw) || {}).text || '') } catch { text = '' }
+	throw new Error(`用户终止控制（${action} 已拦下）。`
+		+ '请与用户沟通确认后再调用 browser_hold action=off 解除中止。');
+}
+
+async function withHoldPassthrough(send, fn) {
+	let had = false;
+	try {
+		const res = await send('Runtime.evaluate', { expression: HOLD_PASSTHROUGH_ON, returnByValue: true });
+		had = res && res.result ? res.result.value === true : false;
+	} catch { had = false; }
+	if (!had) return await fn();
+	try {
+		return await fn();
+	} finally {
+		await new Promise((r) => setTimeout(r, 120));
+		await send('Runtime.evaluate', { expression: HOLD_PASSTHROUGH_OFF, returnByValue: true }).catch(() => {});
+	}
+}
+
+async function cmdLockStatus() {
+	return { locked: hardLocked === true };
+}
+
+/** 设置硬锁（popup 用；桥也能调，但真正的解锁走用户在扩展图标里的动作）。 */
+async function cmdLockSet(params) {
+	const locked = await setHardLock(params && params.locked === true);
+	return { locked };
+}
+
+async function cmdHoldOn(params) {
+	const tab = await resolveTab(params.tabId);
+	const payload = {
+		// 标题在这里写死：模型的 title 参数不被转发（防止伪造"系统提示"）
+		title: HOLD_FIXED_TITLE,
+		text: typeof params.text === 'string' ? params.text : '',
+		meta: params.meta && typeof params.meta === 'object' ? params.meta : null,
+		hint: typeof params.hint === 'string' && params.hint.length > 0 ? params.hint : '双击任意处接管页面（键盘：Esc 接管，Enter 中止）',
+		hintOne: typeof params.hintOne === 'string' && params.hintOne.length > 0 ? params.hintOne : '再双击一次接管页面（或按 Esc）',
+		dblMs: Number.isFinite(Number(params.dblMs)) && Number(params.dblMs) >= 120 && Number(params.dblMs) <= 1200 ? Number(params.dblMs) : 500,
+		abortLabel: typeof params.abortLabel === 'string' && params.abortLabel.length > 0 ? params.abortLabel : '中止操作',
+		abortConfirmLabel: typeof params.abortConfirmLabel === 'string' && params.abortConfirmLabel.length > 0 ? params.abortConfirmLabel : '点击确认',
+		armMs: Number.isFinite(Number(params.armMs)) && Number(params.armMs) >= 800 ? Number(params.armMs) : 3000,
+		blockKeys: params.blockKeys === true,
+	};
+	return withCDP(tab.id, async (send) => {
+		await send('Runtime.enable').catch(() => {});
+		const res = await send('Runtime.evaluate', {
+			expression: `(${pageShowHold.toString()})(${JSON.stringify(payload)})`,
+			awaitPromise: false, returnByValue: true, userGesture: true,
+		});
+		if (res.exceptionDetails) throw new Error(res.exceptionDetails.text);
+		return { tabId: tab.id, ...(res.result && res.result.value ? res.result.value : { active: true }) };
+	});
+}
+
+async function cmdHoldOff(params) {
+	const tab = await resolveTab(params.tabId);
+	return withCDP(tab.id, (send) => send('Runtime.evaluate', {
+		expression: `(${pageHideHold.toString()})('agent')`,
+		awaitPromise: false, returnByValue: true, userGesture: true,
+	}).then((res) => ({ tabId: tab.id, ...(res.result && res.result.value ? res.result.value : { active: false }) })));
+}
+
+async function cmdHoldStatus(params) {
+	const tab = await resolveTab(params.tabId);
+	return withCDP(tab.id, (send) => send('Runtime.evaluate', {
+		expression: `(${pageHoldStatus.toString()})()`,
+		awaitPromise: false, returnByValue: true, userGesture: true,
+	}).then((res) => ({ tabId: tab.id, ...(res.result && res.result.value ? res.result.value : { active: false }) })));
+}
+
 const COMMANDS = {
 	ping: cmdPing, 'browser.info': cmdBrowserInfo,
 	'tabs.list': cmdTabsList, 'tabs.open': cmdTabsOpen, 'tabs.close': cmdTabsClose, 'tabs.closeMany': cmdTabsCloseMany, 'tabs.activate': cmdTabsActivate,
@@ -2017,6 +2403,8 @@ const COMMANDS = {
 	'console.log': cmdConsoleLog, 'network.log': cmdNetworkLog, 'network.clear': cmdNetworkClear,
 	pdf: cmdPdf, emulate: cmdEmulate,
 	'window.ensure': cmdEnsureWindow,
+	'hold.on': cmdHoldOn, 'hold.off': cmdHoldOff, 'hold.status': cmdHoldStatus,
+	'lock.status': cmdLockStatus, 'lock.set': cmdLockSet,
 };
 
 /**
@@ -2166,16 +2554,21 @@ async function cmdDialogPolicy(params) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 	if (msg?.type === 'bridgeStatus') {
-		sendResponse({
+		void ensureHardLock().then(() => sendResponse({
 			state: wsState,
 			cfg,
 			helloInfo,
 			lastError,
+			locked: hardLocked === true,
 			discoveredPort,
 			lastProbeNote,
 			scanRange: `${PORT_SCAN_BASE}–${PORT_SCAN_BASE + PORT_SCAN_COUNT - 1}`,
-		});
-		return false;
+		}));
+		return true;
+	}
+	if (msg?.type === 'lockSet') {
+		void setHardLock(msg.locked === true).then((locked) => sendResponse({ locked }));
+		return true;
 	}
 	if (msg?.type === 'reconnect') {
 		manualDisconnect = false;

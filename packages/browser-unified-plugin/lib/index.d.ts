@@ -215,5 +215,6 @@ export declare function permissionReport(input: {
     /** 读取时的形态转换说明（bi-013）：非空时在报告头上写一行，别让"静默换路径"发生。 */
     storeNote?: string;
 }): string;
+export declare function sessionTitleOf(sessionId: string, now?: number): string | undefined;
 /** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */
 export declare function apply(ctx: Context, config: Config): void;

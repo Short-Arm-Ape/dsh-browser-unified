@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-17T06:35:00.000Z",
+  "lastUpdated": "2026-10-17T14:30:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -1149,6 +1149,109 @@
         {
           "at": "2026-10-17T06:35:00.000Z",
           "what": "created + applied（测试 10 套 302 项全绿，rig 契约 11/11；0.11.24 + 扩展 1.0.22 已装机，待重启/重载）"
+        }
+      ]
+    },
+    {
+      "id": "de-045",
+      "title": "防误触浮层（`browser_hold`）：**页面之上的一层**，用户连点两下接管，模型自己的输入照常穿过",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17T14:12:00.000Z",
+      "scope": "扩展 `pageShowHold/pageHideHold/pageHoldStatus` + `hold.on|off|status` 命令 + `withHoldPassthrough`（cmdClick 套壳）；插件 `browser_hold` 工具（interact 组）；`tests/tool-render.mjs` [13] 段；`__pr-d-rig/seg5-contract.mjs`；样式二次调整（黑幕 0.45 + 半透明毛玻璃 + 去描边）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "tooling/tests"
+      ],
+      "summary": "用户 2026-10-17 需求原话：「模型操作标签页时可以通过调用工具让标签页加个可取消的浮层防止用户误触（画面变暗并在中央显示提示和信息），用户连续两次点击任意处取消浮层用户直接操作标签页」；随后追加硬约束：「**不能改页面本身的逻辑** —— 这玩意是在页面之上的，不影响前端元素」。⇒ 实现：往 `<html>` 追加**一个** host 元素，内容全在 **Shadow DOM** 里（页面 CSS 进不来、我们的样式漏不出去），撤掉时只删它自己；指针/滚轮只在我们这层的监听里拦；**默认不抢焦点、不拦键盘**（`blockKeys: true` 才临时挂 window 拦截器，撤销时移除）；用户 600ms 内连点两下 ⇒ 撤掉并记 `dismissedBy: user`（`hold.status` 可查，模型据此知道\"用户接管了\"）。模型自己的点击能穿过：扩展在派发前把浮层临时设 `pointer-events:none`，派发完 120ms 恢复（否则 `elementFromPoint` 会命中浮层）。",
+      "notes": [
+        "真机核对（rig：真 Edge 155 + 真扩展 1.0.96 + 假桥）：`seg5-contract.mjs` **20/20** —— 浮层铺满视口且 z-index 最高；**页面 body 长度/节点数/样式表数/计数器在装与撤前后完全一致**（\"页面一字未动\"）；按钮中心点的 `elementFromPoint` 命中浮层 host（防误触）；locked 状态下模型 click 仍成功（submit=1）；连点两下后浮层消失、`dismissedBy=user`、页面恢复可点；agent `hold.off` 与\"导航后不假报\"也都对。",
+        "`hold.status` 以 **DOM 是否存在**为准：页面导航/刷新把浮层带走后不再假报\"还锁着\"。",
+        "测到的一个坑：浮层在场时 `elementFromPoint` 会命中浮层，所以模型的 click 必须\"先透明后派发\"，否则命中测试会报冲突而不是真的点到。",
+        "**样式二次调整（2026-10-17，主人两条口径）**：①「中间要不加个透明度，要不直接裸文字+反色，我之所以是加的变暗效果就是为了让用户看到模型在干嘛」；②样张复查发现纯裸白字压在浅色页面上对比度只有 ~2:1、标题压着阿拉伯文那行会糊，试文字描边又把 13px 正文填死。⇒ 最终定：**整页黑幕 0.62→0.45**（更透，页面看得清）+ **中央半透明毛玻璃**（`rgba(10,12,16,0.42)` + `backdrop-filter: blur(6px)`），页面透过它仍可辨认、白字有深底；**不用描边**；标题 19px。rig 断言改为量 alpha（0.25~0.6）、blur 在位、黑幕 ≤0.5、描边 = 0。",
+        "**第三次调整（2026-10-17 晚，主人口径）**：①「毛玻璃算了，把透明度改低就行」⇒ 去掉 `backdrop-filter`，面板 alpha 0.42 → **0.30**；②「标题直接写死，以免模型欺骗用户」⇒ 标题由扩展固定为「AI 助手正在操作这个标签页」，**`title` 参数从工具 schema 里删除**、扩展也不再转发；③「下方小字显示操控这个窗口的实例/会话的具体信息」⇒ 卡片底部加一行等宽小字：`会话 2c768f96 · deepseek-flash · ~/projects · 桥 9777 · 21:54:09`，**由插件从 `exec.agent`（会话 id / options.model / session.header.cwd）＋桥端口 ＋当前时间填**，不经过模型 ⇒ 模型只能填正文，伪造不了身份；工具回执里如实回报「浮层底部已标明：…」与「标题由扩展写死」。",
+        "**第四次调整（2026-10-17 深夜，主人口径）**：①标题固定为「模型正在操作此标签页」（恒定，模型传的 title 被忽略）；②接管提示「双击任意处接管页面」，**防误触判定改为真双击**（两次点击间隔 ≤500ms，超时算新的第一次）；③底部去掉模型名，改显示**会话标题**（插件读 `$DSH_HOME/storages/session_projcache/sessions/<id>.json` 的 `record.rows.title.val`，30s 缓存，拿不到退回短 id）＋ 目录 ＋ 桥端口 ＋ 时间；④底部「中止操作」按钮：点一次变「点击确认」（3 秒不点回默认），确认后撤浮层并把 `aborted: true` 记在页面状态 ⇒ **扩展在 click/input/press/nav 上直接拒**（错误文案带用户填的说明，并指路 `action=off` 解除）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T07:20:00.000Z",
+          "what": "created + applied（测试 10 套 315 项全绿，rig 契约 20/20；0.11.26 + 扩展 1.0.23 已装机，待重启/重载）"
+        },
+        {
+          "at": "2026-10-17T13:56:00.000Z",
+          "what": "第三次调整（去毛玻璃 + 标题写死 + 底部身份行）；rig 实测：模型传的伪造 title 被忽略、身份行正确、面板 alpha 0.30 且 backdrop=none"
+        },
+        {
+          "at": "2026-10-17T14:12:00.000Z",
+          "what": "第四次调整（真双击判定 + 会话标题 + 中止按钮 + 中止闸门）；rig `seg6-contract` 20/20"
+        }
+      ]
+    },
+    {
+      "id": "de-046",
+      "title": "模型可见文案：只讲\"能做什么/该做什么\"，不夹带实现注释",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "extension（硬锁/文案）+ 插件（readOnly 闸门、buddy 收窄、文案）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "config"
+      ],
+      "summary": "中断报错、工具回执、工具描述里出现「（实测踩过…）」「（等于确认继续）」「标题由扩展写死」这类开发注记时，模型会把它当上下文推理，用户也会读到。⇒ 统一口径：**面向模型/用户的字符串只讲动作与后果**；实现理由留在代码注释与登记簿里。测试里加反向断言防回潮。",
+      "notes": [],
+      "history": [
+        {
+          "at": "2026-10-17T14:30:00.000Z",
+          "what": "created + applied（测试 318 项全绿，buddy-merged 新增只读收窄 4 项）"
+        }
+      ]
+    },
+    {
+      "id": "de-047",
+      "title": "扩展本地硬锁（panic switch）：连得上，但拒绝一切操作；解锁只在扩展 popup",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "extension（硬锁/文案）+ 插件（readOnly 闸门、buddy 收窄、文案）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "config"
+      ],
+      "summary": "主人 2026-10-17：「扩展侧加上终止选项，选中后扩展虽然不断连但拒绝一切操作，需要用户手动去模型设置页解锁」。落地为 `chrome.storage.local.hardLock` + `runCommand` 单一闸门（放行 ping/browser.info/lock.status）；popup 里双击确认锁定、一次点击解除。**解锁没有放到设置页**，原因：DSH 页面访问已对模型开放，页面里的解锁拦不住\"已经跑偏的模型\"；边界必须落在模型够不到的地方（浏览器工具栏的扩展弹窗）。",
+      "notes": [],
+      "history": [
+        {
+          "at": "2026-10-17T14:30:00.000Z",
+          "what": "created + applied（测试 318 项全绿，buddy-merged 新增只读收窄 4 项）"
+        }
+      ]
+    },
+    {
+      "id": "de-048",
+      "title": "访问控制：只读档（模型只能读，不能操作页面）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "extension（硬锁/文案）+ 插件（readOnly 闸门、buddy 收窄、文案）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "config"
+      ],
+      "summary": "主人 2026-10-17：「访问控制可以选择模型可用的工具，比如让模型只能读而不能操作网页」。平台只有「开关」没有按工具的权限表 ⇒ 第一刀做成 `readOnly` 布尔档，两层收口：L1 buddy assemble 只暴露读类工具（模型看不见写工具）；L2 `BridgeController.execute` 的 READ_ONLY_ALLOWED 白名单硬拒（猜中名字也拦得住）。后续若要更细（例如\"只能点不能输入\"），在 L2 白名单上再加维度即可。",
+      "notes": [],
+      "history": [
+        {
+          "at": "2026-10-17T14:30:00.000Z",
+          "what": "created + applied（测试 318 项全绿，buddy-merged 新增只读收窄 4 项）"
         }
       ]
     }

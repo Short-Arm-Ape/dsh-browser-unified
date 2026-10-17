@@ -59,7 +59,7 @@ const DEFAULT_RESIDENT = [
 ];
 /** 默认分组：按需展开。registry 组是仓库维护工具，日常不该出现在工具面里。 */
 const DEFAULT_GROUPS = {
-    interact: ['browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_dialog'],
+    interact: ['browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_dialog', 'browser_hold'],
     debug: [
         'browser_evaluate',
         'browser_console_log',
@@ -155,6 +155,8 @@ export function applyBuddyFeatures(options) {
                 : DEFAULT_RESIDENT,
             groups: config.groups && typeof config.groups === 'object' ? config.groups : DEFAULT_GROUPS,
             bridgeCommandTimeoutMs: Number.isInteger(config.bridgeCommandTimeoutMs) ? config.bridgeCommandTimeoutMs : 20_000,
+            readOnly: config.readOnly === true,
+            allowScript: config.allowScript !== false,
         };
     };
     let cfg = buildCfg(config);
@@ -273,6 +275,16 @@ export function applyBuddyFeatures(options) {
     }
     let resident = new Set(cfg.residentTools);
     /** 允许出现在模型工具面里的 browser_* 名单。 */
+    /**
+     * **只读档**下仍暴露给模型的 `browser_*` 工具（其余从工具面里拿掉）。
+     * 这只是 L1（模型看不见）；真正的边界在插件 `BridgeController.execute` 的命令闸门（L2：拦得住）。
+     */
+    const READ_ONLY_TOOLS = new Set([
+        'browser_read', 'browser_find', 'browser_snapshot', 'browser_screenshot', 'browser_wait',
+        'browser_info', 'browser_policy_status', 'browser_permissions', 'browser_console_log',
+        'browser_network_log', 'browser_frames', 'browser_tools', 'browser_issues',
+        'browser_design_show', 'browser_check_update',
+    ]);
     function allowedTools() {
         const allow = new Set(resident);
         for (const group of state.enabledGroups) {
@@ -757,10 +769,21 @@ export function applyBuddyFeatures(options) {
                 return result;
             }
             const allow = allowedTools();
+            const readOnly = cfg.readOnly === true;
+            const noScript = cfg.allowScript === false;
+            const SCRIPT_TOOLS = new Set(['browser_evaluate', 'browser_frame_eval']);
             const kept = [];
             let hidden = 0;
             for (const schema of list) {
                 const toolName = schema && typeof schema.name === 'string' ? schema.name : '';
+                if (noScript && SCRIPT_TOOLS.has(toolName)) {
+                    hidden += 1;
+                    continue;
+                }
+                if (readOnly && toolName.startsWith('browser_') && !READ_ONLY_TOOLS.has(toolName)) {
+                    hidden += 1;
+                    continue;
+                }
                 if (toolName.startsWith('browser_') && !allow.has(toolName)) {
                     hidden += 1;
                     continue;

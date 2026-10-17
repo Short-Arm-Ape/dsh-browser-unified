@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-17T07:00:00.000Z",
+  "lastUpdated": "2026-10-17T23:00:00.000Z",
   "purpose": "浏览器插件的**第二部分注册表：调用时的问题**（第一部分 registry/design/registry.json 记「功能对齐与计划」，本文件记「实际调用时踩到的坑」）。用法：模型在某会话里首次调用 browser_* 时会收到 open 问题的绕行摘要（+ 自上次调用以来已修复的问题告知）；完整内容只在调用 browser_issues 时输出，避免每轮占 token。",
   "fields": {
     "status": "open（仍存在，必须给 workaround）| fixed（已修，写 fixedIn）| wontfix（不修，写原因）",
@@ -1058,6 +1058,24 @@
           "what": "created + fixed（`error-contract` 增 7 项断言：protocol 保留 / 缺省 undefined / 非法忽略 / 小数截断 / 兜底）"
         }
       ]
+    },
+    {
+      "id": "bi-042",
+      "title": "扩展启动即抛 `Cannot access 'hardLocked' before initialization`，且锁定状态在 SW 唤醒后失效",
+      "status": "fixed",
+      "severity": "high",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "symptom": "DSH 的扩展问题面板报 `Uncaught (in promise) ReferenceError: Cannot access 'hardLocked' before initialization`（background.js:2048）。更严重的后果不是这条报错本身：MV3 的 service worker 被回收再唤醒后 `let hardLocked` 回到 false，而启动时那次读盘在 TDZ 上就抛了 ⇒ **用户以为锁着，其实锁已静默失效**。",
+      "cause": "在模块顶层写了 `void readHardLock()`，而 `let hardLocked` 声明在文件更靠后的位置（硬锁区块在 hold 区块之前、alarms 在更前面），顶层语句先执行 ⇒ 命中 TDZ。",
+      "fix": "删掉顶层调用；改成幂等的 `ensureHardLock()`，在 `runCommand` 入口 await（所以每条命令都绕不过去），popup 查状态时也先 `ensureHardLock()`。",
+      "prevention": "扩展里凡是在模块顶层\"用状态\"的语句，都要检查声明顺序；状态型安全开关一律走\"用到前先读一次\"的幂等加载，不依赖顶层初始化。",
+      "relatedDesign": [
+        "de-047"
+      ],
+      "fixedIn": "1.0.36",
+      "firstSeen": "2026-10-17 22:5x（DSH 扩展问题面板）",
+      "affected": "扩展 1.0.33–1.0.35"
     }
   ]
 }

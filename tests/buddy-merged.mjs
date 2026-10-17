@@ -127,6 +127,25 @@ console.log('\n[1] 工具面分层：assemble 后只留白名单 + 已展开组'
 	check('非 browser_ 工具不受影响', names.includes('bash'))
 }
 
+console.log('\n[1b] 只读档：写操作类工具从工具面拿掉（点击/输入/导航/求值）')
+{
+	installFetch(() => null)
+	const { ctx, hooks } = makeCtx()
+	const bridge = makeBridge()
+	const { controller } = makeController()
+	applyBuddyFeatures({ ctx, bridge: bridge.service, controller, config: { layeredTools: true, enabledGroups: ['interact', 'session', 'debug'], readOnly: true } })
+	const assembled = await hooks['system-prompt/assemble']({}, {}, async () => ({ tools: [
+		{ name: 'browser_read' }, { name: 'browser_snapshot' }, { name: 'browser_screenshot' },
+		{ name: 'browser_click' }, { name: 'browser_type' }, { name: 'browser_navigate' }, { name: 'browser_evaluate' },
+		{ name: 'browser_hold' }, { name: 'bash' },
+	] }))
+	const names = assembled.tools.map((t) => t.name)
+	check('只读工具保留', ['browser_read', 'browser_snapshot', 'browser_screenshot'].every((n) => names.includes(n)), names.join(','))
+	check('写操作工具被拿掉（即使组已展开）', !names.includes('browser_click') && !names.includes('browser_type') && !names.includes('browser_navigate') && !names.includes('browser_evaluate'), names.join(','))
+	check('浮层（会挡用户操作）也只读档下不可见', !names.includes('browser_hold'))
+	check('非 browser_ 工具照旧', names.includes('bash'))
+}
+
 console.log('\n[2] 展开一组之后，该组工具进入工具面')
 {
 	installFetch(() => null)
