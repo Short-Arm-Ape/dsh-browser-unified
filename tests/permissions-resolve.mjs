@@ -34,7 +34,7 @@ function skip(name, why) {
 }
 
 // 本机实测过的那个 profile（Edge 的 Profile 3 = "Agent"，装了扩展的那个）。
-const WSL_DIR = '/mnt/c/Users/localuser/AppData/Local/Microsoft/Edge/User Data/Profile 3'
+const WSL_DIR = '/mnt/c/Users/<user>/AppData/Local/Microsoft/Edge/User Data/Profile 3'
 const WIN_DIR = 'C:\\Users\\localuser\\AppData\\Local\\Microsoft\\Edge\\User Data\\Profile 3'
 const hasRealProfile = existsSync(path.join(WSL_DIR, 'Preferences'))
 
