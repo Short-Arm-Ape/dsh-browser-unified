@@ -17,7 +17,7 @@
  *
  * ```
  * Profile 3/Secure Preferences → extensions.settings["nlhedoliokpkcodjlgdlhiiohjcbbaap"]
- *   = { path: "D:\\edge-extensions\\dsh-browser-extension", location: 4, from_webstore: false }
+ *   = { path: "D:\\edge-extensions\\<ext dir>", location: 4, from_webstore: false }
  * ```
  * 全机唯一命中（`Default` 里 0 条）。
  *

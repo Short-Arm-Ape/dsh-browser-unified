@@ -138,7 +138,7 @@ dsh-browser-unified/
 | 层 | 跑什么 | 什么时候 |
 |---|---|---|
 | **CI**（GitHub Actions，ubuntu + node 22） | 三个包 `npm ci` + 构建（走仓库自己的 `build-pack`）+ `tests/` 全部 10 套（325 项断言）+ `lib/client.js` 与 `client/client.js` 字节一致 | 每次 push 到 main、每个 PR、手动触发 |
-| **本机台子**（Windows 真 Edge） | 只有它验得了的那层：浮层、硬锁、导航完成判定、div 化 SPA 元素识别 | 改扩展或改闸门时手动跑（做法见 `design/`） |
+| **本地手动验证**（真浏览器） | 只有它验得了的那层：浮层、硬锁、导航完成判定、div 化 SPA 元素识别 | 改扩展或改闸门时手跑（做法见 `design/`） |
 
 本地一条命令：`node tests/run-all.mjs`（可带过滤词，例如 `node tests/run-all.mjs tool`）。
 每个套件都是独立进程、自己数断言、自己用退出码交代结果，所以 CI 里不需要额外的断言解析。
