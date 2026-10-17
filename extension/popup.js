@@ -36,6 +36,13 @@ function render(status) {
 	btn.textContent = connected ? '断开连接' : (status.state === 'connecting' ? '连接中…' : '立即连接');
 	btn.classList.toggle('danger', connected);
 	btn.dataset.connected = String(connected);
+	// 本地硬锁：按钮与状态页同款样式，锁着时变红
+	const locked = status.locked === true;
+	$('lockbtn').textContent = locked ? '解除锁定' : '锁定';
+	$('lockbtn').classList.toggle('locked', locked);
+	$('locksub').textContent = locked
+		? '已锁定：模型的任何调用都会被拒绝；只有在这个弹窗里能解锁'
+		: '锁定后仍保持连接，但拒绝一切操作，只能在这个弹窗里解锁';
 	const errorBox = $('error');
 	errorBox.textContent = status.lastError ?? '';
 	errorBox.className = errorBox.textContent.length > 0 ? 'error show' : 'error';
@@ -50,6 +57,14 @@ async function refresh() {
 		box.className = 'error show';
 	}
 }
+
+// 单次点击即可锁定：**打开这个弹窗本身就是一次明确的用户动作**（要点图标才看得到这一行），
+// 再要一次"点击确认"只是给误触加了一层，并不增加真实的安全性；解锁同样一次点击（救人优先）。
+$('lockbtn').addEventListener('click', async () => {
+	const locked = $('lockbtn').classList.contains('locked')
+	await chrome.runtime.sendMessage({ type: 'lockSet', locked: !locked })
+	setTimeout(refresh, 200)
+});
 
 $('reconnect').addEventListener('click', async () => {
 	const connected = $('reconnect').dataset.connected === 'true';

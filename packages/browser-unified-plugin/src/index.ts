@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { spawn } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools'
@@ -196,6 +197,10 @@ export const Config = z.object({
 	localTemp: z.boolean().default(true).volatile(),
 	askMode: z.string().default('inherit').volatile(),
 	dshAccessEnabled: z.boolean().default(false).volatile(),
+	/** 只读档：开启后模型只能读页面、不能操作（点击/输入/导航/求值一律拒）。 */
+	readOnly: z.boolean().default(false).volatile(),
+	/** 允许模型在这台浏览器里执行任意脚本（eval / 帧内 eval / content.debug）—— 等价于给模型一个 devtools 控制台。 */
+	allowScript: z.boolean().default(true).volatile(),
 	dshOrigins: z.array(z.string()).default([]).volatile(),
 	allowHosts: z.array(z.string()).default([]).volatile(),
 	denyHosts: z.array(z.string()).default([]).volatile(),
@@ -216,6 +221,10 @@ export const Config = z.object({
 
 interface ResolvedConfig {
 	enabled: boolean
+	/** 只读档：模型只能读页面，不能操作。 */
+	readOnly: boolean
+	/** 允许模型执行任意脚本（devtools 级能力）。 */
+	allowScript: boolean
 	port: number
 	token: string
 	shotsDir: string
@@ -1021,11 +1030,14 @@ class BridgeController {
 					// 读 `this.current`（reconcile 里更新）而不是 reconcile 的参数：策略变更时监听器
 					// 不重建，闭包捕获的旧 config 会过期。只放只读、非机密字段；dshOrigins 不放 ——
 					// 生效值里含宿主推导出来的控制页地址，与用户列表天然不同，比了会误报。
-					describePolicy: () => {
+					pluginVersion: pluginVersionSync(),
+			describePolicy: () => {
 						const c = this.current
 						if (c === undefined) return undefined
 						return {
 							enabled: c.enabled !== false,
+							readOnly: c.readOnly === true,
+							allowScript: c.allowScript !== false,
 							dshAccessEnabled: c.dshAccessEnabled === true,
 							internetAccess: c.internetAccess,
 							lanAccess: c.lanAccess,
@@ -1102,7 +1114,40 @@ class BridgeController {
 	 * @param signal - tool-execution cancellation propagated to the pending command.
 	 * @returns the extension's result payload verbatim.
 	 */
+	/**
+	 * **只读档**下仍然放行的命令（其余一律拒绝）。判定放在 `execute` 这个单一收口上 ——
+	 * 工具面隐藏（buddy）只是"模型不知道有它"，真边界在这里：即使注入猜中名字也会被拒。
+	 */
+	/**
+	 * 哪些命令属于"执行任意脚本"这一类（等价于 devtools 控制台）。
+	 * 主人 2026-10-17：「模型权限我觉得可以细化，比如让不让调用类似 devtools 这类」——
+	 * 先把最危险的一类单独拎出来做成开关；其余按 read-only 那档兜。
+	 */
+	private static readonly SCRIPT_COMMANDS = new Set(['eval', 'content.debug', 'content'])
+
+	private static readonly READ_ONLY_ALLOWED = new Set([
+		'ping', 'browser.info', 'tabs.list', 'snapshot', 'screenshot', 'find', 'frames',
+		'console.log', 'network.log', 'wait', 'hold.status', 'lock.status', 'pdf',
+	])
+
+	/** 当前是否只读档（`accessLevel: 'read-only'`）。 */
+	private isReadOnly(): boolean {
+		return this.current?.readOnly === true
+	}
+
 	async execute(command: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
+		if (BridgeController.SCRIPT_COMMANDS.has(command) && this.current?.allowScript === false) {
+			throw classify(command, new Error(
+				`脚本执行已关闭：命令 ${command} 被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型执行任意脚本 关着）。`
+				+ '读取、点击、输入、导航都不受影响；要放开请让主人打开那一项。',
+			))
+		}
+		if (this.isReadOnly() && !BridgeController.READ_ONLY_ALLOWED.has(command)) {
+			throw classify(command, new Error(
+				`只读模式：命令 ${command} 已被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型操作页面 关着）。`
+				+ '要放开请让主人在设置里打开那一项；读取类工具（read/snapshot/screenshot/find 等）照常可用。',
+			))
+		}
 		const guarded = this.guarded
 		if (guarded === undefined) {
 			throw classify(command, new Error(
@@ -2540,13 +2585,114 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 	}))
 
 	ctx.tools.register(defineTool({
+		name: 'browser_hold',
+		description: 'Put a **cancel-proof overlay** on a tab so the user does not mis-click or mis-read while the model works: '
+			+ 'the page dims and **high-contrast text in the middle (no panel — the page stays visible)** shows what the model is doing. '
+			+ '底部还有一枚「中止操作」按钮，**需双击确认**（点一次变「点击确认」，3 秒不点回默认态）—— 用户按下后，'
+			+ '你对该标签页的 click/input/press/nav 会被**直接拒绝**，直到你调 action=off（等于确认继续）。'
+			+ 'The card\'s title is FIXED by the extension (the model cannot change it); the small footer (session / model / cwd / bridge port / time) '
+			+ 'is filled by the host from runtime context; your arguments only fill the body text. '
+			+ '**The user takes over by clicking twice anywhere** (two clicks within 600ms) — the overlay disappears and the tab is theirs again; '
+			+ '`status` reports `dismissedBy: "user"` in that case, so check it before continuing to drive the page. '
+			+ 'The model\'s own clicks still land (the extension temporarily makes the overlay transparent while dispatching), '
+			+ 'so locking does not block your own actions. 用途：改配置/填表/演示这类"用户可能在旁边看着且容易手抖"的场景；'
+			+ '**它是页面之上的一层，不改页面本身的逻辑**：只往页面追加一个 Shadow DOM 元素（页面 CSS 进不来、我们的样式也漏不出去），'
+			+ '撤掉时只删它自己；页面已有的元素/样式/监听一概不碰。默认**不抢焦点、不拦键盘**（零干扰，代价是键盘输入仍会落到当前焦点），'
+			+ '要连输入一起冻住就传 `blockKeys: true`。页面一导航浮层自然消失，`status` 以 DOM 是否存在为准、不会假装还锁着。',
+		parameters: {
+			action: { type: 'string', required: true, description: 'One of: on, off, status.' },
+			tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+			text: { type: 'string', description: 'on: body text — say what you are doing (e.g. 正在把「局域网」档改成放行).' },
+			blockKeys: { type: 'boolean', description: 'on: also freeze keyboard input (default false = zero interference; page listeners stay untouched).' },
+		},
+		output: {
+			schema: {
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					tabId: { type: 'number', required: true },
+					action: { type: 'string', required: true },
+					active: { type: 'boolean', required: true },
+					dismissedBy: { type: 'string' },
+					text: { type: 'string' },
+					shownWho: { type: 'string' },
+					aborted: { type: 'boolean' },
+				},
+			},
+			render: (_args, value) => {
+				if (value.action === 'status') {
+					if (value.active === true) return textBlock(`tab ${value.tabId}：浮层仍在（用户还没接管）`)
+					if (value.dismissedBy === 'abort') return textBlock(`tab ${value.tabId}：**用户按了「中止操作」** —— 你接下来的 click/input/press/nav 会被拒；先问用户，确认后调 browser_hold action=off 解除`)
+					if (value.dismissedBy === 'user') return textBlock(`tab ${value.tabId}：**用户已双击接管**，浮层已撤 —— 继续驱动这个页面之前先跟用户确认`)
+					return textBlock(`tab ${value.tabId}：当前没有浮层`)
+				}
+				if (value.action === 'off') return textBlock(`已解除 tab ${value.tabId} 的浮层`)
+				return textBlock(`已锁住 tab ${value.tabId}：${String(value.text ?? '')}`
+					+ `${typeof value.shownWho === 'string' && value.shownWho.length > 0 ? `\n浮层底部已标明：${value.shownWho}` : ''}`
+					+ `\n用户双击任意处可接管；你的点击/输入照常可用。`)
+			},
+		},
+		presentCall: args => ({ card: 'generic', title: `Browser hold: ${args.action}`, kind: 'other' as const }),
+		timeoutMs: 15_000,
+		async execute(args, exec) {
+			const action = String(args.action)
+			if (action !== 'on' && action !== 'off' && action !== 'status') throw new Error('hold action must be on|off|status')
+			if (action !== 'status') await authorizeExistingTab(controller, args.tabId, exec.signal)
+			const params: Record<string, unknown> = {}
+			if (args.tabId !== undefined) params.tabId = args.tabId
+			if (action === 'on') {
+				if (typeof args.text === 'string') params.text = args.text
+				if (args.blockKeys === true) params.blockKeys = true
+				// 浮层上"是谁在操作"这一行**由插件从运行时上下文填**，模型只能填正文 text。
+				// 这样模型没法在浮层上伪造身份（标题也已被扩展写死）。
+				const agent = exec.agent as unknown as {
+					options?: { provider?: unknown; model?: unknown }
+					session?: { id?: unknown; header?: { cwd?: unknown; agentPreset?: unknown } }
+				} | undefined
+				const sessionId = typeof agent?.session?.id === 'string' ? agent.session.id : undefined
+				const short = sessionId === undefined ? undefined : sessionId.replace(/^session-/, '').slice(0, 8)
+				// 主人 2026-10-17：底部**不要模型名，要会话标题**（更好辨认，也更难伪造）
+				const title = sessionId === undefined ? undefined : sessionTitleOf(sessionId)
+				const cwd = typeof agent?.session?.header?.cwd === 'string'
+					? agent.session.header.cwd
+					: undefined
+				const port = controller.describePolicy().boundPort
+				params.meta = {
+					...(title !== undefined ? { session: title } : short === undefined ? {} : { session: short }),
+					...(cwd === undefined ? {} : { cwd: cwd.replace(/^\/home\/[^/]+/, '~') }),
+					...(typeof port === 'number' ? { port } : {}),
+					at: Date.now(),
+				}
+			}
+			const shownWho = action === 'on' && typeof params.meta === 'object' && params.meta !== null
+				? Object.entries(params.meta as Record<string, unknown>)
+					.filter(([k, v]) => k !== 'at' && (typeof v === 'string' || typeof v === 'number') && String(v).length > 0)
+					.map(([k, v]) => `${k === 'session' ? '会话' : k === 'model' ? '模型' : k === 'cwd' ? '目录' : k === 'port' ? '桥' : k}=${String(v)}`)
+					.join(' · ')
+				: undefined
+			const raw = await controller.execute(`hold.${action}`, params, exec.signal) as {
+				tabId?: number; active?: boolean; dismissedBy?: string | null; text?: string; aborted?: boolean
+			}
+			return {
+				tabId: typeof raw?.tabId === 'number' ? raw.tabId : (args.tabId ?? -1),
+				action,
+				active: raw?.active === true,
+				...(typeof raw?.dismissedBy === 'string' && raw.dismissedBy.length > 0 ? { dismissedBy: raw.dismissedBy } : {}),
+				...(raw?.aborted === true ? { aborted: true } : {}),
+				...(typeof raw?.text === 'string' && raw.text.length > 0 ? { text: raw.text } : {}),
+				...(shownWho === undefined ? {} : { shownWho }),
+			}
+		},
+	}))
+
+	ctx.tools.register(defineTool({
 		name: 'browser_evaluate',
 		description: 'Run JavaScript in the page and get the JSON result back as a string. Prefer read-only inspection. '
 			+ '表达式会被当作 **async 函数体**执行（顶层 `await` 可用），返回的 promise 会被等待到 `timeoutMs`（默认 15s）。'
 			+ '注意：① 表达式里**不要**写轮询/sleep —— 超时（`eval timeout after Nms`）与"页面没内容"表现完全一样，'
 			+ '需要等待请用 browser_wait，或分多次调用；② 只返回可序列化数据（DOM 节点/循环引用请自己 `JSON.stringify`）。'
 			+ '注意：`history.pushState` 只改 URL、**不会**触发 SPA 重渲染 —— 用它站内翻页会让后续抽取读到上一条页面的内容'
-			+ '（实测踩过，URL 变了内容没变）；换页请用 browser_navigate，抽取前先核对页面身份（标题/编号）。',
+			+ '用它在站内翻页会让后续抽取读到上一条内容；换页请用 browser_navigate，抽取前先核对页面身份（标题/编号）。',
 		parameters: {
 			expression: { type: 'string', required: true, description: 'JavaScript to run as an async function body (top-level await is fine).' },
 			tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
@@ -2979,6 +3125,37 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
  * 当普通对象用遍了整个 apply，这里统一解包一次，避免逐处 `.get()` 漏字段 ——
  * 漏一处的后果就是该项设置静默失效（buddy 正是这么栽的，见其 schema 注释）。
  */
+/**
+ * 取会话标题（给浮层底部那行"是谁在操作"用）。
+ *
+ * 标题不在会话日志里，而在 DSH 的投影缓存 `$DSH_HOME/storages/session_projcache/sessions/<id>.json`
+ * 的 `record.rows.title.val` 里。只读、best-effort、30 秒缓存；拿不到返回 undefined（调用方退回短 id）。
+ */
+const sessionTitleCache = new Map<string, { at: number; title: string | undefined }>()
+/** 本机插件版本（同步读自身 package.json；桥状态是同步 getter，没法 await）。 */
+function pluginVersionSync(): string | undefined {
+	try {
+		const here = path.dirname(fileURLToPath(import.meta.url))
+		const pkg = JSON.parse(readFileSync(path.join(here, '..', 'package.json'), 'utf8')) as { version?: unknown }
+		return typeof pkg.version === 'string' ? pkg.version : undefined
+	} catch { return undefined }
+}
+
+export function sessionTitleOf(sessionId: string, now: number = Date.now()): string | undefined {
+	const cached = sessionTitleCache.get(sessionId)
+	if (cached !== undefined && now - cached.at < 30_000) return cached.title
+	let title: string | undefined
+	try {
+		const home = process.env.DSH_HOME ?? path.join(homedir(), '.dsh')
+		const file = path.join(home, 'storages', 'session_projcache', 'sessions', `${sessionId}.json`)
+		const doc = JSON.parse(readFileSync(file, 'utf8')) as { record?: { rows?: { title?: { val?: unknown } } } }
+		const raw = doc?.record?.rows?.title?.val
+		if (typeof raw === 'string' && raw.trim().length > 0) title = raw.trim().slice(0, 60)
+	} catch { title = undefined }
+	sessionTitleCache.set(sessionId, { at: now, title })
+	return title
+}
+
 function unwrapVolatile<T extends object>(config: T): T {
 	const source = config as unknown as Record<string, unknown>
 	const out: Record<string, unknown> = {}

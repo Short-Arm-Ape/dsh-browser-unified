@@ -421,9 +421,9 @@ console.log('\n[8] 2026-10-09 修的模型可见契约（bi-015 / bi-016 / F-1 /
 	}
 
 	// 工具面总数（防止新增工具被分层名单漏掉时无人发现）。
-	// 30 = 27 + 2026-10-13 吸收上游 v1.0.9 的 3 个（browser_find / browser_dialog / browser_info）。
+	// 31 = 27 + 2026-10-13 吸收上游 v1.0.9 的 3 个（find/dialog/info）+ 2026-10-17 的 browser_hold。
 	const browserTools = [...tools.keys()].filter((n) => n.startsWith('browser_'))
-	check('宿主侧 browser_* 工具数 = 30（含 2026-10-13 新并入的 find/dialog/info）', browserTools.length === 30, `${browserTools.length}: ${browserTools.join(',')}`)
+	check('宿主侧 browser_* 工具数 = 31（含 find/dialog/info 与 browser_hold）', browserTools.length === 31, `${browserTools.length}: ${browserTools.join(',')}`)
 	for (const merged of ['browser_tools', 'browser_frames', 'browser_frame_eval']) {
 		check(`合并进来的 ${merged} 已注册`, browserTools.includes(merged))
 	}
@@ -563,6 +563,33 @@ console.log('\n[12] 2026-10-17：tabs.list 要看得见分组（原来只能建�
 		tabs: [{ id: 9, url: 'https://x.example/', title: 'X', active: true }],
 	})
 	check('没有分组时不多出一行', !plain.includes('分组：'))
+}
+
+console.log('\n[13] 2026-10-17：browser_hold（防误触浮层）的三种回执')
+{
+	const on = renderText('browser_hold', { action: 'on' }, { tabId: 7, action: 'on', active: true, text: '正在把「局域网」档改成放行' })
+	check('锁住时写清"用户怎么接管"与"模型照常能点"', on.includes('已锁住 tab 7') && on.includes('双击任意处可接管') && on.includes('照常可用'))
+	check('锁住时把在做什么也显示出来', on.includes('正在把「局域网」档改成放行'))
+
+	const stOn = renderText('browser_hold', { action: 'status' }, { tabId: 7, action: 'status', active: true })
+	check('status：浮层仍在', stOn.includes('浮层仍在'))
+	const stUser = renderText('browser_hold', { action: 'status' }, { tabId: 7, action: 'status', active: false, dismissedBy: 'user' })
+	check('status：用户已接管（并提醒先跟用户确认）', stUser.includes('用户已双击接管') && stUser.includes('先跟用户确认'))
+	const stAbort = renderText('browser_hold', { action: 'status' }, { tabId: 7, action: 'status', active: false, dismissedBy: 'abort', aborted: true })
+	check('status：用户按了中止 ⇒ 说清"接下来的动作会被拒"并指路 action=off',
+		stAbort.includes('中止操作') && stAbort.includes('会被拒') && stAbort.includes('action=off'))
+	const stAgent = renderText('browser_hold', { action: 'status' }, { tabId: 7, action: 'status', active: false })
+	check('status：从没锁过 ≠ 用户接管', stAgent.includes('当前没有浮层'))
+	const off = renderText('browser_hold', { action: 'off' }, { tabId: 7, action: 'off', active: false })
+	check('解除回执', off.includes('已解除 tab 7'))
+
+	// 2026-10-17 追加：标题写死（模型改不了）+ 底部身份由插件填 ⇒ 回执要把"标明了什么"如实说出来
+	const withWho = renderText('browser_hold', { action: 'on' }, {
+		tabId: 7, action: 'on', active: true, text: '正在改档',
+		shownWho: '会话=2c768f96 · 模型=deepseek-flash · 目录=~/projects · 桥=9777',
+	})
+	check('回执说清"底部已标明谁在操作"', withWho.includes('浮层底部已标明') && withWho.includes('会话=2c768f96'))
+	check('回执不再夹带实现说明（只讲用户能做什么、模型能做什么）', !withWho.includes('扩展写死') && withWho.includes('双击任意处可接管'))
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -104,6 +104,24 @@ window.__ModuleLoader__.load({
 				error: '写入失败：',
 				unavailable: '设置服务暂不可用（namespace 未暴露或页面为 memory 模式）。',
 				loading: '正在读取配置…',
+				enabledMoved: '已提到页面顶部（一级开关）',
+				updateTitle: '检查更新',
+				updateDesc: '与本仓库最新发布比一次版本号（只读，不会安装任何东西）。',
+				updateBtn: '检查更新',
+				updateCheckingBtn: '检查中…',
+				updateChecking: '正在查最新发布…',
+				updateLatest: '已是最新发布。',
+				updateNewer: '有新版本 {v}，可到发布页获取。',
+				badgePreview: '预览版',
+				updateOpen: '查看新版',
+				updateNewerPre: '有新预览版 {v}，可到发布页获取。',
+				updateAhead: '本机 {c}，已领先最新发布 {v}（这一版还没发布）。',
+				updateNoCurrent: '最新发布 {v}（本机版本未知，桥未回报）。',
+				updateUnknown: '查不到最新发布（仓库未公开或被限流）。',
+				updateFailed: '检查失败（网络或限流），稍后再试。',
+				masterOnHint: '模型的浏览器工具全部可用。关闭会立即中断正在跑的会话的浏览器访问。',
+				masterArmHint: '**再点一次**即可关闭（相当于熔断）—— 现在还在跑会话，关掉后它们立刻失去浏览器能力。',
+				masterOffHint: '已关闭：所有 browser_* 工具不可用；重新打开即可恢复。',
 				enabledOn: '已启用',
 				enabledOff: '已停用',
 				collapse: '展开/折叠',
@@ -134,6 +152,10 @@ window.__ModuleLoader__.load({
 				modeAllow: '放行',
 				modeAsk: '需审批',
 				modeDeny: '拒绝',
+				readOnlyItem: '允许模型操作页面',
+				scriptItem: '允许模型执行任意脚本',
+				scriptDesc: '相当于把 devtools 控制台交给模型（求值/帧内求值）。关掉后读取、点击、输入、导航都不受影响，只是不能跑自定义脚本。',
+				readOnlyDesc: '关闭后模型只能读页面（读取/快照/截图/查找/帧），点击、输入、导航、求值一律被拒。',
 				dshItem: '允许访问本 DSH 页面',
 				dshItemDesc: '开启后模型可以打开并操作本机 DSH 控制页（含你的会话列表与审批界面）。关闭时一律拒绝；关闭即时生效，开启需二次确认。',
 				staleTitle: '有改动还没生效',
@@ -254,6 +276,10 @@ window.__ModuleLoader__.load({
 				modeAllow: 'Allow',
 				modeAsk: 'Ask',
 				modeDeny: 'Deny',
+				readOnlyItem: 'Let the model operate the page',
+				scriptItem: 'Let the model run arbitrary scripts',
+				scriptDesc: 'Equivalent to handing the model a devtools console (evaluate / frame evaluate). Turning it OFF leaves read, click, type and navigate intact.',
+				readOnlyDesc: 'When OFF the model can only read (read / snapshot / screenshot / find / frames); click, type, navigate and evaluate are refused.',
 				dshItem: 'Allow access to this DSH page',
 				dshItemDesc: 'When ON, the model can open and operate this machine\'s DSH control page (your session list and approval UI included). It is always refused while OFF; turning OFF applies instantly, turning ON needs a second confirmation.',
 				staleTitle: 'Saved changes are not in force yet',
@@ -470,6 +496,143 @@ window.__ModuleLoader__.load({
 		}
 
 		// Fold card: an accordion group in the settings-shell card recipe.
+		/** 检查更新用的仓库（发布版从这里取；拿不到就如实说"查不到"）。 */
+		var UPDATE_REPO = 'Short-Arm-Ape/dsh-browser-unified'
+		var UPDATE_API = 'https://api.github.com/repos/' + UPDATE_REPO + '/releases?per_page=10'
+
+		/** 解析 `1.2.3` / `1.2.3-beta.1`：核心三段 + 预览标记（有 pre 就是预览版）。 */
+		function parseVersion(v) {
+			var m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(String(v || ''))
+			if (m === null) return null
+			return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? String(m[4]) : null }
+		}
+		/** 比大小：核心段优先；核心相同则**没有预览标记的更大**（正式版 > 预览版）。 */
+		function compareVersion(a, b) {
+			var x = parseVersion(a)
+			var y = parseVersion(b)
+			if (x === null || y === null) return 0
+			for (var i = 0; i < 3; i += 1) {
+				if (x.core[i] !== y.core[i]) return x.core[i] > y.core[i] ? 1 : -1
+			}
+			if (x.pre === y.pre) return 0
+			if (x.pre === null) return 1
+			if (y.pre === null) return -1
+			return x.pre > y.pre ? 1 : -1
+		}
+
+		/**
+		 * 「检查更新」：拿 GitHub 上的发布与本机版本比一次。
+		 *
+		 * 预览版规则（主人 2026-10-17）：本机是预览版（`1.2.3-beta.x`）时，**允许跟预览版比**；
+		 * 本机是正式版时只看正式发布（跳过 `prerelease: true`），免得被 beta 追着跑。
+		 * 落后时按钮变成「查看新版」，点了直接开那次发布的页面。查不到就如实说查不到。
+		 */
+		function UpdateRow(props) {
+			var t = props.t
+			var state = useState({ phase: 'idle' })
+			function check() {
+				state[1]({ phase: 'loading' })
+				fetch(UPDATE_API, { headers: { accept: 'application/vnd.github+json' } })
+					.then(function (res) { return res.ok ? res.json() : null })
+					.then(function (list) {
+						if (!Array.isArray(list) || list.length === 0) { state[1]({ phase: 'unknown' }); return }
+						var current = props.currentVersion || ''
+						var me = parseVersion(current)
+						// 本机是预览版 ⇒ 预览版也算候选；否则只看正式发布
+						var candidates = list.filter(function (r) { return r && r.draft !== true && (me === null || me.pre !== null || r.prerelease !== true) })
+						if (candidates.length === 0) { state[1]({ phase: 'unknown' }); return }
+						var best = candidates[0]
+						var latest = String(best.tag_name || '').replace(/^v/, '')
+						var next = {
+							latest: latest,
+							url: typeof best.html_url === 'string' ? best.html_url : null,
+							latestIsPre: best.prerelease === true,
+							current: current,
+							currentIsPre: me !== null && me.pre !== null,
+						}
+						if (current === '') { state[1]({ phase: 'noCurrent', latest: latest, url: next.url }); return }
+						var cmp = compareVersion(latest, current)
+						next.phase = cmp > 0 ? 'newer' : cmp < 0 ? 'ahead' : 'latest'
+						state[1](next)
+					})
+					.catch(function () { state[1]({ phase: 'failed' }) })
+			}
+			var st = state[0]
+			var badge = st.currentIsPre ? t('badgePreview') + ' · ' : ''
+			var desc = st.phase === 'loading' ? t('updateChecking')
+				: st.phase === 'latest' ? badge + t('updateLatest')
+					: st.phase === 'newer' ? (st.latestIsPre ? t('updateNewerPre') : t('updateNewer')).replace('{v}', String(st.latest))
+						: st.phase === 'ahead' ? t('updateAhead').replace('{c}', String(st.current || '')).replace('{v}', String(st.latest))
+							: st.phase === 'noCurrent' ? t('updateNoCurrent').replace('{v}', String(st.latest))
+								: st.phase === 'unknown' ? t('updateUnknown')
+									: st.phase === 'failed' ? t('updateFailed')
+										: t('updateDesc')
+			var actionable = st.phase === 'newer' || st.phase === 'ahead'
+			var url = st.url || ('https://github.com/' + UPDATE_REPO + '/releases')
+			return createElement(Row, { title: t('updateTitle'), desc: desc },
+				createElement('button', {
+					type: 'button',
+					onClick: function () {
+						if (actionable) { window.open(url, '_blank', 'noopener'); return }
+						if (st.phase !== 'loading') check()
+					},
+					style: {
+						font: 'inherit', fontSize: '12px', padding: '5px 12px', borderRadius: '8px',
+						border: '1px solid ' + T.border, background: 'transparent', color: T.label1, cursor: 'pointer',
+						whiteSpace: 'nowrap',
+					},
+				}, actionable ? t('updateOpen') : st.phase === 'loading' ? t('updateCheckingBtn') : t('updateBtn')),
+			)
+		}
+
+		var masterArmTimer = null
+
+		/**
+		 * 「启用浏览器桥」的一级开关。
+		 *
+		 * 关掉它等于**在 DSH 侧熔断**：正在跑的会话会立刻失去浏览器能力。所以关闭走两步 ——
+		 * 第一次点只是"上膛"（开关回到开、右侧出现「再点一次关闭」），3 秒内再点一次才真正关。
+		 * 打开则一次点到位（救人优先）。
+		 */
+		function MasterSwitch(props) {
+			var armed = useState(false)
+			// 不用 useEffect（这个文件里只依赖 useState，测试桩也只提供它）：上膛的自动复位放在
+			// 点击处理里用定时器做，反正这页只有一个主开关。
+			function armTo(next) {
+				if (masterArmTimer !== null) { clearTimeout(masterArmTimer); masterArmTimer = null }
+				armed[1](next)
+				if (next) {
+					masterArmTimer = setTimeout(function () { masterArmTimer = null; armed[1](false) }, 3000)
+				}
+			}
+			var enabled = props.enabled === true
+			return createElement('div', {
+				style: {
+					display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+					padding: '14px 16px', margin: '0 0 12px',
+					borderRadius: '12px', border: '1px solid ' + (enabled ? T.border : T.error),
+					background: enabled ? T.bg1 : 'rgba(220,60,60,0.08)',
+				},
+			},
+				createElement('div', null,
+					createElement('div', { style: { fontSize: '14px', fontWeight: '600', color: T.label1 } }, t('enabled')),
+					createElement('div', { style: { fontSize: '12px', color: T.label3, marginTop: '2px', lineHeight: '1.5' } },
+						enabled
+							? (armed[0] ? t('masterArmHint') : t('masterOnHint'))
+							: t('enabledOff') + ' · ' + t('masterOffHint')),
+				),
+				createElement(Switch, {
+					checked: enabled,
+					onChange: function (on) {
+						if (on) { armTo(false); props.onSet(true); return }
+						if (!armed[0]) { armTo(true); return }
+						armTo(false)
+						props.onSet(false)
+					},
+				}),
+			)
+		}
+
 		function FoldCard(props) {
 			var foldKey = 'dshBu:fold:' + (props.id || '')
 			var stored = null
@@ -647,6 +810,7 @@ window.__ModuleLoader__.load({
 					port: port,
 					extensionConnected: body.extensionConnected === true,
 					extensionVersion: body.hello && typeof body.hello.version === 'string' ? body.hello.version : null,
+					pluginVersion: typeof body.pluginVersion === 'string' ? body.pluginVersion : null,
 					// 运行中**生效**的策略快照（core 0.1.7 起随 /api/status 一起给）
 					policy: body.policy && typeof body.policy === 'object' ? body.policy : null,
 				})
@@ -690,16 +854,25 @@ window.__ModuleLoader__.load({
 		 */
 		function stalePolicyKeys(stored, policy) {
 			if (!policy || typeof policy !== 'object') return []
-			var flagKeys = ['enabled', 'dshAccessEnabled', 'blockMetadata']
+			// 三个开关 + 一个"缺省即开"的开关：各自缺省值不同，所以按规格比，不能一锅炖
+			var flagSpec = [
+				{ key: 'enabled', def: true },
+				{ key: 'readOnly', def: false },
+				{ key: 'allowScript', def: true },
+				{ key: 'dshAccessEnabled', def: false },
+				{ key: 'blockMetadata', def: true },
+			]
 			var plainKeys = ['internetAccess', 'lanAccess', 'localAccess', 'askMode']
 			var listKeys = ['allowHosts', 'denyHosts']
 			var out = []
 			var i
-			for (i = 0; i < flagKeys.length; i += 1) {
-				var fk = flagKeys[i]
-				var want = fk === 'blockMetadata' || fk === 'enabled' ? (stored && stored[fk] !== false) : (stored && stored[fk] === true)
-				var got = fk === 'dshAccessEnabled' ? policy[fk] === true : policy[fk] !== false
-				if (want !== got) out.push(fk)
+			for (i = 0; i < flagSpec.length; i += 1) {
+				var spec = flagSpec[i]
+				var sw = stored ? stored[spec.key] : undefined
+				var gw = policy ? policy[spec.key] : undefined
+				var want = sw === undefined ? spec.def : sw === true
+				var got = gw === undefined ? spec.def : gw === true
+				if (want !== got) out.push(spec.key)
 			}
 			for (i = 0; i < plainKeys.length; i += 1) {
 				var pk = plainKeys[i]
@@ -1012,16 +1185,12 @@ window.__ModuleLoader__.load({
 					probe: probe,
 					onRetry: function () { setProbe({ phase: 'loading', found: probe.found, nonce: probe.nonce + 1 }) },
 				}),
+				createElement(MasterSwitch, {
+					enabled: value.enabled === true,
+					onSet: function (on) { setField('enabled', on) },
+				}),
 				createElement(FoldCard, { id: 'general', title: t('general') },
-					createElement(Row, {
-						title: t('enabled'),
-						desc: (value.enabled === true ? t('enabledOn') : t('enabledOff')) + ' · ' + t('enabledDesc'),
-					},
-						createElement(Switch, {
-							checked: value.enabled === true,
-							onChange: function (on) { setField('enabled', on) },
-						}),
-					),
+					createElement(UpdateRow, { t: t, currentVersion: (probe.found && probe.found.pluginVersion) || '' }),
 				),
 				createElement(FoldCard, { id: 'access', title: t('access'), subtitle: t('accessSub') },
 					staleBanner,
@@ -1030,6 +1199,18 @@ window.__ModuleLoader__.load({
 					realmRow({ title: t('realmLan'), key: 'lanAccess', tempKey: 'lanTemp', realm: 'lan', value: value, setField: setField }),
 					realmRow({ title: t('realmLocal'), key: 'localAccess', tempKey: 'localTemp', realm: 'local', value: value, setField: setField }),
 					createElement('div', { style: rowDescStyle }, t('realmDesc')),
+					createElement(Row, { title: t('readOnlyItem'), desc: t('readOnlyDesc') },
+						createElement(Switch, {
+							checked: value.readOnly !== true,
+							onChange: function (on) { setField('readOnly', on !== true) },
+						}),
+					),
+					createElement(Row, { title: t('scriptItem'), desc: t('scriptDesc') },
+						createElement(Switch, {
+							checked: value.allowScript !== false,
+							onChange: function (on) { setField('allowScript', on === true) },
+						}),
+					),
 					createElement(DshEnableRow, {
 						enabled: value.dshAccessEnabled === true,
 						origins: Array.isArray(value.dshOrigins) ? value.dshOrigins : [],
