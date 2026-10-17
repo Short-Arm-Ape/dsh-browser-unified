@@ -42,7 +42,7 @@ function render(status) {
 	$('lockbtn').classList.toggle('locked', locked);
 	$('locksub').textContent = locked
 		? '已锁定：模型的任何调用都会被拒绝；只有在这个弹窗里能解锁'
-		: '锁定后仍保持连接，但拒绝一切操作，只能在这个弹窗里解锁';
+		: '锁定后仍保持连接，只是拒绝模型的全部浏览器命令；只能在这个弹窗里解锁';
 	const errorBox = $('error');
 	errorBox.textContent = status.lastError ?? '';
 	errorBox.className = errorBox.textContent.length > 0 ? 'error show' : 'error';

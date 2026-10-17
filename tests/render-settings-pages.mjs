@@ -432,10 +432,15 @@ console.log('\n[3] 页面侧探测（fetch 桩返回一座在 9778 的桥）')
 	const src2 = readFileSync(vendorClient, 'utf8')
 	check('访问控制卡里插入了「有改动还没生效」提示条',
 		src2.includes("staleTitle: '有改动还没生效'") && /id: 'access'[\s\S]{0,200}staleBanner/.test(src2))
+	// 断言的是「有没有这句说明 + 它是否指向用户能做的事」，不是某个历史措辞：
+	// 2026-10-18 文案审计把这句里的 core 版本号去掉了（用户看不懂那个）。
 	check('桥没报生效值时有灰色说明（不装作没事）',
-		src2.includes("staleBridgeDown: '桥没报出生效值") && src2.includes('noPolicyNote'))
-	check('「允许访问本 DSH 页面」的说明改短并写清风险与可逆性',
-		src2.includes('开启后模型可以打开并操作本机 DSH 控制页') && src2.includes('关闭即时生效，开启需二次确认'))
+		/staleBridgeDown: '[^']*桥没回报当前生效值/.test(src2) && src2.includes('noPolicyNote'))
+	// 2026-10-18 文案压缩：行内只留一句（控制页 + 需二次确认），风险细节移进确认弹窗与 README。
+	check('「允许访问本 DSH 页面」的说明写清范围与二次确认',
+		/模型可以打开并操作本机控制页[^']*开启需二次确认/.test(src2))
+	check('二次确认弹窗写清风险（会话列表与审批界面）',
+		/dshConfirmBody: '[^']*会话列表与审批界面/.test(src2))
 }
 
 const failed = results.filter((r) => !r.ok)

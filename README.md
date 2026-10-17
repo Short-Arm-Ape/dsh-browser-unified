@@ -1,180 +1,116 @@
 # dsh-browser-unified
 
-四条 DeepSeek Harness（dsh）浏览器插件路线合一的可安装插件：**用你自己的真实浏览器**
-（DSH Browser Control 扩展 + 本地桥）给模型提供 27 个 `browser_*` 工具，前面统一加一层
-可配置的 URL 策略守卫，另附「上游自检 / 设计注册表」工具三件套与 GUI 设置分区。
+Browser automation for DeepSeek Harness (dsh) on **your own browser**: a local WebSocket bridge plus a
+Chrome/Edge MV3 extension expose `browser_*` tools to the model, with a configurable URL policy in front.
+AGPL-3.0-only.
 
-> 仓库 = `upstream/`（**四个第三方上游**原样归档，各自带 LICENSE；外加**本项目前身**
-> `dsh-intranet-browser` 的归档 —— 它是本插件的上一代，不是外部上游）+ `packages/`（合并产物）。
-> 合并核心与插件壳整包以 **AGPL-3.0-only** 发布（含 caob23 桥收编代码，归属矩阵见 `NOTICE.md`）。
+[中文](README.zh.md) · English
 
-## 安装
+| package | version | what it is |
+|---|---|---|
+| `dsh-browser-unified` | 0.11.34 | the plugin: 31 `browser_*` tools (27 driving a browser + 4 registry/tooling), GUI settings section |
+| `browser-unified-core` | 0.1.10 | URL policy, approval layer, bridge (vendored from upstream), guarded bridge |
+| `dsh-browser-unified-mit` | 0.1.1 | MIT edition without the bridge and without browser tools |
+| extension `DSH Browser Control` | 1.0.37 | MV3 extension; **use this repo's build**, not upstream's |
 
-> 一条命令产出全部 Release 资产（含自检闸门）：`node scripts/build-release.mjs`
-> → 产物在 `dist-release/`（三个包的 tgz + 扩展 zip + 兼容旧名的干净 zip + `.sha256` + `INSTALL.md`）。
+## Install
 
-1. **浏览器扩展**（**必须用本仓库这版**，不能用上游 caob23 版）：
+Requirements: dsh web (0.1.7+ renders the settings card), Edge or Chrome 116+.
 
-   从本仓库 Releases 下载 `DSH-Browser-Control-v1.0.19.zip` → 解压到任意目录 →
-   `edge://extensions`（Chrome 为 `chrome://extensions`）开「开发者模式」→「加载解压缩的扩展」。
-   扩展源码就在本仓库 [`extension/`](extension/)，与插件同协议但多了 frames / 自建窗口 /
-   端口自动发现 / 导航完成判定 / div 化 SPA 元素识别等改动 —— 换回上游扩展这些能力会失效。
-2. **插件**（两个包一起装）：从 Releases 下载 `browser-unified-core-<ver>.tgz` 与
-   `dsh-browser-unified-<ver>.tgz`，然后：
-
-   ```bash
-   # 推荐：由 CLI 落到 profile 的 vendor/ 并改好 package.json
-   dsh plugin --profile <profile> add file:<path>/browser-unified-core-<ver>.tgz \
-                                      file:<path>/dsh-browser-unified-<ver>.tgz
-   ```
-
-   等价的手工写法：
+1. **Extension** — download `DSH-Browser-Control-v1.0.37.zip` from
+   [Releases](../../releases/latest), unzip anywhere, then `edge://extensions` (Chrome:
+   `chrome://extensions`) → enable developer mode → *Load unpacked*. Source: [`extension/`](extension/).
+2. **Plugin** — download `browser-unified-core-0.1.10.tgz` and `dsh-browser-unified-0.11.34.tgz` from the
+   same release, then:
 
    ```bash
-   pnpm add <path>/browser-unified-core-<ver>.tgz <path>/dsh-browser-unified-<ver>.tgz
-   # package.json:
-   #   dependencies:        "browser-unified-core": "file:<...>/browser-unified-core-<ver>.tgz"
-   #                        "dsh-browser-unified": "file:<...>/dsh-browser-unified-<ver>.tgz"
-   #   dsh.profile.bundles: 加入 "dsh-browser-unified"
+   dsh plugin --profile web add \
+     file:/abs/path/browser-unified-core-0.1.10.tgz \
+     file:/abs/path/dsh-browser-unified-0.11.34.tgz
    ```
 
-   重启 dsh web 后生效（宿主新代码与 GUI client 半区都需要重启加载）。
-   包内 patch 已默认 `enabled: true`（装上即监听 9777）；要关就在 **profile 层**按 id 覆盖 config。
+3. **Restart `dsh web`.** The bundled patch sets `enabled: true`, so the bridge listens on
+   `127.0.0.1:9777` right away.
 
-> 想要 MIT 许可、不含 caob23 派生代码的版本，用同仓库的 MIT 版 `dsh-browser-unified-mit`
-> （不带浏览器桥与 `browser_*` 工具，仅 URL 策略 / 审批 / 自更新等模块）。
->
-> **建议（专用配置文件）**：把 DSH Browser Control 扩展装在**专用的浏览器配置文件**里，与日常
-> 浏览隔离；需要访问本机服务（如 127.0.0.1）时把 urlMode 设为 `intranet`。跨 profile 自动拉起与
-> “无痕式临时干净配置”属拟议能力（design `de-013`），尚未实现。
+`dsh plugin add github:Short-Arm-Ape/dsh-browser-unified` does **not** work. pnpm resolves the repo root,
+which is not a package — it installs an `@short-arm-ape/dsh-browser-unified@0.0.0` stub with no `lib/` and no
+`dsh.bundle.patch`, so dsh never mounts it. GitHub installs only fit repos whose root *is* the plugin package.
+Use the release tarballs above, or `file:` a checkout's `packages/` entry.
 
-## 配置与设置界面
+The MIT edition (`dsh-browser-unified-mit`, same release) carries the URL policy, approval and self-update
+modules but no bridge and no browser tools.
 
-### GUI：设置 →「浏览器」（0.3.0+）
+## Configure
 
-插件以 `settings.section` 在 DSH 设置对话框注册了独立的 **「浏览器」** 分区（形如
-better-sidebar 的「侧边卡片」），逐项即时生效（改 URL 策略 / 云元数据列表只重建策略、不重启监听）：
-
-| 项 | 说明 |
-|---|---|
-| 启用浏览器桥 | 关闭则工具仍挂载，调用时报如何开启 |
-| URL 策略档位 | `public`（默认，拦私网/回环/云元数据）／`intranet`（放行本地/LAN，仍拦云元数据） |
-| 端口 / 令牌 / 截图目录 / registry 目录 | 监听与路径（改动重启本地桥） |
-| 云元数据端点拦截 | 主开关 + **拦截主机名列表** + **拦截 IP 列表**（整体替换内置默认；GUI 可「恢复内置默认」或「清空全部」） |
-
-### profile YAML（等价高级项，`cordis.patch.yml`）
+GUI: **Settings → Browser** (0.1.7+). Equivalent YAML in the profile's `cordis.patch.yml`:
 
 ```yaml
 - id: browser-bridge
   config:
     enabled: true
-    urlMode: public            # public | intranet
-    blockMetadata: true        # 云元数据拦截总开关
-    metadataHostnames: [metadata, metadata.google.internal, instance-data, instance-data.ec2.internal, metadata.azure.internal, metadata.tencentyun.com]
-    metadataIps: [169.254.169.254, 100.100.100.200, fd00:ec2::254]
-    registryDir: '<repo-dir>'   # 指向本仓库根（含 design/registry.json + upstream-baseline.json）；留空读包内 registry/
-    # port: 9777, token: dsh-local, shotsDir: dsh-browser-shots（默认即可）
+    urlMode: public      # public | intranet
+    blockMetadata: true
+    readOnly: false      # true = refuse every state-changing command before it is sent
+    allowScript: true    # false = no browser_evaluate
 ```
 
-云元数据端点语义：内置默认（AWS/GCP/Azure `169.254.169.254`、阿里 `100.100.100.200`、腾讯/阿里
-metadata hostname 等）**只是初始值**；两条列表一旦给出即整体替换（`[]` = 该族不拦），用于非
-三大云 / 自建 VPC 等场景的按需维护。`public` 档还有一条固定的默认主机黑名单（localhost /
-metadata 等）作为安全网，不受上述列表影响。
+Every field, its semantics and the validation rules:
+[packages/browser-unified-plugin/README.md](packages/browser-unified-plugin/README.md).
 
-## 模型可用能力
+## Tools
 
-| 工具 | 说明 |
-|---|---|
-| `browser_navigate / read / snapshot / click / type / press / scroll / tabs / evaluate` | 驱动真实浏览器（含登录态） |
-| `browser_screenshot / pdf / emulate` | 截图（落盘 shotsDir）、导出 PDF、设备视口模拟 |
-| `browser_cleanup` | 清理截图与 `__` 前缀临时产物 |
-| `browser_console_log / network_log / network_clear` | 页内 console / 网络请求观测 |
-| `browser_check_update` | 只读：上游相对开发基线是否有新提交（DRIFT / UP-TO-DATE / UNREACHABLE） |
-| `browser_design_show / browser_design_edit` | 读 / 受控改 `design/registry.json`（写必经审批，自动 `.bak`） |
+Navigation `browser_navigate` / `browser_wait` / `browser_read` / `browser_find` / `browser_snapshot`;
+interaction `browser_click` / `browser_type` / `browser_press` / `browser_scroll`;
+tabs and frames `browser_tabs` / `browser_frames` / `browser_frame_eval`;
+inspection `browser_console_log` / `browser_network_log` / `browser_network_clear` / `browser_screenshot` /
+`browser_pdf` / `browser_emulate` / `browser_permissions` / `browser_dialog` / `browser_evaluate`;
+session `browser_info` / `browser_launch` / `browser_hold`;
+housekeeping `browser_cleanup` / `browser_tools`;
+project registry `browser_check_update` / `browser_design_show` / `browser_design_edit` / `browser_issues`.
 
-导航类命令（`nav` / `tabs.open`）在发给扩展**之前**先过统一 `UrlPolicy`；被拦目标根本到不了浏览器。
+## Security model
 
-## 安全模型
+- **The real boundary is the loopback address plus the token** in the profile config. The agent can read and
+  rewrite that config, so the token separates you from other local processes — not from the agent.
+- **URL policy** — per-realm `allow` / `ask` / `deny` (internet, LAN, loopback), allow and deny host lists,
+  cloud-metadata blocking, and an approval prompt for unknown hosts.
+- **`readOnly` / `allowScript`** — refused commands never reach the browser, so they leave no side effects.
+- **Extension-side hard lock** — the popup's 「锁定」 freezes every browser command; only the popup can undo it.
+- **Take-over overlay** — `browser_hold` dims the page and shows what the model is doing; the user
+  double-clicks to take the page back, after which the model's click / input / press / nav on that tab are
+  refused until it turns the overlay off.
 
-- **URL 策略**（`src/url-policy.ts`，MIT 上游语义蒸馏）：public 档拦私网/回环/云元数据并做
-  resolve-then-validate DNS 复核；intranet 档有意放行本地/LAN，只保留元数据端点黑名单与用户黑名单。
-- **鉴权**：写入类操作（`browser_design_edit`、基线推进、源码变更）一律用户审批，fail-closed；
-  外部内容（上游 commit / README / 网页文本）只作数据、绝不充当指令或工具参数。
-- **已知边界（未实现里程碑）**：策略只拦“工具发起的导航”；页面自身 XHR / 重定向 / iframe /
-  WebSocket / DNS-rebinding 需扩展端逐请求拦截（design `de-005`）；`browser_evaluate` 尚无
-  `allowEval` 门控（`de-006`）；无 GUI 实时画面（`de-007`）。设计注册表见 `design/registry.json`。
+## Verified
 
-## 目录结构
+- `node tests/run-all.mjs` — 10 suites, 325 assertions, exit 0.
+- CI on every push and PR: all three packages build from a clean checkout, those suites run, and
+  `lib/client.js` is byte-identical to `client/client.js`.
+- Real-browser checks (headless Edge plus the extension under test) are manual; CI never runs a browser.
+
+## Layout
 
 ```
-dsh-browser-unified/
-├── README.md                    本文件
-├── NOTICE.md                    上游来源/版本/许可证归属矩阵
-├── upstream-baseline.json       开发基线：五上游归档日 commit SHA
-├── design/                      设计意图唯一书面出处
-│   ├── README.md                工具契约 / 威胁模型与鉴权 / 条目状态机
-│   └── registry.json            impactRules（单一事实源）/ tooling / authz / designEntries
-├── scripts/check-upstream.ps1   上游自检（只读）
-├── .github/workflows/ci.yml     CI：三包构建 + tests/ 全部套件（宿主侧，不碰真浏览器）
-├── tests/                       回归套件 10 套（323 项断言）+ run-all.mjs 汇总入口
-├── upstream/                    四个第三方上游原样快照（各自 LICENSE）+ 本项目前身的归档
-└── packages/
-    ├── browser-unified-core/    合并核心（AGPL）：url-policy / approval / bridge(收编) / guarded-bridge / self-update
-    ├── browser-unified-plugin/  dsh 插件壳（AGPL）：27 个 browser_* 工具 + 自更新三件套 + GUI「浏览器」设置分区
-    └── browser-unified-mit/     MIT 精简版（无桥、无驱动工具）
+packages/browser-unified-core/    AGPL core: url-policy / approval / bridge (vendored) / guarded-bridge
+packages/browser-unified-plugin/  dsh plugin: 31 tools, client half, GUI settings section
+packages/browser-unified-mit/     MIT edition (no bridge, no browser tools)
+extension/                        MV3 extension source
+design/registry.json              design entries, impact map, authorization policy
+upstream/                         third-party upstream snapshots, each with its own LICENSE
+tests/                            10 regression suites + run-all.mjs
 ```
 
-## 自动验证
+## Related projects
 
-两条线，别混在一起：
+- [caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control) — upstream bridge and MV3
+  extension this project vendors and extends (AGPL-3.0).
+- [dsh-intranet-browser](https://github.com/Short-Arm-Ape/dsh-intranet-browser) — this plugin's predecessor
+  (archived); the URL policy and approval layer started there.
+- [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) — the host.
+- [dsh-plugin.org](https://dsh-plugin.org/) — plugin hub; its install-failure report is where several
+  diagnostics in this README come from.
 
-| 层 | 跑什么 | 什么时候 |
-|---|---|---|
-| **CI**（GitHub Actions，ubuntu + node 22） | 三个包 `npm ci` + 构建（走仓库自己的 `build-pack`）+ `tests/` 全部 10 套（323 项断言）+ `lib/client.js` 与 `client/client.js` 字节一致 | 每次 push 到 main、每个 PR、手动触发 |
-| **本机台子**（Windows 真 Edge） | 只有它验得了的那层：浮层、硬锁、导航完成判定、div 化 SPA 元素识别 | 改扩展或改闸门时手动跑（做法见 `design/`） |
+## License
 
-本地一条命令：`node tests/run-all.mjs`（可带过滤词，例如 `node tests/run-all.mjs tool`）。
-每个套件都是独立进程、自己数断言、自己用退出码交代结果，所以 CI 里不需要额外的断言解析。
-
-CI **不**做的事（免得看到绿就以为能上线）：
-
-- **不跑真浏览器**：runner 上没有你的浏览器和已加载的扩展，「扩展装上去之后到底能不能点」它验不了；
-- **不打 Release**：`node scripts/build-release.mjs` 是本机发布流程（要真扩展 zip、要上传资产）。
-
-CI 里有两处不那么直觉、但必须这样的地方（YAML 里也写了注释）：
-
-1. `packages/browser-unified-plugin` 用裸包名 `import 'browser-unified-core'`，而 core **不是**它的 package.json 依赖（本地也是手工装的）。npm 不管这条链接，CI 里用一条 `ln -s` 复原同一布局；
-2. 构建走 `node scripts/build-pack.mjs --no-pack` 而不是裸 `tsc`：客户端那一半（`client/client.js → lib/client.js`）只有前者会复制，单跑 `tsc` 会让设置页测试读到旧文件。
-
-## 上游与许可
-
-| 归档 | 路线 | 浏览器 | 安全模型 | 并入 |
-|---|---|---|---|---|
-| `dsh-browser-xylt369` | 类型化 seam + Playwright | 插件另起 Edge | 四层 URL 守卫 | ✅ url-policy(public)/approval |
-| `dsh-intranet-browser-short-arm-ape`（**本项目前身**，非外部上游） | 上者内网分支 | 独立实例+profile | 元数据黑名单+逐次审批 | ✅ url-policy(intranet)/approval |
-| `dsh-browser-control-kyo615` | @playwright/mcp 子进程 | 另起 Chrome | 无 URL 校验 | ➖ 仅归档（live-view 候选） |
-| `dsh-browser-control-caob23` | 扩展+本地 WS 桥(CDP) | **用户真实浏览器** | 无 URL 校验（本插件已补） | ✅ bridge + GuardedBridge |
-| `dsh-agent-webops`（参考上游） | headless Edge(CDP) 独立实例 | 一次性临时 profile | 无 URL 校验（参考） | ➖ 归档参考（de-019；de-013/17 相关） |
-
-- **构建 / 验证**：`packages/browser-unified-core`、`browser-unified-plugin`、`browser-unified-mit`
-  各自 `npm run typecheck` / `npm run build`；插件用 `node scripts/build-pack.mjs`（tsc→lib，
-  client/client.js→lib/client.js，npm pack 到包根）。产物 `dsh-browser-unified-0.7.3.tgz`。
-- **上游自检**：`pwsh scripts/check-upstream.ps1 [-UpstreamId <id>] [-UpdateBaseline]`。
-  **只查 `role=merge` 的条目**（目前只有 caob23）—— `reference` 档只在决定接线某功能时翻归档取用，
-  不做定时自检（2026-10-13 起）。检出
-  DRIFT 后**必须先向你报告**“上游改了什么、影响哪些合并模块”，你确认后 agent 才 re-vendor +
-  合并 + typecheck；`-UpdateBaseline` 只推进 `merge` 档的基线 SHA。改动会写 `design/registry.json` 条目。
-- 安全红线：本机 git 缺 CA 时脚本内置 `-c http.sslBackend=openssl -c http.sslVerify=false`
-  （只读参数）；外部文本不得当指令执行。
-
-## 与上游功能差距
-
-（0.3.0 之后与四并入/候选上游逐项对比的差距清单：页面级请求拦截、allowEval 门控、GUI 实时画面、
-stealth / web-permission 授权 UI 等未实现项，见 `docs/gap-analysis.md`，条目状态在
-`design/registry.json`；`dsh-agent-webops` 为参考归档（非合并源），见 de-019。）详见对话产出的差距报告。
-
-## 许可
-
-- 合并核心与插件壳：**AGPL-3.0-only**（MIT 逻辑并入 AGPL 在法理上允许；caob23 源码行保留头部
-  版权与来源，`NOTICE.md` 为完整归属矩阵）。分发 / 提供网络服务须遵守 AGPL-3.0 第 13 条。
-- MIT 版：`packages/browser-unified-mit`。
+Plugin and core: **AGPL-3.0-only**, which includes code derived from `caob23/dsh-browser-control`.
+Per-upstream attribution, versions and license matrix: [NOTICE.md](NOTICE.md).
+The MIT edition is MIT-licensed and carries no upstream-derived code.

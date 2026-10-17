@@ -325,7 +325,7 @@ console.log('\n[8] 2026-10-09 修的模型可见契约（bi-015 / bi-016 / F-1 /
 		const names = paramNames('browser_wait')
 		check('browser_wait 有 selector/text/fn/timeoutMs',
 			['selector', 'text', 'fn', 'timeoutMs'].every((n) => names.includes(n)), names.join(','))
-		check('browser_wait 描述点明"超时 ≠ 页面没有内容"', /不等于/.test(waitTool.description))
+		check('browser_wait 描述点明"超时 ≠ 页面没有内容"', /not that the page is empty/.test(waitTool.description))
 	}
 	const navNames = paramNames('browser_navigate')
 	check('browser_navigate 支持 waitSelector/waitText/waitFn/waitTimeoutMs',
@@ -360,7 +360,7 @@ console.log('\n[8] 2026-10-09 修的模型可见契约（bi-015 / bi-016 / F-1 /
 	// bi-016：eval 超时旋钮
 	check('browser_evaluate 有 timeoutMs', paramNames('browser_evaluate').includes('timeoutMs'))
 	check('browser_evaluate 描述说明顶层 await 与"别写轮询"',
-		/顶层 `await`/.test(tools.get('browser_evaluate').description) && /browser_wait/.test(tools.get('browser_evaluate').description))
+		/top-level `await`/.test(tools.get('browser_evaluate').description) && /browser_wait/.test(tools.get('browser_evaluate').description))
 
 	// F-1：批量关页签
 	const tabNames = paramNames('browser_tabs')
@@ -372,9 +372,11 @@ console.log('\n[8] 2026-10-09 修的模型可见契约（bi-015 / bi-016 / F-1 /
 	}
 
 	// F-2：点击/输入的真实输入语义（自动置前 + 最小化限制）
+	// 2026-10-18：工具描述改为英文注入（与宿主一致），断言跟着查同样的三件事。
 	check('browser_click 描述点明自动置前与最小化限制',
-		/自动置前/.test(tools.get('browser_click').description) && /最小化/.test(tools.get('browser_click').description))
-	check('browser_type 描述同样点明置前/最小化', /置前/.test(tools.get('browser_type').description))
+		/brought to the front/.test(tools.get('browser_click').description) && /minimized/.test(tools.get('browser_click').description))
+	check('browser_type 描述同样点明置前/最小化',
+		/to the front/.test(tools.get('browser_type').description) && /minimized/.test(tools.get('browser_type').description))
 
 	// bi-014：snapshot 的 why 载荷要能到达模型
 	{

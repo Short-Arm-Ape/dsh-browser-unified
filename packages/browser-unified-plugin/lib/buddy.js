@@ -896,13 +896,7 @@ export function applyBuddyFeatures(options) {
     /* ------------------------------------------------------------------- tools */
     ctx.tools.register({
         name: 'browser_tools',
-        description: '浏览器工具面开关、桥状态与 JS 对话框策略：action=list 看当前常驻/已展开的 browser_* 工具；'
-            + 'action=enable 配合 group（interact|debug|session|frames|registry）展开一组，展开后这些工具才会进入后续步骤的工具面；'
-            + 'action=disable 收起一组；action=status 看桥端口/扩展连接/分层与自动拉起状态；action=probe 重新探测桥端口；'
-            + 'action=auto_launch 配合 value 开关「调用即自动拉起」（唤醒目标沿用「浏览器插件」分区的自动拉起配置）；'
-            + 'action=dialog 查看/设置 JS 对话框策略（policy=accept|dismiss|manual，persist=true 写进扩展持久偏好），'
-            + '或 answer=accept|dismiss 回答**当前已打开**的对话框（manual 档页面卡死时唯一的退路）。'
-            + '常驻只读工具（read/snapshot/screenshot）无需展开即可用。',
+        description: "Tool-surface switches, bridge status and the JS dialog policy. `list` shows resident and expanded tools; `enable` / `disable` with a group (interact / debug / session / frames / registry) expands or collapses one; `status` shows port, extension connection, layering and auto-launch; `probe` re-scans the port; `auto_launch` with `value` toggles launch-on-tool-use; `dialog` reads or sets the dialog policy (`policy` = accept / dismiss / manual, `persist:true` stores it in the extension) or `answer` answers the dialog that is open now. Resident read-only tools work without expanding anything.",
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -995,8 +989,7 @@ export function applyBuddyFeatures(options) {
     // 拍平同源子帧、并用 `frame` 指定单帧，所以这里只留宿主没有的两件：**列帧结构** 与 **在帧里求值**。
     ctx.tools.register({
         name: 'browser_frames',
-        description: '列出标签页的 frame 结构（老式 frameset 管理页必用）：每个 frame 的 index / name / src / url / 是否同源，并附一段文本预览。'
-            + '当 browser_read 只返回标题+URL（frameset 页面读不动）时，先调本工具看结构，再用 browser_frame_read 指定 frame 取正文。',
+        description: "List the tab's frame structure (needed for old frameset admin pages): index / name / src / url and same-origin flag per frame, plus a text preview. When browser_read returns only a title and URL (a frameset page it cannot read), look here first, then use browser_frame_eval on one frame.",
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -1026,8 +1019,7 @@ export function applyBuddyFeatures(options) {
     });
     ctx.tools.register({
         name: 'browser_frame_eval',
-        description: '在指定 frame 的 document/window 作用域里执行 JS（老管理页的表格/字段数据常只在某个 frame 内）。'
-            + '默认预算 15s（宿主自带的 browser_evaluate 早期默认只有 100ms，几乎必超时），可用 timeoutMs 覆盖。',
+        description: "Run JavaScript in a given frame's document / window scope (old admin pages often keep their tables and fields in one frame). Budget is 15s by default; `timeoutMs` overrides it.",
         parameters: {
             type: 'object',
             additionalProperties: false,

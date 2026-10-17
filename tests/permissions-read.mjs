@@ -189,7 +189,7 @@ check('全部无记录时不许说成"没有询问项"',
 	const definition = tools.get('browser_permissions')
 	check('apply() 后 browser_permissions 出现在工具面里', definition !== undefined)
 	check('描述里点明"只读"（不许让模型以为它会代答）',
-		String(definition?.description ?? '').includes('只读'))
+		/read-only/i.test(String(definition?.description ?? '')))
 	check('render 打的是完整载荷 text（不是只回计数 —— bi-001 的教训）',
 		definition?.output?.render(undefined, { text: 'PAYLOAD-XYZ' })?.[0]?.text === 'PAYLOAD-XYZ')
 }

@@ -848,7 +848,7 @@ function statusPageHtml(port: number): string {
   </div>
   <div class="hint">
     清理会删除截图目录下的全部文件，以及工作目录顶层的 __ 开头草稿脚本；<b>需要 Token</b>。
-    Token 不在本页内嵌（内嵌＝任何本机程序 GET / 就能拿到），只在 sessionStorage 里留到关页。
+    Token 不在本页内嵌，关闭页面清空。
   </div>
   <div class="pre"><code id="raw"> </code></div>
   <div class="foot">DSH Browser Bridge · 127.0.0.1:${port}</div>
