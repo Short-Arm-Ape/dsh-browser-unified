@@ -1,0 +1,4 @@
+dsh-agent-webops does not ship a LICENSE file in its repository; its package.json declares `"license": "MIT"`.
+
+Upstream: https://github.com/jonah791/dsh-agent-webops (pinned commit in ../../upstream-baseline.json)
+Used as a reference only: no code from this project is vendored into this repository.

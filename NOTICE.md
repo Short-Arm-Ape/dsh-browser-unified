@@ -1,11 +1,14 @@
 # NOTICE — 上游来源与许可证矩阵
 
-本仓库（dsh-browser-unified）归档了**四个第三方上游项目**（一个持续合并源，三个参考/未并入），
-外加**本项目前身** `dsh-intranet-browser`（主人自己的仓库，2026-10-10 已在 GitHub 归档只读）——
-它是本插件的上一代，不是外部上游。每个项目保持其自身的 `LICENSE` 文件与版权声明；下表为速查矩阵。
+本仓库（dsh-browser-unified）参考了**四个第三方上游项目**（一个持续合并源，三个参考/未并入），
+外加**本项目前身** `dsh-intranet-browser`（本项目作者的仓库，2026-10-10 已在 GitHub 归档只读）——
+它是本插件的上一代，不是外部上游。
+
+上游**源码不再随仓保存**：`upstream/` 下只留各项目的 `LICENSE`（及上游自带的第三方声明），
+快照取自哪个 commit 由 `upstream-baseline.json` 钉住，可按 SHA 重新获取。下表为归属速查矩阵。
 **合并/分发前请逐份阅读对应 LICENSE。**
 
-| #   | 归档路径（upstream/）                       | 项目 / 作者                             | 上游仓库                                                  | 归档版本                                | 许可证          | 角色 / 是否并入 browser-unified-core                                                          |
+| #   | 许可文件位置（upstream/）                   | 项目 / 作者                             | 上游仓库                                                  | 归档版本                                | 许可证          | 角色 / 是否并入 browser-unified-core                                                          |
 | --- | ------------------------------------- | ----------------------------------- | ----------------------------------------------------- | ----------------------------------- | ------------ | ------------------------------------------------------------------------------------- |
 | 1   | `dsh-browser-xylt369/`                | dsh-browser（xylt369）                | https://github.com/xylt369/dsh-browser                | 仓库 v0.1.0；包 @yeesy369/* 0.6.0–0.8.1 | MIT          | `reference`（本前身的上游根）✅ 已并入：url-policy 的分类器/守卫语义；**未并入**：stealth 反检测、web-permission 审批模型 |
 | 2   | `dsh-intranet-browser-short-arm-ape/` | dsh-intranet-browser（Short-Arm-Ape）**＝本项目前身** | https://github.com/Short-Arm-Ape/dsh-intranet-browser | 0.1.0（**2026-10-10 README 刷新**，`81df0d5`） | MIT          | **不是上游**（主人自己的仓库，已归档只读；2026-10-13 从基线除名）。✅ 已并入：url-policy 元数据黑名单/归一化、approval 决策表语义；未并入：de-005 逐请求 route 拦截 |
@@ -18,13 +21,13 @@
 `reference` = 只在决定接线某功能时翻归档取用（xylt369 的 stealth/审批模型、kyo615 的 GUI 实时画面、
 jonah791 的 headless/attach 路线），不做定时自检；前身这一行连 `repos[]` 都不进，只作来源记录。
 
-## 各归档内自带的第三方声明
+## `upstream/` 里保留了什么
 
-- `dsh-browser-xylt369/`：各包 README / THIRD-PARTY 按需（上游无集中 THIRD_PARTY 文件，见其包内声明）。
-- `dsh-intranet-browser-short-arm-ape/`：`THIRD-PARTY-LICENSES`（原样保留）。
-- `dsh-browser-control-kyo615/`：`THIRD_PARTY_NOTICES`（@playwright/mcp Apache-2.0、Playwright Apache-2.0、DSH MIT、Cordis MIT；原样保留）。
-- `dsh-browser-control-caob23/`：仓库内无集中第三方声明，LICENSE=AGPL-3.0。
-- `dsh-agent-webops/`：仓库内无集中第三方声明（README 自述 MIT），原样保留。
+- `dsh-browser-xylt369/`：`LICENSE`（上游无集中第三方声明，包内 `packages/browser-settings/LICENSE` 一并保留）。
+- `dsh-intranet-browser-short-arm-ape/`：`LICENSE` 与 `THIRD-PARTY-LICENSES`。
+- `dsh-browser-control-kyo615/`：`LICENSE` 与 `THIRD_PARTY_NOTICES`（@playwright/mcp Apache-2.0、Playwright Apache-2.0、DSH MIT、Cordis MIT）。
+- `dsh-browser-control-caob23/`：`LICENSE`（AGPL-3.0）。
+- `dsh-agent-webops/`：上游仓库没有 LICENSE 文件，其 `package.json` 声明 MIT；本仓库留一条 `LICENSE.txt` 说明该事实（未收编任何代码）。
 
 ## AGPL-3.0 合规说明
 
@@ -32,9 +35,10 @@ jonah791 的 headless/attach 路线），不做定时自检；前身这一行连
 AGPL-3.0-only**（其 LICENSE 文件为完整 AGPL-3.0 文本），并把 `@caob23/dsh-browser-control`
 （AGPL-3.0）的 `src/ws.ts`、`src/server.ts` 收编为 `src/bridge/ws.ts`、`src/bridge/server.ts`。
 
-1. `upstream/dsh-browser-control-caob23/` 以 AGPL-3.0 原样归档；并入 core 的收编文件头部
-   保留上游版权与来源（vendored from @caob23/dsh-browser-control v1.0.7；**v1.0.8 的安全强化
-   于 2026-10-10 并入同一文件，文件头同时记明**）。
+1. `upstream/dsh-browser-control-caob23/LICENSE` 保留 AGPL-3.0 全文，源码基线由
+   `upstream-baseline.json` 的 commit SHA 钉住；并入 core 的收编文件头部保留上游版权与来源
+   （vendored from @caob23/dsh-browser-control v1.0.7；**v1.0.8 的安全强化于 2026-10-10 并入
+   同一文件，文件头同时记明**）。
 2. 表中的 MIT 上游代码并入 AGPL 包合法（MIT 允许再授权）；分发时各文件出处以本表与
    文件头注释为准。
 3. **分发或提供网络服务（含 SaaS）时，整个衍生作品必须按 AGPL-3.0 第 13 条公开对应源代码**；

@@ -95,7 +95,7 @@ packages/browser-unified-plugin/  dsh plugin: 31 tools, client half, GUI setting
 packages/browser-unified-mit/     MIT edition (no bridge, no browser tools)
 extension/                        MV3 extension source
 design/registry.json              design entries, impact map, authorization policy
-upstream/                         third-party upstream snapshots, each with its own LICENSE
+upstream/                         upstream license texts only; sources are pinned by SHA in upstream-baseline.json
 tests/                            10 regression suites + run-all.mjs
 ```
 
@@ -114,3 +114,6 @@ tests/                            10 regression suites + run-all.mjs
 Plugin and core: **AGPL-3.0-only**, which includes code derived from `caob23/dsh-browser-control`.
 Per-upstream attribution, versions and license matrix: [NOTICE.md](NOTICE.md).
 The MIT edition is MIT-licensed and carries no upstream-derived code.
+
+Upstream sources are not vendored: `upstream/` keeps the license texts and `upstream-baseline.json`
+keeps one public repository plus commit SHA per upstream.

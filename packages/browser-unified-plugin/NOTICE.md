@@ -1,10 +1,11 @@
 # NOTICE — 上游来源与许可证矩阵
 
-本目录（dsh-browser-unified）归档了五个独立上游项目（四个并入合并产物，一个为参考归档）。
-每个项目保持其自身的 `LICENSE` 文件与版权声明；下表为速查矩阵。
+本目录（dsh-browser-unified）参考了五个独立上游项目（四个并入合并产物，一个为参考）。
+上游**源码不随包分发**：许可证正文与基线 commit SHA 在仓库的 `upstream/` 与
+`upstream-baseline.json` 里，可按 SHA 重新获取。下表为归属速查矩阵。
 **合并/分发前请逐份阅读对应 LICENSE。**
 
-| #   | 归档路径（upstream/）                       | 项目 / 作者                             | 上游仓库                                                  | 归档版本                                | 许可证          | 是否并入 browser-unified-core                                                             |
+| #   | 许可文件位置（upstream/）                   | 项目 / 作者                             | 上游仓库                                                  | 归档版本                                | 许可证          | 是否并入 browser-unified-core                                                             |
 | --- | ------------------------------------- | ----------------------------------- | ----------------------------------------------------- | ----------------------------------- | ------------ | ------------------------------------------------------------------------------------- |
 | 1   | `dsh-browser-xylt369/`                | dsh-browser（xylt369）                | https://github.com/xylt369/dsh-browser                | 仓库 v0.1.0；包 @yeesy369/* 0.6.0–0.8.1 | MIT          | ✅ 是（url-policy 的分类器/守卫语义；MIT 允许并入 AGPL 包）                                             |
 | 2   | `dsh-intranet-browser-short-arm-ape/` | dsh-intranet-browser（Short-Arm-Ape） | https://github.com/Short-Arm-Ape/dsh-intranet-browser | 0.1.0                               | MIT          | ✅ 是（url-policy 元数据黑名单/归一化、approval 决策表语义）                                             |
@@ -22,8 +23,9 @@
 
 ## AGPL-3.0 合规说明
 
-1. `upstream/dsh-browser-control-caob23/` 以 AGPL-3.0 原样归档；并入 core 的收编文件头部
-   保留上游版权与来源（vendored from @caob23/dsh-browser-control v1.0.7）。
+1. `upstream/dsh-browser-control-caob23/LICENSE` 保留 AGPL-3.0 全文，源码基线由仓库根
+   `upstream-baseline.json` 的 commit SHA 钉住；并入 core 的收编文件头部保留上游版权与来源
+   （vendored from @caob23/dsh-browser-control v1.0.7）。
 2. 表中的 MIT 上游代码并入 AGPL 包合法（MIT 允许再授权）；分发时各文件出处以本表与
    文件头注释为准。
 3. **分发或提供网络服务（含 SaaS）时，整个衍生作品必须按 AGPL-3.0 第 13 条公开对应源代码**；

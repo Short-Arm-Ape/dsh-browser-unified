@@ -6,8 +6,8 @@
 （DSH Browser Control 扩展 + 本地桥）给模型提供 27 个 `browser_*` 工具，前面统一加一层
 可配置的 URL 策略守卫，另附「上游自检 / 设计注册表」工具三件套与 GUI 设置分区。
 
-> 仓库 = `upstream/`（**四个第三方上游**原样归档，各自带 LICENSE；外加**本项目前身**
-> `dsh-intranet-browser` 的归档 —— 它是本插件的上一代，不是外部上游）+ `packages/`（合并产物）。
+> 仓库 = `packages/`（合并产物）+ `upstream/`（**只留许可正文**：四个第三方上游与前身项目各自的
+> `LICENSE`，源码基线由 `upstream-baseline.json` 的 commit SHA 钉住，可按 SHA 重新获取）。
 > 合并核心与插件壳整包以 **AGPL-3.0-only** 发布（含 [caob23/dsh-browser-control](https://github.com/caob23/dsh-browser-control) 桥收编代码，归属矩阵见 `NOTICE.md`）。
 
 ## 安装
@@ -124,7 +124,7 @@ dsh-browser-unified/
 ├── scripts/check-upstream.ps1   上游自检（只读）
 ├── .github/workflows/ci.yml     CI：三包构建 + tests/ 全部套件（宿主侧，不碰真浏览器）
 ├── tests/                       回归套件 10 套（325 项断言）+ run-all.mjs 汇总入口
-├── upstream/                    四个第三方上游原样快照（各自 LICENSE）+ 本项目前身的归档
+├── upstream/                    只留各上游的 LICENSE（+ 上游自带的第三方声明）；源码按 SHA 取
 └── packages/
     ├── browser-unified-core/    合并核心（AGPL）：url-policy / approval / bridge(收编) / guarded-bridge / self-update
     ├── browser-unified-plugin/  dsh 插件壳（AGPL）：27 个 browser_* 工具 + 自更新三件套 + GUI「浏览器」设置分区
