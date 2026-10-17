@@ -96,6 +96,23 @@ console.log('\n[5] 幂等：桥包一次、插件壳再包一次，code 不能�
 		&& first.toJSON().effectState === 'unknown')
 }
 
+// ---- 2026-10-17：hello 规范化（protocol 曾被漏拷，协商形同虚设）----
+{
+	const { normalizeHello } = core
+	check('normalizeHello 已导出', typeof normalizeHello === 'function')
+	const h1 = normalizeHello({ client: 'dsh-browser-extension', version: '1.0.22', protocol: 1, browser: { name: 'edge', version: '155', ua: 'x' }, extensionId: 'abc' })
+	check('protocol 被保留（这是修的那个洞）', h1.protocol === 1, JSON.stringify(h1))
+	check('extensionId 被保留', h1.extensionId === 'abc')
+	const h2 = normalizeHello({ client: 'c', version: 'v', browser: { name: 'n', version: '1', ua: '' } })
+	check('旧扩展不带 protocol ⇒ undefined（不是 0，状态面自己兜底）', h2.protocol === undefined)
+	check('protocol 非法类型被忽略',
+		normalizeHello({ protocol: 'one' }).protocol === undefined
+		&& normalizeHello({ protocol: -3 }).protocol === undefined
+		&& normalizeHello({ protocol: Number.NaN }).protocol === undefined)
+	check('protocol 小数被截断成整数', normalizeHello({ protocol: 1.9 }).protocol === 1)
+	check('缺 client/version 有兜底', normalizeHello({}).client === 'unknown' && normalizeHello({}).version === 'unknown')
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {

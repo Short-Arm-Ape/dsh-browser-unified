@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-14T14:50:00.000Z",
+  "lastUpdated": "2026-10-17T06:35:00.000Z",
   "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
   "baselineRef": "upstream-baseline.json",
   "tooling": {
@@ -1096,6 +1096,59 @@
         {
           "at": "2026-10-14T14:50:00.000Z",
           "what": "created + status -> applied（测试 10 套 284 项全绿；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-043",
+      "title": "设置页区分「存下来的值」与「正在生效的值」：桥把生效快照挂到 `/api/status`，页面据此显式提示\"改动需重启\"",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "core `BridgeServerOptions.describePolicy` + `BridgeServerStatus.policy`（`/api/status` 一起吐）；插件在 reconcile 时挂 `describePolicy`（读 `this.current`，不读闭包参数）；客户端 `stalePolicyKeys()` + 访问控制卡内的「有改动还没生效」提示条；「允许访问本 DSH 页面」说明改短",
+      "affectedModules": [
+        "tooling/core",
+        "tooling/client-ui",
+        "extension"
+      ],
+      "summary": "用户 2026-10-17 原话：「允许访问本 DSH 页面这一项要优化下」。现场是：设置页显示已开启、文件里 `dshAccessEnabled: true`，但运行中的桥仍是 false ⇒ 实际被 `WEB_DSH_DISABLED` 拒（根因是装机被回滚，见 bi-040）。优化分两半：① 桥把**生效值**一起报（新 core 字段 `policy`），页面拿它与存下来的值逐字段比对，不一致就在访问控制卡顶部弹琥珀提示条并列出**具体是哪几项**；桥没报生效值（旧插件/旧 core）时给灰色说明而不是装作没事；② 这一项的说明从\"五句长文\"改成两句：能做什么（模型可打开并操作控制页，含会话列表与审批界面）+ 可逆性（关闭即时生效、开启需二次确认）。",
+      "notes": [
+        "`dshOrigins` 刻意不参与比对：生效值里含宿主推导出来的控制页地址，与用户列表天然不同，比了会误报。",
+        "`blockMetadata` / `enabled` 缺省视为\"开\"，避免默认值造成假\"未生效\"。",
+        "顺带把探针上移到分区 body：原来「本地桥」行与生效值比对各扫一遍 10 个候选端口（测试里暴露成 20 次请求），现在一次扫描两处共用。",
+        "提示条不是替代修复：真修是 bi-040 的装机持久化；提示条负责\"再发生时你看得见\"。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T06:10:00.000Z",
+          "what": "created + applied（测试 10 套 298 项全绿；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-044",
+      "title": "标签分组**看得见**：`tabs.list` 回每个标签的 groupId/groupTitle/groupColor + 组一览，并支持 `groupTitle` 过滤",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "扩展 `cmdTabsList`（补分组归属 + `groups` 一览，`chrome.tabGroups.query` 一次批量）；插件 `browser_tabs` 的 list 渲染（行首 `[DSH]` 徽标 + 头部「分组：DSH（N 个标签）」）与 `groupTitle` 过滤参数；`tests/tool-render.mjs` 的 [12] 段",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "tooling/tests"
+      ],
+      "summary": "用户 2026-10-17 问「目前插件有分组功能吗？」，答：有（0.11.22 起 `tabs.group`/`tabs.ungroup`/开标签自动进 `DSH` 蓝色组），但 `tabs.list` 只回 id/url/title/active ⇒ **分组能做但看不见**（建了组也确认不了谁在组里，只能靠人眼看窗口顶部）。本条把\"看得见\"补上：扩展侧按标签补 `groupId/groupTitle/groupColor`（未归组的标签不加字段，保持紧凑），并回一份 `groups` 一览（id/title/color/windowId）；插件侧渲染成行首 `[DSH]` + 头部一行「分组：DSH（2 个标签）」，另加 `groupTitle` 参数只列某个组。",
+      "notes": [
+        "`group` 这个参数名已被 open 的布尔占用（`group: false` 不归组），所以 list 的过滤参数叫 **`groupTitle`** —— 同一工具里不混用两种类型。",
+        "真机核对（rig：真 Edge 155 + 真扩展 1.0.95 + 假桥）：`seg4-contract.mjs` **11/11** —— 开标签自动归组后 list 带 `groupTitle: DSH`（color=blue）、`tabs.group` 把已有标签拉进去后同样看得见（两个标签同 groupId）、`ungroup` 后字段消失且**标签页数不变**、未归组标签不带字段。",
+        "分组的\"能做\"与\"看得见\"现在闭环；`ungroup` 依旧只解除归属、不关标签。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T06:35:00.000Z",
+          "what": "created + applied（测试 10 套 302 项全绿，rig 契约 11/11；0.11.24 + 扩展 1.0.22 已装机，待重启/重载）"
         }
       ]
     }

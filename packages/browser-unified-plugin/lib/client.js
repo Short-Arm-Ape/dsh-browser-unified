@@ -135,7 +135,10 @@ window.__ModuleLoader__.load({
 				modeAsk: '需审批',
 				modeDeny: '拒绝',
 				dshItem: '允许访问本 DSH 页面',
-				dshItemDesc: '本机控制页地址由宿主自动识别（端口变了也跟着变）；关闭（默认）时它会被拒绝，开启后放行（即使 public 档也放行并跳过域审批）。额外地址可先登记再生效；开启需二次确认。',
+				dshItemDesc: '开启后模型可以打开并操作本机 DSH 控制页（含你的会话列表与审批界面）。关闭时一律拒绝；关闭即时生效，开启需二次确认。',
+				staleTitle: '有改动还没生效',
+				staleBody: '下面这些值已经保存，但运行中的桥还是旧的 —— 重启 dsh web 后生效：',
+				staleBridgeDown: '桥没报出生效值（插件或 core 版本较旧），无法确认这些改动是否已生效。',
 				dshConfirmTitle: '二次确认：允许模型访问本 DSH 控制页',
 				dshConfirmBody: '模型能操作浏览器，若它也访问本控制页，理论上可自行与页面交互（含你的会话内容与审批界面）。请仅在需要模型调试 DSH 自身时开启；开启后仍受 denyHosts/元数据等红线约束。',
 				dshConfirmOk: '仍然开启（我已了解风险）',
@@ -252,7 +255,10 @@ window.__ModuleLoader__.load({
 				modeAsk: 'Ask',
 				modeDeny: 'Deny',
 				dshItem: 'Allow access to this DSH page',
-				dshItemDesc: 'The local control page is identified automatically by the host (it follows a port change); it is refused while this is OFF (default) and allowed once ON (even under public mode, skipping realm approvals). Extra addresses can be listed before they take effect; enabling needs a second confirmation.',
+				dshItemDesc: 'When ON, the model can open and operate this machine\'s DSH control page (your session list and approval UI included). It is always refused while OFF; turning OFF applies instantly, turning ON needs a second confirmation.',
+				staleTitle: 'Saved changes are not in force yet',
+				staleBody: 'These values are saved, but the running bridge still uses the old ones — restart dsh web to apply:',
+				staleBridgeDown: 'The bridge did not report its in-force policy (older plugin or core), so these changes cannot be verified.',
 				dshConfirmTitle: 'Second confirmation: let the model access this DSH control page',
 				dshConfirmBody: 'The model drives this browser; if it can also visit this control page it may in theory interact with the page itself, including your session content and approval surfaces. Turn this on only to debug DSH itself; denyHosts / metadata red lines still apply.',
 				dshConfirmOk: 'Enable anyway (I understand the risk)',
@@ -641,6 +647,8 @@ window.__ModuleLoader__.load({
 					port: port,
 					extensionConnected: body.extensionConnected === true,
 					extensionVersion: body.hello && typeof body.hello.version === 'string' ? body.hello.version : null,
+					// 运行中**生效**的策略快照（core 0.1.7 起随 /api/status 一起给）
+					policy: body.policy && typeof body.policy === 'object' ? body.policy : null,
 				})
 			}, function () { return done(null) })
 		}
@@ -672,6 +680,41 @@ window.__ModuleLoader__.load({
 			return value.length > 0 && value.length <= 253 && !/[\s/\\@?#\u0000-\u001f\u007f]/.test(value)
 		}
 
+		/**
+		 * 「存下来的值」vs「运行中生效的值」：返回改了但**还没生效**的字段名。
+		 *
+		 * 为什么需要（2026-10-17）：用户在设置页开了「允许访问本 DSH 页面」，文件里是 true、
+		 * 页面也显示已开，但运行中的桥还是旧策略 ⇒ 实际仍被 `WEB_DSH_DISABLED` 拒。
+		 * 光显示"存下来的值"等于骗人，所以桥会把生效快照吐到 `/api/status`（`policy`），这里比对。
+		 * `dshOrigins` 刻意不比：生效值里含宿主推导出来的控制页地址，与用户列表天然不同。
+		 */
+		function stalePolicyKeys(stored, policy) {
+			if (!policy || typeof policy !== 'object') return []
+			var flagKeys = ['enabled', 'dshAccessEnabled', 'blockMetadata']
+			var plainKeys = ['internetAccess', 'lanAccess', 'localAccess', 'askMode']
+			var listKeys = ['allowHosts', 'denyHosts']
+			var out = []
+			var i
+			for (i = 0; i < flagKeys.length; i += 1) {
+				var fk = flagKeys[i]
+				var want = fk === 'blockMetadata' || fk === 'enabled' ? (stored && stored[fk] !== false) : (stored && stored[fk] === true)
+				var got = fk === 'dshAccessEnabled' ? policy[fk] === true : policy[fk] !== false
+				if (want !== got) out.push(fk)
+			}
+			for (i = 0; i < plainKeys.length; i += 1) {
+				var pk = plainKeys[i]
+				var a = stored ? stored[pk] : undefined
+				if (a !== policy[pk]) out.push(pk)
+			}
+			for (i = 0; i < listKeys.length; i += 1) {
+				var lk = listKeys[i]
+				var la = Array.isArray(stored && stored[lk]) ? stored[lk].slice().join('\u0001') : ''
+				var lb = Array.isArray(policy[lk]) ? policy[lk].slice().join('\u0001') : ''
+				if (la !== lb) out.push(lk)
+			}
+			return out
+		}
+
 		/** 并行探 10 个候选端口（起始端口 +0..+9，与插件/扩展同构），返回命中的桥或 null。 */
 		function probeBridge(basePort) {
 			var jobs = []
@@ -683,22 +726,9 @@ window.__ModuleLoader__.load({
 		}
 
 		/** 「本地桥」状态行：探测结果 + 重新探测。只读，不改任何设置。 */
+		/** 「本地桥」状态行：纯展示 —— 探针由 body 统一持有（一次扫描两处共用）。 */
 		function BridgeStatus(props) {
-			var state = useState({ phase: 'loading', found: null, nonce: 0 })
-			var snap = state[0]
-			var setSnap = state[1]
-			React.useEffect(function () {
-				if (!pageIsLocal()) {
-					setSnap({ phase: 'remote', found: null, nonce: snap.nonce })
-					return undefined
-				}
-				var cancelled = false
-				setSnap({ phase: 'loading', found: null, nonce: snap.nonce })
-				probeBridge(props.basePort).then(function (found) {
-					if (!cancelled) setSnap({ phase: 'ready', found: found, nonce: snap.nonce })
-				})
-				return function () { cancelled = true }
-			}, [props.basePort, snap.nonce])
+			var snap = props.probe
 
 			var text = t('probeLabel') + '：'
 			var color = T.label3
@@ -724,10 +754,7 @@ window.__ModuleLoader__.load({
 						? createElement('div', { style: { marginTop: '2px', fontSize: '12px', lineHeight: '16px', color: T.label3 } }, t('probeNoneHint'))
 						: null,
 				),
-				createElement('button', {
-					onClick: function () { setSnap({ phase: snap.phase, found: snap.found, nonce: snap.nonce + 1 }) },
-					style: btnBase,
-				}, t('probeRetry')),
+				createElement('button', { onClick: props.onRetry, style: btnBase }, t('probeRetry')),
 			)
 		}
 
@@ -823,6 +850,10 @@ window.__ModuleLoader__.load({
 			var capsuleState = useState(null)
 			var capsule = capsuleState[0]
 			var setCapsule = capsuleState[1]
+			// 探桥结果由 body 统一持有：「本地桥」行与「生效值比对」共用**一次**扫描（原来两处各扫一遍）。
+			var probeState = useState({ phase: 'loading', found: null, nonce: 0 })
+			var probe = probeState[0]
+			var setProbe = probeState[1]
 			var capsuleTimer = useRef(null)
 			// 卸载守卫：复验轮询最多跑 1.5s，但期间用户可能切走页面 —— 卸载后一律不再 setState。
 			var aliveRef = useRef(true)
@@ -859,6 +890,9 @@ window.__ModuleLoader__.load({
 					if (outcome === 'wait') { window.setTimeout(step, 60); return }
 					if (outcome === 'saved') showCapsule('ok', t('savedToast'))
 					else if (outcome === 'pending') showCapsule('warn', t('writePending') + '（' + field + '）')
+					// 无论 saved 还是 pending 都重探一次生效值：saved 时确认它真的进策略了，
+					// pending 时让"未生效"提示条把这一项列出来。
+					setProbe(function (prev) { return { phase: 'loading', found: prev.found, nonce: prev.nonce + 1 } })
 					// 'noop'：选了个跟原来一样的值，确实没改 —— 不打扰
 				}
 				step()
@@ -915,6 +949,49 @@ window.__ModuleLoader__.load({
 			var metaIps = Array.isArray(value.metadataIps) ? value.metadataIps : []
 			var basePort = typeof value.port === 'number' ? value.port : 9777
 
+			React.useEffect(function () {
+				if (!pageIsLocal()) {
+					setProbe({ phase: 'remote', found: null, nonce: probe.nonce })
+					return undefined
+				}
+				var cancelled = false
+				probeBridge(basePort).then(function (found) {
+					if (!cancelled) setProbe({ phase: 'ready', found: found, nonce: probe.nonce })
+				})
+				return function () { cancelled = true }
+			}, [basePort, probe.nonce])
+
+			// 只认桥自己报的生效值；桥没连上/没给 policy 时**不**下"已生效"的结论（宁可不说）
+			var effPolicy = probe.phase === 'ready' && probe.found !== null && probe.found.policy ? probe.found.policy : null
+			var staleKeys = effPolicy !== null ? stalePolicyKeys(value, effPolicy) : []
+			var fieldLabel = function (key) {
+				if (key === 'enabled') return t('enabled')
+				if (key === 'dshAccessEnabled') return t('dshItem')
+				if (key === 'internetAccess') return t('realmInternet')
+				if (key === 'lanAccess') return t('realmLan')
+				if (key === 'localAccess') return t('realmLocal')
+				if (key === 'askMode') return '受限态 ask 策略'
+				if (key === 'blockMetadata') return t('blockMetadata')
+				if (key === 'allowHosts') return '白名单'
+				if (key === 'denyHosts') return '黑名单'
+				return key
+			}
+			var noPolicyNote = probe.phase === 'ready' && probe.found !== null && probe.found.policy === null
+				? createElement('div', { style: { margin: '0 0 10px', fontSize: '12px', lineHeight: '18px', color: T.label3 } },
+					t('staleBridgeDown'))
+				: null
+			var staleBanner = staleKeys.length === 0 ? null : createElement('div', {
+				style: {
+					margin: '2px 0 12px', padding: '10px 12px', borderRadius: '12px',
+					border: '1px solid ' + T.warn,
+					background: 'color-mix(in srgb, ' + T.warn + ' 10%, transparent)',
+				},
+			},
+				createElement('div', { style: { fontSize: '13px', fontWeight: 600, color: T.warn } }, t('staleTitle')),
+				createElement('div', { style: { marginTop: '3px', fontSize: '12px', lineHeight: '18px', color: T.label2 } },
+					t('staleBody') + staleKeys.map(fieldLabel).join('、')),
+			)
+
 			var statusRow = null
 			if (busy !== null) {
 				var statusText = busy === 'saving'
@@ -931,7 +1008,10 @@ window.__ModuleLoader__.load({
 				{ style: sectionStyle },
 				createElement('p', { style: introStyle }, t('intro')),
 				createElement('span', { style: pillStyle }, t('idBadge')),
-				createElement(BridgeStatus, { basePort: basePort }),
+				createElement(BridgeStatus, {
+					probe: probe,
+					onRetry: function () { setProbe({ phase: 'loading', found: probe.found, nonce: probe.nonce + 1 }) },
+				}),
 				createElement(FoldCard, { id: 'general', title: t('general') },
 					createElement(Row, {
 						title: t('enabled'),
@@ -944,6 +1024,8 @@ window.__ModuleLoader__.load({
 					),
 				),
 				createElement(FoldCard, { id: 'access', title: t('access'), subtitle: t('accessSub') },
+					staleBanner,
+					noPolicyNote,
 					realmRow({ title: t('realmInternet'), key: 'internetAccess', tempKey: 'internetTemp', realm: 'internet', value: value, setField: setField }),
 					realmRow({ title: t('realmLan'), key: 'lanAccess', tempKey: 'lanTemp', realm: 'lan', value: value, setField: setField }),
 					realmRow({ title: t('realmLocal'), key: 'localAccess', tempKey: 'localTemp', realm: 'local', value: value, setField: setField }),
@@ -1186,7 +1268,7 @@ window.__ModuleLoader__.load({
 		exports.apply = apply
 		exports.inject = inject
 		// 单测入口（纯函数；见 tests/render-settings-pages.mjs 的 [胶囊] 段）
-		exports.__test = { writeOutcome: writeOutcome, sameValue: sameValue, validHostEntry: validHostEntry }
+		exports.__test = { writeOutcome: writeOutcome, sameValue: sameValue, validHostEntry: validHostEntry, stalePolicyKeys: stalePolicyKeys }
 		return module.exports
 	},
 })

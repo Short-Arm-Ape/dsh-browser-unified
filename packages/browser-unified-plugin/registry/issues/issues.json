@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-10-14T14:35:00.000Z",
+  "lastUpdated": "2026-10-17T07:00:00.000Z",
   "purpose": "浏览器插件的**第二部分注册表：调用时的问题**（第一部分 registry/design/registry.json 记「功能对齐与计划」，本文件记「实际调用时踩到的坑」）。用法：模型在某会话里首次调用 browser_* 时会收到 open 问题的绕行摘要（+ 自上次调用以来已修复的问题告知）；完整内容只在调用 browser_issues 时输出，避免每轮占 token。",
   "fields": {
     "status": "open（仍存在，必须给 workaround）| fixed（已修，写 fixedIn）| wontfix（不修，写原因）",
@@ -1010,6 +1010,52 @@
         {
           "at": "2026-10-14T14:20:00.000Z",
           "what": "created（合并本次撞号时发现）"
+        }
+      ]
+    },
+    {
+      "id": "bi-040",
+      "title": "「装机」不是持久的：profile 按 `package.json` 里的 `file:` tgz 重新解包，会把手工解包的新版本**静默回滚**",
+      "status": "fixed",
+      "fixedIn": "流程（2026-10-17）",
+      "firstSeen": "2026-10-17",
+      "symptom": "2026-10-14 22:28 手工把 core 0.1.6 + 插件 0.11.22 解包进 `~/.dsh/profiles/web/node_modules/`，重启后验证过 hot-update 生效。10-17 发现装机目录又变回 **core 0.1.5 + 插件 0.11.21**（lib 构建时间 10-13 23:00），`loader/volatile-update` 订阅消失 ⇒ 改「允许访问本 DSH 页面」不生效、仍报 `WEB_DSH_DISABLED`。",
+      "evidence": "`~/.dsh/profiles/web/package.json` 的 dependencies 写的是 `dsh-browser-unified: file:…/vendor/dsh-browser-unified-0.11.21.tgz`、`browser-unified-core: file:…/vendor/…-0.1.5.tgz`；而 `node_modules/dsh-browser-unified` 与 `package.json` 的 mtime 都是 2026-10-17 13:20（有一次 profile 重装）⇒ 只要 profile 被重新解析/安装，就按声明的 tgz 覆盖回旧版。手工覆盖文件从没改过声明，所以不持久。",
+      "workaround": "（已修）装机三步走：① 新 tgz 放进 `~/.dsh/profiles/web/vendor/`；② 改 `package.json` 的 dependencies 指向新文件名；③ 再解包（或让 profile 重装）。只做第 ③ 步等于临时覆盖。装完核 `package.json` 版本 + `lib/` 里是否含本轮新代码。",
+      "tags": [
+        "install",
+        "profile",
+        "vendor-tarball",
+        "regression",
+        "durability"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T06:10:00.000Z",
+          "what": "status -> fixed（0.11.23 起按 vendor+package.json 装；本次已按此流程装好）"
+        }
+      ]
+    },
+    {
+      "id": "bi-041",
+      "title": "帧协议协商形同虚设：桥在 hello 落库时**漏拷 `protocol`**，`extensionProtocol` 恒为 0",
+      "status": "fixed",
+      "fixedIn": "core 0.1.8（插件 0.11.25 起）",
+      "firstSeen": "2026-10-17",
+      "symptom": "`browser_info` 一直显示「协议：桥 v1 / 扩展 **v0**（对得上）」，而扩展 1.0.21+ 明明在 hello 里声明了 `protocol: 1`（部署件与 rig 的 hello 帧都能验到 1）。⇒ 0.11.22 移植进来的协议协商从来没真正生效过。",
+      "evidence": "实测 `curl 127.0.0.1:9777/api/status`：`hello.version=1.0.22` 但 `hello.protocol=null`、`extensionProtocol=0`；而扩展源码/部署件 `background.js` 只有一处发 hello，且带 `protocol: PROTOCOL_VERSION`（=1），`send()` 是裸 `JSON.stringify`。根因在桥侧：`handleExtensionFrame` 把 hello **逐字段手抄**进 `this.hello`，抄的时候漏了 `protocol`。",
+      "workaround": "（已修）hello 规范化成纯函数 `normalizeHello(msg)`（含 protocol 校验：整数、>=0、非法忽略），落库直接用它的结果。旧版本上：`extensionProtocol` 一律当 0 看待，别据此判断扩展够不够新。",
+      "tags": [
+        "protocol",
+        "hello",
+        "negotiation",
+        "silent",
+        "core"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T07:00:00.000Z",
+          "what": "created + fixed（`error-contract` 增 7 项断言：protocol 保留 / 缺省 undefined / 非法忽略 / 小数截断 / 兜底）"
         }
       ]
     }

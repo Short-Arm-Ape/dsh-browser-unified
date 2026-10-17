@@ -997,14 +997,28 @@ async function cmdTabsList(params) {
 		await ensureWindow('tabs.list?ensureWindow=1');
 		tabs = await chrome.tabs.query({}).catch(() => []);
 	}
-	// Compact shape (id/url/active/title only): the bridge serializes this
-	// straight into a tool result and wide shapes were truncating mid-JSON.
+	// 分组归属（2026-10-17）：原来只回 id/url/title/active —— 分组**能做但看不见**（建了组也确认不了
+	// 某个标签在不在组里）。这里补上每个标签的 groupId/groupTitle/groupColor，外加当前窗口全部组的
+	// 一览。仍然保持"紧凑"：只在有组时多三个字段，未归组的标签不多占字节。
+	const groups = tabGroupsAvailable() ? await chrome.tabGroups.query({}).catch(() => []) : [];
+	const groupById = new Map(groups.map((g) => [g.id, g]));
+	// Compact shape: the bridge serializes this straight into a tool result and
+	// wide shapes were truncating mid-JSON.
 	return {
 		count: tabs.length,
 		windows: await windowCount(),
 		noWindow: tabs.length === 0,
 		activeTabId: tabs.find((t) => t.active)?.id,
-		tabs: tabs.map((t) => ({ id: t.id, url: t.url, title: t.title, active: t.active })),
+		groups: groups.map((g) => ({ id: g.id, title: g.title ?? '', color: g.color, windowId: g.windowId })),
+		tabs: tabs.map((t) => {
+			const grouped = typeof t.groupId === 'number' && t.groupId >= 0 && groupById.has(t.groupId);
+			return {
+				id: t.id, url: t.url, title: t.title, active: t.active,
+				...(grouped
+					? { groupId: t.groupId, groupTitle: groupById.get(t.groupId)?.title ?? '', groupColor: groupById.get(t.groupId)?.color }
+					: {}),
+			};
+		}),
 	};
 }
 
