@@ -479,13 +479,13 @@ function withBudget(promise, ms, fallback) {
 
 /**
  * 归一导航等待口径。`none` = 不等待；`commit` = 地址落地即回；
- * `domcontentloaded`（默认）= DOM 可用即回；`load` = 老行为（等 `load`）。
+ * `load`（默认，与上游行为一致）= 等 `load` 事件；`domcontentloaded` = DOM 可用即回（更快，元素可能还没挂上）。
  * 认不出的值按默认口径处理 —— 模型写错不该让导航变慢或报错。
  */
 function navWaitMode(value) {
 	const text = String(value ?? '').toLowerCase();
 	if (text === 'none' || text === 'commit' || text === 'load' || text === 'domcontentloaded') return text;
-	return 'domcontentloaded';
+	return 'load';
 }
 
 /**
@@ -1332,7 +1332,7 @@ async function cmdNav(params) {
 	// 带上目标网址：万一此刻没有任何窗口，自愈建出来的窗口直接落在它上面（bi-022）
 	const tab = await resolveTab(params.tabId, params.url);
 	// 「等多久」交给调用方选（2026-10-23 主人：让模型可以不等待页面加载）。
-	// 默认 domcontentloaded：DOM 一可用就回，内容晚到再用 waitSelector/waitText/waitFn 或 read 复查。
+	// 默认 load（2026-10-30 与上游对齐）：要更快由调用方显式传 domcontentloaded / commit / none。
 	const waitUntil = params.wait === false ? 'none' : navWaitMode(params.waitUntil);
 	const timeoutMs = navBudget(waitUntil, params.timeoutMs);
 	// 用户按过「中止操作」时，导航也一并拦下（中止＝别再动这个页面）

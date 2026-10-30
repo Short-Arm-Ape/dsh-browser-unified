@@ -1903,12 +1903,12 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 
 	ctx.tools.register(defineTool({
 		name: 'browser_navigate',
-		description: "Navigate a tab to a URL and return as soon as the DOM is usable (`waitUntil` defaults to \"domcontentloaded\"; pass \"load\" only when the page really must finish loading). SPAs and micro-frontends often render after this call returns, so a title is not the same as content: if the text you read straight afterwards is empty or very short, read again with browser_read before drawing conclusions. To settle in one call, pass `waitSelector` / `waitText` / `waitFn`; the server then polls until the condition holds. A timeout does not fail the call - the result carries `waitTimedOut: true`.",
+		description: "Navigate a tab to a URL and wait for the page load to settle (`waitUntil` defaults to \"load\", the same semantics as Playwright; pass \"domcontentloaded\" for pages whose DOM is usable before subresources arrive — faster, but elements may not be mounted yet, so follow with browser_wait; \"commit\" returns when the URL lands; \"none\" returns immediately). SPAs and micro-frontends often render after this call returns, so a title is not the same as content: if the text you read straight afterwards is empty or very short, read again with browser_read before drawing conclusions. To settle in one call, pass `waitSelector` / `waitText` / `waitFn`; the server then polls until the condition holds. A timeout does not fail the call - the result carries `waitTimedOut: true`.",
 		parameters: {
 			url: { type: 'string', required: true, description: 'Absolute URL to open in the tab.' },
 			tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
-			waitUntil: { type: 'string', description: '"domcontentloaded" (default) returns as soon as the DOM is usable; "commit" returns when the URL lands (page may still be loading); "none" returns immediately; "load" waits for the full load event (slow). Prefer the default and read/wait afterwards instead of blocking here.' },
-			timeoutMs: { type: 'number', description: 'Budget for the load wait (default 15000; ignored when waitUntil is "none").' },
+			waitUntil: { type: 'string', description: '"load" (default) waits for the full load event; "domcontentloaded" returns as soon as the DOM is usable, which is faster but the elements you want may not be mounted yet — follow with browser_wait instead of retrying blind; "commit" returns when the URL lands (page still loading); "none" returns immediately.' },
+			timeoutMs: { type: 'number', description: 'Budget for the navigation wait: default 15000 with waitUntil "load", 4000 with "commit"/"domcontentloaded", ignored with "none". An explicit value always wins.' },
 			waitSelector: { type: 'string', description: 'After navigating, wait until this CSS selector exists (e.g. ".sku-plus, a[href*=goods]").' },
 			waitText: { type: 'string', description: 'After navigating, wait until document.body.innerText contains this text.' },
 			waitFn: { type: 'string', description: 'After navigating, wait until this JS predicate is truthy (function or bare boolean expression; e.g. "window.rawData !== null").' },
@@ -1951,7 +1951,7 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					? ` — 页面**仍在加载**${typeof value.pendingUrl === 'string' && value.pendingUrl.length > 0 ? ` ${value.pendingUrl}` : ''}`
 						+ (value.waitUntil === 'load'
 							? `（等待预算内没等到 load）：别单次采样就下结论，用 browser_wait 等条件或稍后复查`
-							: `（已按 ${String(value.waitUntil ?? 'domcontentloaded')} 口径返回，DOM 还没到 complete）：要等具体内容用 browser_wait 的 selector/text/fn，或稍后 browser_read 复查`)
+							: `（已按 ${String(value.waitUntil ?? 'load')} 口径返回，DOM 还没到 complete）：要等具体内容用 browser_wait 的 selector/text/fn，或稍后 browser_read 复查`)
 					: ''
 				// `waitedMs` 有两种来源：导航等待与 waitSelector/waitText/waitFn 的条件等待。
 				// 只有后者配得上"等待条件成立"——否则会把"导航等了 15s"说成"条件成立"（2026-10-23 真机踩到）。

@@ -673,13 +673,23 @@ async function testNavigationWaitModes() {
 		ok('commit：远快于预算（<1500ms）', res.waitedMs < 1500, String(res.waitedMs))
 	}
 
-	// ③ domcontentloaded（默认）：readyState 一变成 interactive 就回
+	// ③ 默认口径 = load（2026-10-30 与上游对齐；domcontentloaded 变成显式选项）
+	{
+		const { ctx, fake } = await makeNavWorker()
+		fake.setReadyState('complete')
+		const res = await ctx.cmdNav({ url: 'https://new.example/', tabId: 7 })
+		eq('默认口径是 load', res.waitUntil, 'load')
+		eq('load：回显 readyState', res.readyState, 'complete')
+		ok('load：整页加载完才算到达', res.loadPending === undefined, JSON.stringify(res))
+	}
+
+	// ③b 显式 domcontentloaded：readyState 一变成 interactive 就回（元素可能还没挂上）
 	{
 		const { ctx, fake } = await makeNavWorker()
 		fake.setReadyState('interactive')
 		fake.setNavState({ status: 'loading' }) // 还在 loading，但 DOM 已可用
-		const res = await ctx.cmdNav({ url: 'https://new.example/', tabId: 7 })
-		eq('默认口径是 domcontentloaded', res.waitUntil, 'domcontentloaded')
+		const res = await ctx.cmdNav({ url: 'https://new.example/', tabId: 7, waitUntil: 'domcontentloaded' })
+		eq('domcontentloaded：口径回显', res.waitUntil, 'domcontentloaded')
 		eq('domcontentloaded：回显 readyState', res.readyState, 'interactive')
 		ok('domcontentloaded：DOM 可用即回（不等 load）', res.loadPending === true, JSON.stringify(res))
 	}
@@ -689,7 +699,7 @@ async function testNavigationWaitModes() {
 		const { ctx, fake } = await makeNavWorker()
 		fake.setReadyState('complete')
 		const res = await ctx.cmdNav({ url: 'https://new.example/', tabId: 7, waitUntil: 'whenever' })
-		eq('非法 waitUntil ⇒ domcontentloaded', res.waitUntil, 'domcontentloaded')
+		eq('非法 waitUntil ⇒ load（默认口径）', res.waitUntil, 'load')
 	}
 
 	// ④b 同站重定向/刷新回到同一个地址（bing.com ↔ cn.bing.com）：地址启发式会等满预算，
@@ -710,7 +720,7 @@ async function testNavigationWaitModes() {
 	// ⑤ 默认预算：非 load 口径 4s、load 仍 15s；显式 timeoutMs 优先（黑洞目标不再干等 15 秒）
 	{
 		const { ctx } = await loadWorker(() => ({ result: { value: '' } }))
-		eq('default 预算 = 4000ms（domcontentloaded）', ctx.navBudget('domcontentloaded', undefined), 4000)
+		eq('domcontentloaded 预算 = 4000ms（显式时才用它）', ctx.navBudget('domcontentloaded', undefined), 4000)
 		eq('commit 预算 = 4000ms', ctx.navBudget('commit', undefined), 4000)
 		eq('none 预算 = 0', ctx.navBudget('none', undefined), 0)
 		eq('load 预算仍 15000ms', ctx.navBudget('load', undefined), 15000)
