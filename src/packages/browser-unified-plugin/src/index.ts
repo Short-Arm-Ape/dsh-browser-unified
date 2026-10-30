@@ -32,6 +32,7 @@ import { applyUnifiedTools, currentPluginVersion, loadIssues } from './unified-t
 // 原 dsh-browser-buddy 的能力（de-036 合并）：工具面分层 / 状态注入 / 调用即唤醒 / 登记簿送达
 // + browser_tools / browser_frames / browser_frame_eval。
 import { applyBuddyFeatures } from './buddy.js'
+import { navBridgeTimeout } from './nav-budget.js'
 import { CONTENT_SETTING, DEFAULT_PERMISSION_POLICY_ENTRIES, chromiumTime, readOriginPermissions, readPermissionStore, readPermissionStoreTolerant, type PermissionReading } from './permissions.js'
 import {
 	brandIdFromHelloName,
@@ -1212,7 +1213,7 @@ class BridgeController {
 		return this.current?.readOnly === true
 	}
 
-	async execute(command: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
+	async execute(command: string, params: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown> {
 		if (BridgeController.SCRIPT_COMMANDS.has(command) && this.current?.allowScript === false) {
 			throw classify(command, new Error(
 				`脚本执行已关闭：命令 ${command} 被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型执行任意脚本 关着）。`
@@ -1233,7 +1234,8 @@ class BridgeController {
 		}
 		if (BridgeController.HOLD_MODE_COMMANDS.has(command)) await this.syncHoldMode(guarded, signal)
 		try {
-			return await guarded.execute(command, params, { signal })
+			// timeoutMs 只在调用方显式给时才覆盖桥默认值（导航要用：见 nav-budget.ts）
+			return await guarded.execute(command, params, timeoutMs === undefined ? { signal } : { signal, timeoutMs })
 		} catch (error) {
 			// 第二道收口（core 的桥是第一道）：把失败翻译成模型能读的"该不该重试"。
 			// classify 幂等，已被分类过的原样返回；策略错误（UrlPolicyError）单独归类成
@@ -1975,7 +1977,7 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 			if (args.tabId !== undefined) params.tabId = args.tabId
 			if (typeof args.waitUntil === 'string' && args.waitUntil.length > 0) params.waitUntil = args.waitUntil
 			if (typeof args.timeoutMs === 'number') params.timeoutMs = Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs)))
-			const raw = await controller.execute('nav', params, exec.signal) as {
+			const raw = await controller.execute('nav', params, exec.signal, navBridgeTimeout(args.waitUntil, args.timeoutMs)) as {
 				tabId: number
 				title?: string
 				url?: string
@@ -2642,7 +2644,9 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					const params: Record<string, unknown> = { url: args.url }
 					if (args.active !== undefined) params.active = args.active
 					if (args.group === false) params.group = false
-					return await controller.execute('tabs.open', params, exec.signal) as Record<string, JsonValue>
+					// 开标签页同样会等导航落地（扩展侧默认 load、15s）：把同样的预算 + 余量告诉桥，
+					// 否则慢站返回的是桥超时而不是"页面还在加载"。
+					return await controller.execute('tabs.open', params, exec.signal, navBridgeTimeout(undefined, undefined)) as Record<string, JsonValue>
 				}
 				case 'close': {
 					// 单页签：保持老语义（tabId）。

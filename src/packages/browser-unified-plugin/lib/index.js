@@ -29,6 +29,7 @@ import { applyUnifiedTools, currentPluginVersion, loadIssues } from './unified-t
 // 原 dsh-browser-buddy 的能力（de-036 合并）：工具面分层 / 状态注入 / 调用即唤醒 / 登记簿送达
 // + browser_tools / browser_frames / browser_frame_eval。
 import { applyBuddyFeatures } from './buddy.js';
+import { navBridgeTimeout } from './nav-budget.js';
 import { CONTENT_SETTING, DEFAULT_PERMISSION_POLICY_ENTRIES, chromiumTime, readOriginPermissions, readPermissionStoreTolerant } from './permissions.js';
 import { brandIdFromHelloName, exeCandidates, hostStyle, locateExtensionProfile, profileDisplayName, profileHasExtension, splitProfilePath, toLinuxPath, } from './browser-profiles.js';
 // Schema shapes below are the same ones the upstream plugin shipped and the
@@ -993,7 +994,7 @@ class BridgeController {
     isReadOnly() {
         return this.current?.readOnly === true;
     }
-    async execute(command, params, signal) {
+    async execute(command, params, signal, timeoutMs) {
         if (BridgeController.SCRIPT_COMMANDS.has(command) && this.current?.allowScript === false) {
             throw classify(command, new Error(`脚本执行已关闭：命令 ${command} 被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型执行任意脚本 关着）。`
                 + '读取、点击、输入、导航都不受影响；要放开请让主人打开那一项。'));
@@ -1009,7 +1010,8 @@ class BridgeController {
         if (BridgeController.HOLD_MODE_COMMANDS.has(command))
             await this.syncHoldMode(guarded, signal);
         try {
-            return await guarded.execute(command, params, { signal });
+            // timeoutMs 只在调用方显式给时才覆盖桥默认值（导航要用：见 nav-budget.ts）
+            return await guarded.execute(command, params, timeoutMs === undefined ? { signal } : { signal, timeoutMs });
         }
         catch (error) {
             // 第二道收口（core 的桥是第一道）：把失败翻译成模型能读的"该不该重试"。
@@ -1679,7 +1681,7 @@ function applyBrowserTools(ctx, controller, getConfig) {
                 params.waitUntil = args.waitUntil;
             if (typeof args.timeoutMs === 'number')
                 params.timeoutMs = Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs)));
-            const raw = await controller.execute('nav', params, exec.signal);
+            const raw = await controller.execute('nav', params, exec.signal, navBridgeTimeout(args.waitUntil, args.timeoutMs));
             const out = { tabId: raw.tabId };
             if (typeof raw.url === 'string')
                 out.url = raw.url;
@@ -2335,7 +2337,9 @@ function applyBrowserTools(ctx, controller, getConfig) {
                         params.active = args.active;
                     if (args.group === false)
                         params.group = false;
-                    return await controller.execute('tabs.open', params, exec.signal);
+                    // 开标签页同样会等导航落地（扩展侧默认 load、15s）：把同样的预算 + 余量告诉桥，
+                    // 否则慢站返回的是桥超时而不是"页面还在加载"。
+                    return await controller.execute('tabs.open', params, exec.signal, navBridgeTimeout(undefined, undefined));
                 }
                 case 'close': {
                     // 单页签：保持老语义（tabId）。
