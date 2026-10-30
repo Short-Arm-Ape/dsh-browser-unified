@@ -1,0 +1,17 @@
+[2026-10-17T06:00:48.520Z] rig stub listening on 0.0.0.0:9781 (ws /ws, pages /fast /slow, ctl /ctl/state /ctl/cmd)
+[2026-10-17T06:01:40.204Z] GET /fast -> FAST-900204
+[2026-10-17T06:01:40.505Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T06:01:40.514Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UD1","version":"1.0.95","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T06:01:46.338Z] CTL tabs.open {"url":"http://localhost:9781/fast"}
+[2026-10-17T06:01:46.370Z] GET /fast -> FAST-906370
+[2026-10-17T06:01:46.585Z] CTL tabs.open -> elapsed=247ms ok=true {"tabId":1278871275,"url":"http://localhost:9781/fast","title":"FAST-906370","grouped":true,"groupId":42198088,"created":true}
+[2026-10-17T06:01:46.590Z] CTL tabs.list {}
+[2026-10-17T06:01:46.598Z] CTL tabs.list -> elapsed=8ms ok=true {"count":2,"windows":1,"noWindow":false,"activeTabId":1278871275,"groups":[{"id":42198088,"title":"DSH","color":"blue","windowId":1278871272}],"tabs":[{"id":1278871274,"url":"http://localhost:9781/fast","title":"FAST-900204","active":false},{"id":1278871275,"url":"http://localhost:9781/fast","title":"FAST-906370","active":true,"groupId":42198088,"groupTitle":"DSH","groupColor":"blue"}]}
+[2026-10-17T06:01:46.603Z] CTL tabs.group {"tabId":1278871274}
+[2026-10-17T06:01:46.610Z] CTL tabs.group -> elapsed=7ms ok=true {"tabId":1278871274,"grouped":true,"groupId":42198088,"created":false}
+[2026-10-17T06:01:46.614Z] CTL tabs.list {}
+[2026-10-17T06:01:46.619Z] CTL tabs.list -> elapsed=5ms ok=true {"count":2,"windows":1,"noWindow":false,"activeTabId":1278871275,"groups":[{"id":42198088,"title":"DSH","color":"blue","windowId":1278871272}],"tabs":[{"id":1278871274,"url":"http://localhost:9781/fast","title":"FAST-900204","active":false,"groupId":42198088,"groupTitle":"DSH","groupColor":"blue"},{"id":1278871275,"url":"http://localhost:9781/fast","title":"FAST-906370","active":true,"groupId":421
+[2026-10-17T06:01:46.622Z] CTL tabs.ungroup {}
+[2026-10-17T06:01:46.627Z] CTL tabs.ungroup -> elapsed=5ms ok=true {"ungrouped":2,"groups":1}
+[2026-10-17T06:01:46.632Z] CTL tabs.list {}
+[2026-10-17T06:01:46.636Z] CTL tabs.list -> elapsed=3ms ok=true {"count":2,"windows":1,"noWindow":false,"activeTabId":1278871275,"groups":[],"tabs":[{"id":1278871274,"url":"http://localhost:9781/fast","title":"FAST-900204","active":false},{"id":1278871275,"url":"http://localhost:9781/fast","title":"FAST-906370","active":true}]}

@@ -1,0 +1,721 @@
+diff -ru extension.bak-20260925/background.js extension/background.js
+--- a/background.js	2026-09-22 22:47:59.000000000 +0800
++++ b/background.js	2026-09-28 17:00:54.294603349 +0800
+@@ -11,6 +11,10 @@
+  *                  {type:'result', id, ok, result|error}
+  *   bridge -> ext: {type:'ping', t}
+  *                  {type:'command', id, command, params}
++ *
++ * 端口发现：不再只认一个写死的端口。连接前按 [用户设置端口, 上次命中端口,
++ * 9777..9786] 依次用 `GET /api/status` 探测本地桥（该端点带 CORS 头、无需 token），
++ * 命中即用之——桥换端口、或候选端口被别的程序占用时，扩展自动跟随。
+  */
+ 'use strict';
+ 
+@@ -19,12 +23,22 @@
+ const MAX_BACKOFF_MS = 30_000;
+ const DEFAULT_PORT = 9777;
+ const DEFAULT_TOKEN = 'dsh-local';
++/** 端口发现：在 [DEFAULT_PORT, DEFAULT_PORT+PORT_SCAN_COUNT) 里找桥。 */
++const PORT_SCAN_BASE = DEFAULT_PORT;
++const PORT_SCAN_COUNT = 10;
++/** 单个候选端口的探测超时；10 个候选最坏 ~4s，之后交给退避重连。 */
++const PROBE_TIMEOUT_MS = 400;
+ 
+-/** Stored config shape (version 2): {port, token, autoConnect}. */
++/** Stored config shape (version 4): {port, token, autoConnect, lastKnownPort, dialogPolicy}. */
+ const DEFAULT_CONFIG = Object.freeze({
+ 	port: DEFAULT_PORT,
+ 	token: DEFAULT_TOKEN,
+ 	autoConnect: true,
++	/** 上一次探测命中的端口（由扩展自己维护，用户不必手填）。 */
++	lastKnownPort: null,
++	/** JS 对话框（alert/confirm/prompt）的默认处理：accept=自动确定、dismiss=自动取消、manual=不处理。
++	 *  这是**用户偏好**，持久化在 chrome.storage.local；运行时可用 `dialog` 命令临时覆盖。 */
++	dialogPolicy: 'accept',
+ });
+ 
+ let cfg = { ...DEFAULT_CONFIG };
+@@ -35,6 +49,12 @@
+ let heartbeatTimer = null;
+ let helloInfo = null;
+ let lastError = null;
++/** 本次 service worker 生命周期内探测到的桥端口；连接断开后失效以便重新探测。 */
++let discoveredPort = null;
++/** 探测过程的可读说明（popup 展示：扫了哪些候选、命中哪个、为什么没命中）。 */
++let lastProbeNote = null;
++/** 防止心跳/alarm/消息并发触发多次端口扫描。 */
++let connectInFlight = false;
+ /** True after the user clicks 断开连接 in the popup; blocks auto-reconnect
+  *  until they click 立即连接 again. Reset on browser restart. */
+ let manualDisconnect = false;
+@@ -78,12 +98,21 @@
+ 		delete stored.serverUrl;
+ 	}
+ 	cfg = { ...DEFAULT_CONFIG, ...stored };
++	// v3→v4: 对话框默认行为持久化在 storage 里，启动时套用（运行时可被 dialog 命令临时覆盖）。
++	applyDialogPolicy(cfg.dialogPolicy);
++}
++
++/** 套用一档对话框策略（非法值忽略）；返回实际生效的值。 */
++function applyDialogPolicy(value) {
++	if (value === 'accept' || value === 'dismiss' || value === 'manual') dialogPolicy = value;
++	return dialogPolicy;
+ }
+ 
+ chrome.storage.onChanged.addListener((changes, area) => {
+ 	if (area !== 'local') return;
+ 	for (const [key, change] of Object.entries(changes)) {
+ 		if (key in DEFAULT_CONFIG) cfg[key] = change.newValue;
++		if (key === 'dialogPolicy') applyDialogPolicy(change.newValue);
+ 	}
+ });
+ 
+@@ -119,14 +148,102 @@
+ 	reconnectTimer = setTimeout(connect, delay);
+ }
+ 
+-function connect() {
++/* --------------------------------------------------------- port discovery */
++
++/**
++ * 候选端口顺序：用户设置的端口 → 上次命中的端口 → 9777..9786。
++ * 去重并过滤非法值；顺序即优先级。
++ */
++function portCandidates() {
++	const out = [];
++	const push = (port) => {
++		const n = Number(port);
++		if (!Number.isInteger(n) || n < 1024 || n > 65535) return;
++		if (!out.includes(n)) out.push(n);
++	};
++	push(cfg.port);
++	push(cfg.lastKnownPort);
++	for (let i = 0; i < PORT_SCAN_COUNT; i += 1) push(PORT_SCAN_BASE + i);
++	return out;
++}
++
++/**
++ * 探测一个端口上是不是 DSH 桥：`GET /api/status`（该端点自带 CORS 头、不需要 token，
++ * 所以能区分“没有桥”和“token 不对”——后者会走到 WS 握手才失败）。
++ * @returns {Promise<{port:number, extensionConnected:boolean}|null>}
++ */
++async function probeBridge(port) {
++	const controller = new AbortController();
++	const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
++	try {
++		const res = await fetch(`http://127.0.0.1:${port}/api/status`, {
++			signal: controller.signal,
++			cache: 'no-store',
++		});
++		if (!res.ok) return null;
++		const body = await res.json();
++		if (body && body.ok === true && typeof body.port === 'number'
++			&& typeof body.wsUrl === 'string' && body.wsUrl.includes('/ws')
++			&& 'extensionConnected' in body) {
++			return { port, extensionConnected: body.extensionConnected === true };
++		}
++		return null;
++	} catch {
++		return null;
++	} finally {
++		clearTimeout(timer);
++	}
++}
++
++/**
++ * 依次探测候选端口，命中即记住（并持久化为 lastKnownPort，供下次优先尝试）。
++ * @returns {Promise<number|null>} 命中的端口，全部未命中则 null。
++ */
++async function discoverBridge() {
++	const candidates = portCandidates();
++	const tried = [];
++	for (const port of candidates) {
++		const hit = await probeBridge(port);
++		tried.push(hit ? `${port}✓` : `${port}✗`);
++		if (hit) {
++			discoveredPort = port;
++			lastProbeNote = `扫描 ${candidates[0]} 起：命中 ${port}（第 ${tried.length} 个候选；${tried.join(' ')}）`;
++			if (cfg.lastKnownPort !== port) {
++				cfg.lastKnownPort = port;
++				try { await chrome.storage.local.set({ lastKnownPort: port }); } catch { /* 存储失败不影响本次连接 */ }
++			}
++			return port;
++		}
++	}
++	discoveredPort = null;
++	lastProbeNote = `扫描 ${candidates.length} 个候选全部未命中：${tried.join(' ')}（桥可能未启用，或 dsh 侧端口不在此范围内）`;
++	return null;
++}
++
++async function connect() {
+ 	if (wsState === 'open' || wsState === 'connecting') return;
+ 	clearTimeout(reconnectTimer);
+ 	if (manualDisconnect || !cfg.autoConnect) return;
++	if (connectInFlight) return;
++
++	connectInFlight = true;
++	setState('connecting');
++	let port = discoveredPort;
++	try {
++		if (port === null) port = await discoverBridge();
++	} finally {
++		connectInFlight = false;
++	}
++	if (port === null) {
++		lastError = lastProbeNote ?? '未找到本地桥';
++		setState('idle');
++		scheduleReconnect();
++		return;
++	}
+ 
+ 	let url;
+ 	try {
+-		url = new URL(`ws://127.0.0.1:${cfg.port}/ws`);
++		url = new URL(`ws://127.0.0.1:${port}/ws`);
+ 	} catch (err) {
+ 		lastError = `端口无法解析: ${err.message}`;
+ 		setState('idle');
+@@ -134,7 +251,6 @@
+ 	}
+ 	url.searchParams.set('token', cfg.token);
+ 
+-	setState('connecting');
+ 	let sock;
+ 	try {
+ 		sock = new WebSocket(url.toString());
+@@ -164,6 +280,8 @@
+ 		if (sock !== ws) return;
+ 		stopHeartbeat();
+ 		ws = null;
++		// 桥可能换了端口：下一次重连重新探测（lastKnownPort 仍会优先尝试）。
++		discoveredPort = null;
+ 		setState('idle');
+ 		scheduleReconnect();
+ 	};
+@@ -228,16 +346,62 @@
+ 
+ /* ------------------------------------------------------------ tab helpers */
+ 
++/**
++ * 浏览器里**有没有窗口**。
++ *
++ * 为什么要单独判：Edge 关掉所有窗口后仍会在后台驻留（启动增强 / 后台扩展），
++ * 此时扩展照样连着桥、`hello` 也正常，但 `chrome.tabs.query({})` 返回空 ⇒ 所有
++ * "操作当前标签页"类命令全部失败（历史上表现为宿主报 `No current window` 或
++ * `chrome_tabs_list` 回 0 个标签页）。**进程活着 ≠ 有可操作的窗口**。
++ */
++async function windowCount() {
++	try {
++		const wins = await chrome.windows.getAll({});
++		return Array.isArray(wins) ? wins.length : 0;
++	} catch {
++		return 0;
++	}
++}
++
++/**
++ * 确保有一个可操作的窗口：没有窗口就新建一个（about:blank）。
++ * 这是"唤起"的正确含义。仅在**确实没有任何窗口**时才新建，绝不干扰已有窗口。
++ * @param reason 触发来源，写进 SW 日志便于回溯。
++ * @returns 新建/复用的标签页，以及是否发生了新建。
++ */
++async function ensureWindow(reason) {
++	try {
++		const existing = await chrome.tabs.query({});
++		if (existing.length > 0) {
++			return { created: false, tab: existing.find((t) => t.active) || existing[0] };
++		}
++	} catch { /* query 本身在无窗口时也可能抛，落到下面新建 */ }
++	const win = await chrome.windows.create({ url: 'about:blank', focused: true });
++	let tab = Array.isArray(win.tabs) ? win.tabs[0] : undefined;
++	if (tab === undefined && win.id !== undefined) {
++		const inWin = await chrome.tabs.query({ windowId: win.id });
++		tab = inWin[0];
++	}
++	console.log(`[dsh-bridge] ensureWindow(${reason}): 之前没有任何窗口，已新建 windowId=${win.id} tabId=${tab && tab.id}`);
++	return { created: true, tab };
++}
++
+ async function resolveTab(tabId) {
+ 	if (tabId !== undefined && tabId !== null) {
+ 		const tab = await chrome.tabs.get(tabId);
+ 		return tab;
+ 	}
+-	const [focused] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
++	let focused;
++	try {
++		[focused] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
++	} catch { focused = undefined; }
+ 	if (focused) return focused;
+ 	const all = await chrome.tabs.query({});
+ 	if (all.length > 0) return all[0];
+-	throw new Error('no tab available');
++	// 没有任何窗口：按需唤起一个，而不是直接报错（否则关掉 Edge 窗口后整个桥就废了）。
++	const { tab } = await ensureWindow('resolveTab');
++	if (tab) return tab;
++	throw new Error('no tab available，且新建窗口失败（浏览器可能不允许后台创建窗口）');
+ }
+ 
+ function waitTabComplete(tabId, timeoutMs) {
+@@ -614,17 +778,47 @@
+ 	return { client: 'dsh-browser-extension', version: EXT_VERSION, browser: helloInfo };
+ }
+ 
+-async function cmdTabsList() {
+-	const tabs = await chrome.tabs.query({});
++async function cmdTabsList(params) {
++	let tabs = [];
++	try {
++		tabs = await chrome.tabs.query({});
++	} catch { tabs = []; }
++	const windows = await windowCount();
++	// params.ensureWindow === true 时顺带唤起（显式要求才做，list 默认保持只读语义）。
++	if (tabs.length === 0 && windows === 0 && params && params.ensureWindow === true) {
++		await ensureWindow('tabs.list?ensureWindow=1');
++		tabs = await chrome.tabs.query({}).catch(() => []);
++	}
+ 	// Compact shape (id/url/active/title only): the bridge serializes this
+ 	// straight into a tool result and wide shapes were truncating mid-JSON.
+ 	return {
+ 		count: tabs.length,
++		windows: await windowCount(),
++		noWindow: tabs.length === 0,
+ 		activeTabId: tabs.find((t) => t.active)?.id,
+ 		tabs: tabs.map((t) => ({ id: t.id, url: t.url, title: t.title, active: t.active })),
+ 	};
+ }
+ 
++/**
++ * 显式唤起一个可操作的窗口（命令名 `window.ensure`）：已有窗口则什么都不做。
++ * 与 `browser_launch`（起浏览器进程）互补 —— 进程活着但没有窗口时，需要的是这个。
++ */
++async function cmdEnsureWindow(params) {
++	const before = await windowCount();
++	const { created, tab } = await ensureWindow(String((params && params.reason) || 'window.ensure'));
++	const after = await windowCount();
++	return {
++		created,
++		windowsBefore: before,
++		windowsAfter: after,
++		tabId: tab && tab.id,
++		url: tab && tab.url,
++		title: tab && tab.title,
++		note: created ? '此前没有任何窗口，已新建 about:blank 窗口' : '已有窗口，未新建',
++	};
++}
++
+ async function cmdTabsOpen(params) {
+ 	if (!params.url) throw new Error('params.url is required');
+ 	const created = await chrome.tabs.create({
+@@ -701,6 +895,25 @@
+ 		const argValues = params.args.map((a) => JSON.stringify(a)).join(', ');
+ 		expression = `((${params.argNames.join(', ')}) => { ${params.expression} })(${argValues})`;
+ 	}
++	if (params.frame !== undefined && params.frame !== null && String(params.frame).length > 0) {
++		// 按 frame 的 name / #序号 / url 子串定位（老式 frameset 里通常只有 name）。
++		const spec = String(params.frame);
++		// 包装语义（2026-09-25 修）：以前一律 `(() => { EXPR })()`，裸表达式（如
++		// `JSON.stringify(...)`）因为没有 return 会**静默返回 undefined**。现在没写 return 的
++		// 按表达式处理（`return (EXPR)`），写了 return 的按语句体处理。
++		const inner = /\breturn\b/.test(expression)
++			? `(() => { ${expression} })()`
++			: `(() => { return (${expression}); })()`;
++		expression = `(() => {
++			${FRAME_HELPER}
++			const frames = listFrames(document, [], 0);
++			const target = pickFrame(frames, ${JSON.stringify(spec)});
++			if (!target) throw new Error('frame not found: ' + ${JSON.stringify(spec)} + ' (候选: ' + frames.map((f, i) => f.name || f.url || ('#' + i)).join(', ') + ')');
++			if (!target.doc) throw new Error('frame 是跨域的，无法直接 eval: ' + (target.name || target.src));
++			const doc = target.doc, win = target.doc.defaultView;
++			return ((document, window) => ${inner})(doc, win);
++		})()`;
++	}
+ 	if (params.frameSelector) {
+ 		const inner = expression.startsWith('(') ? expression : `(() => { ${expression} })()`;
+ 		// Rebind document/window to the frame by passing them as parameters of
+@@ -719,7 +932,11 @@
+ 	// params.timeoutMs races the evaluation: a hung awaitPromise (looping
+ 	// promise, blocked page) must fail at the caller's budget instead of
+ 	// riding the bridge-wide 60s default.
+-	const evalTimeoutMs = Math.min(120_000, Math.max(100, Number(params.timeoutMs) || 0)) || null;
++	// 默认预算：以前写成 `Math.max(100, Number(params.timeoutMs) || 0)`，未传 timeoutMs 时
++	// 等于 100ms —— 而宿主从不传 timeoutMs，于是**每次 eval 都被 100ms 掐死**（实测连一句
++	// JSON.stringify 都报 `eval timeout after 100ms`，因为 CDP 附加本身就超 100ms）。
++	// 现在默认 15s，与其它命令一致；仍可用 params.timeoutMs 覆盖。
++	const evalTimeoutMs = Math.min(120_000, Math.max(100, Number(params.timeoutMs) || 15_000));
+ 	const raceTimeout = (ms) => new Promise((_, reject) => setTimeout(() => {
+ 		const err = new Error(`eval timeout after ${ms}ms`);
+ 		err.code = 'eval_timeout';
+@@ -795,23 +1012,161 @@
+ 	return { tabId: tab.id, value: out, valueType: value.type };
+ }
+ 
++/**
++ * CDP `exceptionDetails` → 可读文本。
++ *
++ * 以前只取 `.text`，而 CDP 对页面内抛错常常只给 "Uncaught"，真正的错误信息在
++ * `exception.description`（读老页面时正是最需要看到它的时候）。
++ */
++function pageExceptionText(details) {
++	if (!details) return 'unknown exception';
++	const exception = details.exception;
++	const parts = [];
++	if (exception && typeof exception.description === 'string') parts.push(exception.description);
++	else if (exception && typeof exception.value === 'string') parts.push(exception.value);
++	if (typeof details.text === 'string' && parts.indexOf(details.text) < 0) parts.push(details.text);
++	return parts.join(' — ') || 'unknown exception';
++}
++
++/**
++ * Injected helper (runs in the page): depth-first frame walk + frame picking.
++ *
++ * 存在的理由：老式管理页（路由器/光猫/交换机）大量使用 <frameset>。那种页面
++ * **没有 document.body**，所以 `document.body.innerText` 恒为空——顶层读出来只有
++ * 标题和 URL（实测 20 字符）。这里把 frame 枚举出来，同源帧的 document 就能直接取。
++ */
++const FRAME_HELPER = `
++	const listFrames = (doc, out, depth) => {
++		if (!doc || depth > 3 || out.length > 40) return out;
++		let els = [];
++		try { els = [...doc.querySelectorAll('frame,iframe')]; } catch (e) { return out; }
++		for (const el of els) {
++			let d = null;
++			try { d = el.contentDocument || null; } catch (e) { d = null; }
++			let url = '';
++			try { url = d ? d.location.href : ''; } catch (e) { url = ''; }
++			out.push({ el, doc: d, name: el.name || el.id || '', src: el.getAttribute('src') || '', url });
++			if (d) listFrames(d, out, depth + 1);
++		}
++		return out;
++	};
++	const pickFrame = (frames, spec) => {
++		if (spec === null || spec === undefined || spec === '') return null;
++		const s = String(spec);
++		if (/^#?\\d+$/.test(s)) return frames[Number(s.replace('#', ''))] || null;
++		return frames.find((f) => f.name === s) || frames.find((f) => f.src.indexOf(s) >= 0)
++			|| frames.find((f) => f.url.indexOf(s) >= 0) || null;
++	};
++	const textOf = (doc) => (doc && doc.body ? (doc.body.innerText || doc.body.textContent || '') : '');
++	const htmlOf = (doc) => (doc && doc.documentElement ? doc.documentElement.outerHTML : '');
++	const frameLabel = (f, i) => (f.name || f.url || f.src || ('frame' + i));
++`;
++
++/**
++ * 构造 `content` 要注入页面的脚本（抽成独立函数，便于 `content.debug` 原样 dump 诊断）。
++ *
++ * ⚠️ 踩坑记录（2026-09-25，血泪）：**模板字面量内部绝不能出现反引号**——哪怕是在注释里。
++ * 我曾在模板内写注释时用反引号强调 frameset 标签，那个反引号直接终止了模板字面量，
++ * 其后的文字被当作代码解析，结果 `content` / `content.debug` 一律抛
++ * `ReferenceError: frameset is not defined`；而 `node --check` 依旧通过，因为同一行里
++ * 那对反引号又把模板"重新打开"，整体括号仍然平衡——所以静态检查抓不到。
++ */
++function buildContentScript(mode, frameSpec, flatten) {
++	return `(() => {
++		${FRAME_HELPER}
++		const frames = listFrames(document, [], 0);
++		const meta = frames.map((f, i) => ({ index: i, name: f.name, src: f.src, url: f.url, sameOrigin: !!f.doc }));
++		const one = (doc) => (${JSON.stringify(mode)} === 'html' ? htmlOf(doc) : textOf(doc));
++		const target = pickFrame(frames, ${JSON.stringify(frameSpec)});
++		if (${JSON.stringify(frameSpec)} !== null) {
++			if (!target) throw new Error('frame not found: ' + ${JSON.stringify(frameSpec)} + ' (候选: ' + meta.map((m) => m.name || m.url || ('#' + m.index)).join(', ') + ')');
++			if (!target.doc) throw new Error('frame 是跨域的，无法直接读: ' + (target.name || target.src || ('#' + target.index)));
++			return JSON.stringify({ title: target.doc.title, url: target.doc.location.href, readyState: target.doc.readyState,
++				content: one(target.doc), frames: meta, readFrame: ${JSON.stringify(frameSpec)} });
++		}
++		const own = one(document);
++		// 判据：老页面常在 frameset 文档里夹 noframes/脚本文本，顶层并不为空（UTT 750W 实测 882 字符），
++		// 所以"顶层非空"不能当作不拍平的理由。可靠信号是文档里存在 frameset 元素。
++		const hasFrameset = document.getElementsByTagName('frameset').length > 0;
++		if (${JSON.stringify(flatten)} && frames.length > 0 && (hasFrameset || own.trim().length === 0)) {
++			const parts = [];
++			if (own.trim().length > 0) parts.push('[document]\\n' + own.trim());
++			frames.forEach((f, i) => {
++				const label = '[' + frameLabel(f, i) + ']';
++				if (!f.doc) { parts.push(label + ' (跨域帧，无法直接读取；可用 browser_frames 看结构)'); return; }
++				const body = one(f.doc).trim();
++				parts.push(label + (body.length > 0 ? '\\n' + body : ' (空)'));
++			});
++			return JSON.stringify({ title: document.title, url: location.href, readyState: document.readyState,
++				content: parts.join('\\n\\n'), frames: meta, flattenedFrames: frames.length, hasFrameset });
++		}
++		return JSON.stringify({ title: document.title, url: location.href, readyState: document.readyState, content: own, frames: meta });
++	})()`;
++}
++
+ async function cmdContent(params) {
+ 	const mode = params.mode === 'html' ? 'html' : 'text';
+ 	const tab = await resolveTab(params.tabId);
+-	const inner = mode === 'html'
+-		? 'document.documentElement.outerHTML'
+-		: '(document.body && (document.body.innerText || document.body.textContent)) || ""';
++	const frameSpec = params.frame === undefined ? null : String(params.frame);
++	const flatten = params.flattenFrames !== false;
++	const script = buildContentScript(mode, frameSpec, flatten);
+ 	const payload = await withCDP(tab.id, (send) =>
+ 		send('Runtime.evaluate', {
+-			expression: `JSON.stringify({title: document.title, url: location.href, readyState: document.readyState, content: ${inner}})`,
++			expression: script,
+ 			awaitPromise: false, returnByValue: true, userGesture: true,
+ 		}).then((res) => {
+-			if (res.exceptionDetails) throw new Error(`page exception: ${res.exceptionDetails.text}`);
++			if (res.exceptionDetails) throw new Error(`page exception: ${pageExceptionText(res.exceptionDetails)}`);
+ 			return JSON.parse(res.result.value);
+ 		}));
+ 	return { tabId: tab.id, mode, ...payload };
+ }
+ 
++/**
++ * 诊断命令（`content.debug`）：把 `content` 将要注入页面的脚本**原样返回**，不执行。
++ *
++ * 用途：当 `content` 报出「某个标识符 is not defined」而页面侧 `window.onerror` 又没触发时，
++ * 说明错误发生在 service worker 拼脚本的阶段（模板插值里引用了不存在的标识符）。
++ * 此时唯一能定位的办法就是把真实脚本 dump 出来看。
++ */
++async function cmdContentDebug(params) {
++	const mode = params.mode === 'html' ? 'html' : 'text';
++	const frameSpec = params.frame === undefined ? null : String(params.frame);
++	const flatten = params.flattenFrames !== false;
++	const script = buildContentScript(mode, frameSpec, flatten);
++	return {
++		mode, frameSpec, flatten, scriptLength: script.length,
++		hasBareFrameset: /(^|[^'"\w.])frameset\s*[),;]/.test(script),
++		script,
++	};
++}
++
++/**
++ * Enumerate the frame tree of a tab: 老式 frameset 页面必须先看结构，才知道该读哪一帧。
++ * 返回每个 frame 的 index/name/src/url/是否同源，以及一段文本预览。
++ */
++async function cmdFrames(params) {
++	const tab = await resolveTab(params.tabId);
++	return withCDP(tab.id, (send) => send('Runtime.evaluate', {
++		expression: `(() => {
++			${FRAME_HELPER}
++			const frames = listFrames(document, [], 0);
++			return JSON.stringify({
++				title: document.title, url: location.href,
++				isFrameset: !!document.querySelector('frameset'), hasBody: !!document.body,
++				count: frames.length,
++				frames: frames.map((f, i) => ({
++					index: i, name: f.name, src: f.src, url: f.url, sameOrigin: !!f.doc,
++					textPreview: textOf(f.doc).trim().replace(/\\s+/g, ' ').slice(0, 140) || undefined,
++				})),
++			});
++		})()`,
++		awaitPromise: false, returnByValue: true, userGesture: true,
++	}).then((res) => {
++		if (res.exceptionDetails) throw new Error(res.exceptionDetails.text);
++		return { tabId: tab.id, ...JSON.parse(res.result.value) };
++	}));
++}
++
+ async function cmdFind(params) {
+ 	if (!params.selector) throw new Error('params.selector is required');
+ 	const limit = Math.max(1, Math.min(50, Number(params.limit) || 10));
+@@ -1149,12 +1504,13 @@
+ const COMMANDS = {
+ 	ping: cmdPing, 'browser.info': cmdBrowserInfo,
+ 	'tabs.list': cmdTabsList, 'tabs.open': cmdTabsOpen, 'tabs.close': cmdTabsClose, 'tabs.activate': cmdTabsActivate,
+-	nav: cmdNav, eval: cmdEval, content: cmdContent, find: cmdFind,
++	nav: cmdNav, eval: cmdEval, content: cmdContent, 'content.debug': cmdContentDebug, find: cmdFind, frames: cmdFrames,
+ 	click: cmdClick, input: cmdInput, press: cmdPress, scroll: cmdScroll,
+ 	snapshot: cmdSnapshot, screenshot: cmdScreenshot,
+ 	wait: cmdWait, dialog: cmdDialogPolicy,
+ 	'console.log': cmdConsoleLog, 'network.log': cmdNetworkLog, 'network.clear': cmdNetworkClear,
+ 	pdf: cmdPdf, emulate: cmdEmulate,
++	'window.ensure': cmdEnsureWindow,
+ };
+ 
+ /**
+@@ -1202,7 +1558,37 @@
+ 	if (params?.policy !== undefined) {
+ 		const p = String(params.policy);
+ 		if (!['accept', 'dismiss', 'manual'].includes(p)) throw new Error(`invalid dialog policy: ${p}`);
+-		dialogPolicy = p;
++		applyDialogPolicy(p);
++		// persist=true 时写进 storage 当作用户偏好；默认只改本次运行。
++		if (params.persist === true) {
++			cfg.dialogPolicy = p;
++			try { await chrome.storage.local.set({ dialogPolicy: p }); } catch { /* 存不下不影响本次 */ }
++		}
++	}
++	// 回答"当前已打开"的对话框：manual 档下页面会被卡死，这是唯一的退路（否则只能关标签页）。
++	// 等价于 CDP 的 Page.handleJavaScriptDialog —— 与自动应答走的是同一个 API。
++	if (params?.answer !== undefined) {
++		const want = String(params.answer);
++		if (want !== 'accept' && want !== 'dismiss') throw new Error(`invalid dialog answer: ${want}（accept|dismiss）`);
++		let tabId = params.tabId === undefined ? undefined : Number(params.tabId);
++		if (tabId === undefined && dialogLog.length > 0) tabId = dialogLog[dialogLog.length - 1].tabId;
++		if (tabId === undefined) throw new Error('answer 需要 tabId，或先有一次对话框记录');
++		await new Promise((resolve, reject) => {
++			chrome.debugger.sendCommand(
++				{ tabId },
++				'Page.handleJavaScriptDialog',
++				{ accept: want === 'accept', promptText: typeof params.promptText === 'string' ? params.promptText : '' },
++				() => {
++					const err = chrome.runtime.lastError;
++					if (err) reject(new Error(`回答对话框失败：${err.message}（该标签页可能没有打开的对话框，或未 attach）`));
++					else resolve();
++				},
++			);
++		});
++		const entry = { tabId, type: 'answer', message: '(手动回答)', defaultPrompt: '', answeredAs: want, t: Date.now() };
++		dialogLog.push(entry);
++		if (dialogLog.length > 50) dialogLog.shift();
++		return { policy: dialogPolicy, answered: { tabId, as: want }, recent: dialogLog.slice(-10) };
+ 	}
+ 	return { policy: dialogPolicy, recent: dialogLog.slice(-10) };
+ }
+@@ -1211,7 +1597,15 @@
+ 
+ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+ 	if (msg?.type === 'bridgeStatus') {
+-		sendResponse({ state: wsState, cfg, helloInfo, lastError });
++		sendResponse({
++			state: wsState,
++			cfg,
++			helloInfo,
++			lastError,
++			discoveredPort,
++			lastProbeNote,
++			scanRange: `${PORT_SCAN_BASE}–${PORT_SCAN_BASE + PORT_SCAN_COUNT - 1}`,
++		});
+ 		return false;
+ 	}
+ 	if (msg?.type === 'reconnect') {
+@@ -1220,6 +1614,16 @@
+ 		disconnectNow();
+ 		loadConfig().then(() => { connect(); sendResponse({ started: true }); });
+ 		return true;
++	}
++	if (msg?.type === 'rescan') {
++		// 用户改了端口 / 换了桥之后的“立刻重新扫描”：清掉本次命中结果再走一遍探测。
++		manualDisconnect = false;
++		backoffAttempt = 0;
++		discoveredPort = null;
++		lastProbeNote = null;
++		disconnectNow();
++		loadConfig().then(() => { connect(); sendResponse({ started: true }); });
++		return true;
+ 	}
+ 	if (msg?.type === 'disconnect') {
+ 		manualDisconnect = true;
+diff -ru extension.bak-20260925/manifest.json extension/manifest.json
+--- a/manifest.json	2026-09-22 22:47:59.000000000 +0800
++++ b/manifest.json	2026-09-28 17:01:25.535093129 +0800
+@@ -2,7 +2,7 @@
+ 	"manifest_version": 3,
+ 	"name": "DSH Browser Control",
+ 	"short_name": "DSH Bridge",
+-	"version": "1.0.7",
++	"version": "1.0.14",
+ 	"description": "让 DeepSeek Harness (dsh) 通过本地桥接服务控制浏览器：导航、读内容、执行 JS、点击、输入、按键、截图。",
+ 	"minimum_chrome_version": "116",
+ 	"permissions": [
+@@ -11,6 +11,10 @@
+ 		"storage",
+ 		"alarms"
+ 	],
++	"host_permissions": [
++		"http://127.0.0.1/*",
++		"http://localhost/*"
++	],
+ 	"background": {
+ 		"service_worker": "background.js"
+ 	},
+diff -ru extension.bak-20260925/popup.html extension/popup.html
+--- a/popup.html	2026-09-22 22:47:59.000000000 +0800
++++ b/popup.html	2026-09-28 17:01:05.618599947 +0800
+@@ -85,6 +85,11 @@
+ 			border: 1px solid #cbd5e1; border-radius: 7px;
+ 			font-size: 12px; color: #1e293b; background: #fff;
+ 		}
++		select {
++			width: 100%; margin-top: 3px; padding: 6px 8px;
++			border: 1px solid #cbd5e1; border-radius: 7px;
++			font-size: 12px; color: #1e293b; background: #fff;
++		}
+ 		input:focus { outline: none; border-color: #4c6fff; }
+ 		.check { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; color: #475569; }
+ 		.check input { accent-color: #4c6fff; }
+@@ -106,6 +111,7 @@
+ 		<div class="ring" id="ring"><div class="dot"></div></div>
+ 		<div class="state" id="state">正在检查…</div>
+ 		<div class="sub" id="hello"></div>
++		<div class="sub" id="conn"></div>
+ 	</div>
+ 
+ 	<div class="actions">
+@@ -121,9 +127,18 @@
+ 			<button class="gear" id="gear">高级 ▾</button>
+ 		</div>
+ 		<div class="advanced" id="advanced">
+-			<label>桥接端口<input id="port" type="number" min="1024" max="65535" placeholder="9777" /></label>
++			<label>桥接端口（优先尝试）<input id="port" type="number" min="1024" max="65535" placeholder="9777" /></label>
+ 			<label>Token<input id="token" type="password" /></label>
+ 			<div class="check"><input id="auto" type="checkbox" /> 自动连接（随浏览器启动）</div>
++			<label>JS 对话框默认行为
++				<select id="dlg">
++					<option value="accept">自动确定（confirm→true）</option>
++					<option value="dismiss">自动取消（confirm→false）</option>
++					<option value="manual">不处理（会卡住页面，需手动点）</option>
++				</select>
++			</label>
++			<div class="sub" id="scan"></div>
++			<button class="ghost" id="rescan" style="width:100%;margin-top:8px">重新扫描本地桥</button>
+ 			<button class="save-btn" id="save">保存并重连</button>
+ 		</div>
+ 	</div>
+diff -ru extension.bak-20260925/popup.js extension/popup.js
+--- a/popup.js	2026-09-22 22:47:59.000000000 +0800
++++ b/popup.js	2026-09-28 17:01:16.894600032 +0800
+@@ -10,7 +10,7 @@
+ };
+ const STATE_SUB = {
+ 	open: () => '桥接服务运行中，随时听候调用',
+-	connecting: () => '正在与 dsh 桥接服务握手',
++	connecting: () => '正在扫描端口并与 dsh 桥接服务握手',
+ 	idle: () => '在 dsh 设置 → 插件 里开启浏览器控制',
+ };
+ 
+@@ -21,9 +21,16 @@
+ 	$('hello').textContent = status.helloInfo
+ 		? `${status.helloInfo.name} ${status.helloInfo.version}`
+ 		: (STATE_SUB[status.state]?.() ?? '');
++	// 实际端口 + 最近一次扫描结论（端口自动发现）
++	const connBits = [];
++	if (status.discoveredPort) connBits.push(`实际端口 ${status.discoveredPort}`);
++	else if (status.state !== 'open') connBits.push('未命中本地桥');
++	$('conn').textContent = connBits.join(' · ');
++	$('scan').textContent = status.lastProbeNote ?? '（尚未扫描）';
+ 	if (document.activeElement !== $('port')) $('port').value = status.cfg.port ?? 9777;
+ 	if (document.activeElement !== $('token')) $('token').value = status.cfg.token;
+ 	$('auto').checked = Boolean(status.cfg.autoConnect);
++	if (document.activeElement !== $('dlg')) $('dlg').value = status.cfg.dialogPolicy ?? 'accept';
+ 	const connected = status.state === 'open';
+ 	const btn = $('reconnect');
+ 	btn.textContent = connected ? '断开连接' : (status.state === 'connecting' ? '连接中…' : '立即连接');
+@@ -63,14 +70,20 @@
+ 	$('gear').textContent = opening ? '高级 ▴' : '高级 ▾';
+ });
+ 
++$('rescan').addEventListener('click', async () => {
++	await chrome.runtime.sendMessage({ type: 'rescan' });
++	setTimeout(refresh, 1200);
++});
++
+ $('save').addEventListener('click', async () => {
+ 	await chrome.storage.local.set({
+ 		port: Number($('port').value) || 9777,
+ 		token: $('token').value.trim(),
+ 		autoConnect: $('auto').checked,
++		dialogPolicy: $('dlg').value,
+ 	});
+ 	await chrome.runtime.sendMessage({ type: 'reconnect' });
+-	setTimeout(refresh, 600);
++	setTimeout(refresh, 1200);
+ });
+ 
+ $('ver').textContent = chrome.runtime.getManifest().version;

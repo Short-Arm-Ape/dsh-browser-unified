@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>dialog-probe</title></head>
+<body>
+<h1>JS 对话框探针</h1>
+<p>点下面四个按钮，页面会把 confirm()/prompt() 的**真实返回值**记到 #out 里。</p>
+<div id="out">（尚未测试）</div>
+<button id="b-confirm">① confirm</button>
+<button id="b-prompt">② prompt（无默认值）</button>
+<button id="b-prompt2">③ prompt（默认值=预设值）</button>
+<button id="b-alert">④ alert</button>
+<script>
+  var out = document.getElementById('out');
+  function log(k, v) { out.textContent += '[' + k + '=' + JSON.stringify(v) + '] '; }
+  document.getElementById('b-confirm').onclick = function () { log('confirm', confirm('确认吗？')); };
+  document.getElementById('b-prompt').onclick = function () { log('prompt', prompt('输入点什么')); };
+  document.getElementById('b-prompt2').onclick = function () { log('prompt2', prompt('输入点什么', '预设值')); };
+  document.getElementById('b-alert').onclick = function () { alert('提示'); log('alert', 'returned'); };
+</script>
+</body>
+</html>

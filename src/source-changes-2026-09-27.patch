@@ -1,0 +1,365 @@
+# 源码改动补丁（2026-09-27/28）：相对老机 /Work/Objects/dsh-browser-unified 的原始文件
+# 应用：cd <repo> && patch -p1 < source-changes-2026-09-27.patch
+
+--- a/b/packages/browser-unified-core/src/bridge/server.ts	2026-09-28 16:45:33.306559972 +0800
++++ b/packages/browser-unified-core/src/bridge/server.ts	2026-09-27 23:29:32.716746371 +0800
+@@ -270,11 +270,18 @@
+   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
+     const url = new URL(req.url ?? '/', 'http://localhost')
+     if (req.method === 'OPTIONS') {
+-      res.writeHead(204, {
+-        'Access-Control-Allow-Origin': '*',
++      // 安全（2026-09-25）：以前无条件回 `Access-Control-Allow-Origin: *`，于是**任意网页**
++      // 都能通过预检并 POST /api/command 驱动用户已登录的浏览器（实测复现）。
++      // 现在只对扩展来源回显，且写类端点不再发 CORS 头。
++      const origin = String(req.headers.origin ?? '')
++      const headers: Record<string, string> = {
+         'Access-Control-Allow-Methods': 'GET, POST',
+-        'Access-Control-Allow-Headers': 'Content-Type',
+-      })
++        'Access-Control-Allow-Headers': 'Content-Type, X-DSH-Token',
++      }
++      if (origin.startsWith('chrome-extension://') || origin.startsWith('extension://')) {
++        headers['Access-Control-Allow-Origin'] = origin
++      }
++      res.writeHead(204, headers)
+       res.end()
+       return
+     }
+@@ -283,29 +290,54 @@
+       return
+     }
+     if (url.pathname === '/api/cleanup' && req.method === 'POST') {
++      // 安全（2026-09-25）：写操作必须带 token（以前任意网页都能触发清理）。
++      if (!this.tokenOk(req, url)) {
++        this.respondJson(res, 401, { ok: false, error: 'unauthorized: /api/cleanup requires ?token=' }, { cors: false })
++        return
++      }
+       void this.cleanup().then(
+-        (result) => this.respondJson(res, 200, { ok: true, ...result }),
+-        (error) => this.respondJson(res, 500, { ok: false, error: errorMessage(error) }),
++        (result) => this.respondJson(res, 200, { ok: true, ...result }, { cors: false }),
++        (error) => this.respondJson(res, 500, { ok: false, error: errorMessage(error) }, { cors: false }),
+       )
+       return
+     }
+     if (url.pathname === '/api/command' && req.method === 'POST') {
++      // 安全（2026-09-25，重要）：该端点能执行任意桥命令（含 eval），以前既不校验 token
++      // 又回 `ACAO: *` ⇒ 任意网页都能驱动这台已登录的浏览器。两道一起收。
++      if (!this.tokenOk(req, url)) {
++        this.respondJson(res, 401, { ok: false, error: 'unauthorized: /api/command requires ?token=' }, { cors: false })
++        return
++      }
+       this.handleCommandRequest(req, res)
+       return
+     }
+     if (url.pathname === '/' && req.method === 'GET') {
+       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+-      res.end(statusPageHtml(this.options.port))
++      res.end(statusPageHtml(this.options.port, this.options.token))
+       return
+     }
+-    this.respondJson(res, 404, { ok: false, error: `no route: ${req.method} ${url.pathname}` })
++    this.respondJson(res, 404, { ok: false, error: `no route: ${req.method} ${url.pathname}` }, { cors: false })
+   }
+ 
+-  private respondJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
+-    res.writeHead(statusCode, {
+-      'Content-Type': 'application/json; charset=utf-8',
+-      'Access-Control-Allow-Origin': '*',
+-    })
++  /**
++   * 常量时间比较 token，避免逐字符泄露。token 为空表示不校验（向后兼容）。
++   * @returns 请求携带的 token 是否匹配。
++   */
++  private tokenOk(req: http.IncomingMessage, url: URL): boolean {
++    const expected = this.options.token ?? ''
++    if (expected.length === 0) return true
++    const provided = url.searchParams.get('token') ?? String(req.headers['x-dsh-token'] ?? '')
++    if (provided.length !== expected.length) return false
++    let diff = 0
++    for (let i = 0; i < expected.length; i += 1) diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i)
++    return diff === 0
++  }
++
++  private respondJson(res: http.ServerResponse, statusCode: number, body: unknown, options: { cors?: boolean } = {}): void {
++    const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8' }
++    // 只读的 /api/status 仍保留 `*`（扩展探测与状态页依赖它）；写类端点一律不发 CORS 头。
++    if (options.cors !== false) headers['Access-Control-Allow-Origin'] = '*'
++    res.writeHead(statusCode, headers)
+     res.end(JSON.stringify(body))
+   }
+ 
+@@ -319,7 +351,7 @@
+       if (size > MAX_HTTP_BODY_BYTES) {
+         aborted = true
+         chunks.length = 0
+-        this.respondJson(res, 413, { ok: false, error: 'body too large' })
++        this.respondJson(res, 413, { ok: false, error: 'body too large' }, { cors: false })
+         req.resume()
+         return
+       }
+@@ -331,20 +363,20 @@
+       try {
+         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as typeof parsed
+       } catch (error) {
+-        this.respondJson(res, 400, { ok: false, error: `invalid JSON body: ${errorMessage(error)}` })
++        this.respondJson(res, 400, { ok: false, error: `invalid JSON body: ${errorMessage(error)}` }, { cors: false })
+         return
+       }
+       if (typeof parsed.command !== 'string' || parsed.command.length === 0) {
+-        this.respondJson(res, 400, { ok: false, error: 'body must be {"command": "...", "params": {...}}' })
++        this.respondJson(res, 400, { ok: false, error: 'body must be {"command": "...", "params": {...}}' }, { cors: false })
+         return
+       }
+       const timeoutMs = typeof parsed.timeoutMs === 'number' ? parsed.timeoutMs : undefined
+       this.execute(parsed.command, (parsed.params ?? {}) as Record<string, unknown>, timeoutMs === undefined ? {} : { timeoutMs }).then(
+-        (result) => this.respondJson(res, 200, { ok: true, result }),
++        (result) => this.respondJson(res, 200, { ok: true, result }, { cors: false }),
+         (error) => {
+           const message = errorMessage(error)
+           const code = message.startsWith('no browser extension') ? 503 : 502
+-          this.respondJson(res, code, { ok: false, error: message })
++          this.respondJson(res, code, { ok: false, error: message }, { cors: false })
+         },
+       )
+     })
+@@ -499,7 +531,7 @@
+ }
+ 
+ /** Minimal self-refreshing status page with the cleanup action. */
+-function statusPageHtml(port: number): string {
++function statusPageHtml(port: number, token = ''): string {
+   return `<!doctype html>
+ <html lang="zh-CN">
+ <head>
+@@ -549,6 +581,7 @@
+   <div class="foot">DSH Browser Bridge · 127.0.0.1:${port}</div>
+ </div>
+ <script>
++const TOKEN=${JSON.stringify(token)};
+ async function refresh(){
+   try{
+     const r=await fetch('/api/status');const j=await r.json();
+@@ -572,7 +605,7 @@
+ }
+ document.getElementById('cleanup').onclick=async()=>{
+   if(!confirm('确认清理截图与临时脚本？'))return;
+-  const r=await fetch('/api/cleanup',{method:'POST'});const j=await r.json();
++  const r=await fetch('/api/cleanup'+(TOKEN?'?token='+encodeURIComponent(TOKEN):''),{method:'POST'});const j=await r.json();
+   alert(j.ok?('已删除 '+j.shotsRemoved+' 个截图，'+j.scratchRemoved.length+' 个草稿'):('失败：'+j.error));
+   refresh();
+ };
+--- a/b/packages/browser-unified-plugin/src/index.ts	2026-09-28 16:45:33.462559948 +0800
++++ b/packages/browser-unified-plugin/src/index.ts	2026-09-28 16:36:22.378931279 +0800
+@@ -290,6 +290,8 @@
+ 
+ const SNAPSHOT_REF_SELECTOR_PATTERN = /^e\d+$/
+ const READ_CONTENT_MAX_CHARS = 120_000
++/** 端口被占时向后尝试的候选端口个数（配置端口 → +1 … +N）。 */
++const PORT_FALLBACK_COUNT = 9
+ 
+ /**
+  * Owns zero or one live {@link BridgeServer} and restarts it whenever the
+@@ -298,6 +300,10 @@
+  */
+ class BridgeController {
+ 	private server: BridgeServer | undefined
++	/** 实际绑定到的端口；端口被占时可能回退到 port+1..port+9。未启动时为 undefined。 */
++	private boundPort: number | undefined
++	/** 端口回退说明，供 browser_policy_status 展示。 */
++	private portNote: string | undefined
+ 	private guarded: GuardedBridge | undefined
+ 	private policy: UrlPolicy | undefined
+ 	private serverKey = ''
+@@ -321,7 +327,7 @@
+ 	}
+ 
+ 	/** Snapshot for the read-only policy-status tool. */
+-	describePolicy(): { enabled: boolean; urlMode?: string; internetAccess?: string; lanAccess?: string; localAccess?: string; internetTemp?: boolean; lanTemp?: boolean; localTemp?: boolean; askMode?: string; autoLaunchEnabled?: boolean; autoLaunchIdleSeconds?: number; autoLaunchProfileDir?: string; autoLaunchProfileName?: string; dshAccessEnabled?: boolean; dshOrigins?: string[]; allowHosts?: string[]; denyHosts?: string[]; blockMetadata?: boolean; metadataHostnames?: string[]; metadataIps?: string[]; tempGrants: readonly string[]; ready: boolean } {
++	describePolicy(): { enabled: boolean; urlMode?: string; internetAccess?: string; lanAccess?: string; localAccess?: string; internetTemp?: boolean; lanTemp?: boolean; localTemp?: boolean; askMode?: string; autoLaunchEnabled?: boolean; autoLaunchIdleSeconds?: number; autoLaunchProfileDir?: string; autoLaunchProfileName?: string; dshAccessEnabled?: boolean; dshOrigins?: string[]; allowHosts?: string[]; denyHosts?: string[]; blockMetadata?: boolean; metadataHostnames?: string[]; metadataIps?: string[]; tempGrants: readonly string[]; ready: boolean; boundPort?: number; requestedPort?: number; portNote?: string } {
+ 		const c = this.current
+ 		return {
+ 			enabled: c?.enabled ?? false,
+@@ -346,6 +352,9 @@
+ 			metadataIps: c?.metadataIps,
+ 			tempGrants: [...this.tempAllow],
+ 			ready: this.guarded !== undefined,
++			boundPort: this.boundPort,
++			requestedPort: c?.port,
++			portNote: this.portNote,
+ 		}
+ 	}
+ 
+@@ -403,6 +412,38 @@
+ 		return this.spawnBrowser(config)
+ 	}
+ 
++	/**
++	 * 唤起可用的浏览器。
++	 *
++	 * **"进程活着但没有窗口"与"扩展没连上"是两件不同的事**，混在一起会形成死局：
++	 * Edge 关掉所有窗口后仍在后台驻留（启动增强/后台扩展），扩展照样连着桥，于是
++	 * `launchBrowser()` 回答"扩展已连接，无需拉起"，但 `tabs.list` 回 0 个标签页、
++	 * 所有"当前标签页"类命令全部失败（实测 Windows 侧就是这么卡住的）。
++	 *
++	 * - 扩展已连接但没有窗口 → 让扩展自己新建窗口（`window.ensure`），**不再起进程**；
++	 * - 扩展未连接 → 沿用原来的 spawn 逻辑。
++	 * @returns 给人/模型看的结果说明。
++	 */
++	async wakeBrowser(): Promise<string> {
++		const status = this.server?.status
++		if (status?.extensionConnected === true) {
++			try {
++				const info = (await this.execute(
++					'window.ensure',
++					{ reason: 'browser_launch' },
++					new AbortController().signal,
++				)) as { created?: boolean; windowsBefore?: number; tabId?: number }
++				if (info.created === true) {
++					return `扩展已连接，但浏览器里没有任何窗口 —— 已让扩展新建一个窗口（tabId=${String(info.tabId)}），可以继续操作了`
++				}
++				return `扩展已连接，当前有 ${String(info.windowsBefore)} 个窗口，无需唤起`
++			} catch (error) {
++				return `扩展已连接，但请求它新建窗口失败：${errorMessage(error)}（可手动打开一次浏览器窗口）`
++			}
++		}
++		return this.launchBrowser()
++	}
++
+ 	private spawnBrowser(config: ResolvedConfig): string {
+ 		let userDataDir = ''
+ 		let profileName = ''
+@@ -523,16 +564,43 @@
+ 				this.lastError = undefined
+ 				return
+ 			}
+-			const server = new BridgeServer({ port: config.port, token: config.token, shotsDir, log: this.log })
+-			try {
+-				await server.start()
+-			} catch (error) {
+-				const message = error instanceof Error ? error.message : String(error)
+-				this.lastError = `桥接启动失败（端口 ${config.port}）: ${message}`
+-				this.log(this.lastError!)
+-				throw error instanceof Error ? error : new Error(message)
++			// 端口被占时**依次尝试候选端口**（配置端口 → +1 … +9），全不可用则降级记录错误。
++			// 历史行为是这里直接 throw → 变成未处理拒绝 → DSH `exit(1)`（P0 取证：端口被占时
++			// `dsh web` 起不来）。现在任何启动失败都不再拖垮 DSH；扩展端会按候选序列自动发现端口。
++			const candidates = [config.port, ...Array.from({ length: PORT_FALLBACK_COUNT }, (_, i) => config.port + i + 1)]
++			let started: BridgeServer | undefined
++			let lastStartError: unknown
++			for (const candidate of candidates) {
++				const attempt = new BridgeServer({ port: candidate, token: config.token, shotsDir, log: this.log })
++				try {
++					await attempt.start()
++					started = attempt
++					this.boundPort = candidate
++					if (candidate === config.port) {
++						this.portNote = undefined
++					} else {
++						this.portNote = `配置端口 ${config.port} 被占用，已回退到 ${candidate}（扩展端会自动发现）`
++						this.log(`[browser-bridge] ${this.portNote}`)
++					}
++					break
++				} catch (error) {
++					lastStartError = error
++					const code = (error as NodeJS.ErrnoException | undefined)?.code
++					// 只有"端口被占"值得换端口；其它错误（无权限 / 非法端口）立即停手。
++					if (code !== 'EADDRINUSE') break
++					this.log(`[browser-bridge] 端口 ${candidate} 被占用，尝试下一个候选`)
++				}
++			}
++			if (started === undefined) {
++				this.boundPort = undefined
++				this.portNote = undefined
++				const message = lastStartError instanceof Error ? lastStartError.message : String(lastStartError)
++				this.lastError = `桥接启动失败（候选端口 ${candidates[0]}..${candidates[candidates.length - 1]} 均不可用）: ${message}`
++				this.log(this.lastError)
++				this.refreshWatchdog(config)
++				return
+ 			}
+-			this.server = server
++			this.server = started
+ 			this.serverKey = serverKey
+ 		}
+ 		if (!config.enabled) {
+@@ -931,6 +999,7 @@
+ 					return `${label}: ${eff}${raw ? '（显式）' : '（预设）'}${temp === false ? '，无临时授权' : ''}`
+ 				}
+ 				lines.push(`网络预设: ${mode === 'intranet' ? '内网' : '公网'}${s.urlMode === undefined ? '（缺省公网）' : ''}`)
++			lines.push(`桥接端口: ${s.boundPort ?? '（未启动）'}${s.portNote ? ' — ' + s.portNote : (s.requestedPort !== undefined && s.boundPort !== s.requestedPort ? `（配置 ${s.requestedPort}）` : '')}`)
+ 				lines.push(`DSH 页面访问: ${s.dshAccessEnabled ? '开（' + (s.dshOrigins ?? []).join(', ') + '）' : '关'}`)
+ 				lines.push(fmt('外网', 'internet', s.internetAccess, s.internetTemp))
+ 				lines.push(fmt('局域网', 'lan', s.lanAccess, s.lanTemp))
+@@ -948,7 +1017,7 @@
+ 
+ 	ctx.tools.register(defineTool({
+ 		name: 'browser_launch',
+-		description: 'Launch the configured browser (the one with the DSH Browser Control extension, per autoLaunch profile/exe settings) so the extension can reconnect to the bridge. Use this when browser_* tools fail with "no browser extension connected" — call it once, wait a few seconds, then retry the failing tool. Does NOT require the auto-launch watchdog to be enabled. Safe: spawns the configured browser only; no page is touched until you navigate.',
++		description: 'Wake the controlled browser. Two distinct cases: (a) the extension is connected but the browser has NO window (Edge keeps running in the background after all windows are closed, and every "current tab" command then fails) — this asks the extension to open one; (b) the extension is not connected — this launches the configured browser (per autoLaunch profile/exe settings). Use this when browser_* tools fail with "no browser extension connected" — call it once, wait a few seconds, then retry the failing tool. Does NOT require the auto-launch watchdog to be enabled. Safe: spawns the configured browser only; no page is touched until you navigate.',
+ 		parameters: {},
+ 		output: {
+ 			schema: {
+@@ -964,7 +1033,7 @@
+ 		isConcurrencySafe: () => true,
+ 		timeoutMs: 15_000,
+ 		async execute() {
+-			const text = controller.launchBrowser()
++			const text = await controller.wakeBrowser()
+ 			return { ok: true, text }
+ 		},
+ 	}))
+@@ -1026,6 +1095,7 @@
+ 		parameters: {
+ 			tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+ 			mode: { type: 'string', description: '"text" (default) for visible text, "html" for the whole document.' },
++			frame: { type: 'string', description: 'Read one frame (name / #index / url substring). Omit to read the whole page; a <frameset> page is flattened automatically into per-frame sections.' },
+ 		},
+ 		output: {
+ 			schema: {
+@@ -1040,20 +1110,23 @@
+ 					truncated: { type: 'boolean', required: true },
+ 				},
+ 			},
++			// 以前这里只回「标题 (URL) — N chars」，把 content 丢掉了 —— 模型因此**读不到页面正文**，
++			// 只能靠 browser_evaluate 硬抠。现在把正文交给模型（过长时由 execute 侧 clamp + 截断标记）。
+ 			render: (_args, value) => [{
+ 				type: 'text',
+-				text: `${value.title} (${value.url}) — ${value.content.length} chars${value.truncated ? ', truncated' : ''}`,
++				text: `${value.title} (${value.url}) [${value.mode}${value.truncated ? ', truncated' : ''}, ${value.content.length} chars]\n\n${value.content}`,
+ 			}],
+ 		},
+ 		presentCall: () => ({ card: 'generic', title: 'Read browser page', kind: 'other' as const }),
+ 		async execute(args, exec) {
+ 			await authorizeExistingTab(controller, args.tabId, exec.signal)
+ 			const mode = args.mode === 'html' ? 'html' : 'text'
+-			const raw = await controller.execute(
+-				'content',
+-				args.tabId === undefined ? { mode } : { mode, tabId: args.tabId },
+-				exec.signal,
+-			) as { tabId: number; title?: string; url?: string; content?: string }
++			const params: Record<string, unknown> = { mode, flattenFrames: true }
++			if (args.tabId !== undefined) params.tabId = args.tabId
++			if (args.frame !== undefined) params.frame = args.frame
++			const raw = await controller.execute('content', params, exec.signal) as {
++				tabId: number; title?: string; url?: string; content?: string; flattenedFrames?: number; readFrame?: string
++			}
+ 			const clamped = clampText(raw.content ?? '', READ_CONTENT_MAX_CHARS)
+ 			return {
+ 				tabId: raw.tabId,
+@@ -1669,10 +1742,11 @@
+ 		})
+ 	})
+ 
+-	// Activation converges loudly so a bad port fails the plugin at load;
+-	// later settings commits degrade to recorded errors instead.
+-	controller.reconcile(resolved, { throwOnError: resolved.enabled }).catch((error) => {
+-		throw new Error(`browser-bridge: ${errorMessage(error)}`)
++	// 激活期**不再** fail-loud：历史上这里把拒绝再抛出去，形成无人处理的 Promise 拒绝，
++	// DSH 的 fail-loud 处理器随即 `exit(1)`（端口被占即 DSH 起不来，见 P0-探针取证）。
++	// 现在启动失败只记录到 lastError（端口回退在 reconcileNow 内完成），由 browser_policy_status 暴露。
++	void controller.reconcile(resolved).catch((error) => {
++		ctx.logger.warn(`browser-bridge: 激活期收敛失败（已降级，不影响 DSH 启动）: ${errorMessage(error)}`)
+ 	})
+ 
+ 	applyBrowserTools(ctx, controller)

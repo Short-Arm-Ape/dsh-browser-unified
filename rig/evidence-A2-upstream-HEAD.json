@@ -1,0 +1,294 @@
+{
+  "label": "A2-upstream-HEAD",
+  "startedAt": "2026-10-10T15:03:31.273Z",
+  "scenarios": [
+    {
+      "name": "nav-local-slow",
+      "what": "active tab (already loaded) -> a page whose body takes 3 s",
+      "targetTabId": 241746162,
+      "observedTabId": 241746162,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-611318"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-249",
+        "ok": true,
+        "result": {
+          "tabId": 241746162,
+          "url": "http://localhost:9781/slow?ms=3000",
+          "title": "SLOW-612876"
+        },
+        "elapsedMs": 3030
+      },
+      "wallMs": 3034,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-612876"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-612876"
+      }
+    },
+    {
+      "name": "open-local-slow",
+      "what": "tabs.open -> a page whose body takes 3 s",
+      "targetTabId": 241746162,
+      "observedTabId": 241746163,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-619921"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-255",
+        "ok": true,
+        "result": {
+          "tabId": 241746163,
+          "url": "http://localhost:9781/slow?ms=3000",
+          "title": "SLOW-621475"
+        },
+        "elapsedMs": 3028
+      },
+      "wallMs": 3031,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-621475"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-621475"
+      }
+    },
+    {
+      "name": "nav-hang",
+      "what": "active tab -> a server that accepts and never answers (navigation stuck before commit)",
+      "targetTabId": 241746162,
+      "observedTabId": 241746162,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-628542"
+      },
+      "commandResult": {
+        "ok": false,
+        "error": "rig timeout after 40000ms",
+        "elapsedMs": 40004
+      },
+      "wallMs": 40006,
+      "truthAtReturn": {
+        "error": "eval timeout after 100ms"
+      },
+      "truthAfterSettle": {
+        "error": "eval timeout after 100ms"
+      }
+    },
+    {
+      "name": "open-hang",
+      "what": "tabs.open -> a server that accepts and never answers",
+      "targetTabId": 241746162,
+      "observedTabId": 241746165,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-675329"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-268",
+        "ok": true,
+        "result": {
+          "tabId": 241746165,
+          "url": "",
+          "title": ""
+        },
+        "elapsedMs": 15029
+      },
+      "wallMs": 15030,
+      "truthAtReturn": {
+        "href": "about:blank",
+        "ready": "complete",
+        "title": ""
+      },
+      "truthAfterSettle": {
+        "href": "about:blank",
+        "ready": "complete",
+        "title": ""
+      }
+    },
+    {
+      "name": "nav-blackhole-ip",
+      "what": "active tab -> a non-routable IP (TCP connect black hole)",
+      "targetTabId": 241746162,
+      "observedTabId": 241746162,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-696962"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-275",
+        "ok": true,
+        "result": {
+          "tabId": 241746162,
+          "url": "http://10.255.255.1:8080/",
+          "siteUnreachable": {
+            "reason": "unreachable"
+          }
+        },
+        "elapsedMs": 21211
+      },
+      "wallMs": 21214,
+      "truthAtReturn": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "10.255.255.1"
+      },
+      "truthAfterSettle": {
+        "error": "eval timeout after 100ms"
+      }
+    },
+    {
+      "name": "open-blackhole-ip",
+      "what": "tabs.open -> a non-routable IP",
+      "targetTabId": 241746162,
+      "observedTabId": 241746167,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-727860"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-281",
+        "ok": true,
+        "result": {
+          "tabId": 241746167,
+          "url": "http://10.255.255.1:8080/",
+          "title": "10.255.255.1"
+        },
+        "elapsedMs": 13171
+      },
+      "wallMs": 13173,
+      "truthAtReturn": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "10.255.255.1"
+      },
+      "truthAfterSettle": {
+        "error": "eval timeout after 100ms"
+      }
+    },
+    {
+      "name": "nav-bad-host",
+      "what": "active tab -> a host that cannot resolve (RFC 2606 .invalid)",
+      "targetTabId": 241746162,
+      "observedTabId": 241746162,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-750732"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-288",
+        "ok": true,
+        "result": {
+          "tabId": 241746162,
+          "url": "http://rig-nx.invalid/",
+          "siteUnreachable": {
+            "reason": "dns"
+          }
+        },
+        "elapsedMs": 238
+      },
+      "wallMs": 241,
+      "truthAtReturn": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "rig-nx.invalid"
+      },
+      "truthAfterSettle": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "rig-nx.invalid"
+      }
+    },
+    {
+      "name": "nav-timeout-40s-page",
+      "what": "active tab -> a page that finishes after 40 s (extension timeout is 15 s)",
+      "targetTabId": 241746162,
+      "observedTabId": 241746162,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-758587"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-294",
+        "ok": true,
+        "result": {
+          "tabId": 241746162,
+          "url": "http://localhost:9781/slow?ms=40000",
+          "title": "SLOW-760145"
+        },
+        "elapsedMs": 15014
+      },
+      "wallMs": 15017,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=40000",
+        "ready": "loading",
+        "title": "SLOW-760145"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=40000",
+        "ready": "loading",
+        "title": "SLOW-760145"
+      }
+    },
+    {
+      "name": "nav-background-tab-slow",
+      "what": "navigate a NON-active tab -> a page whose body takes 3 s",
+      "targetTabId": 241746169,
+      "observedTabId": 241746169,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-779432"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-302",
+        "ok": true,
+        "result": {
+          "tabId": 241746169,
+          "url": "http://localhost:9781/slow?ms=3000",
+          "title": "SLOW-780990"
+        },
+        "elapsedMs": 3026
+      },
+      "wallMs": 3028,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-780990"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-780990"
+      }
+    }
+  ],
+  "finishedAt": "2026-10-10T15:06:28.044Z"
+}

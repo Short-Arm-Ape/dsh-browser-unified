@@ -1,0 +1,180 @@
+{
+  "at": "2026-10-13T12:45:31.590Z",
+  "rigTag": "UC4",
+  "version": "1.0.94",
+  "raw": {
+    "hello": {
+      "type": "hello",
+      "client": "dsh-browser-extension",
+      "rigTag": "UC4",
+      "version": "1.0.94",
+      "protocol": 1,
+      "browser": {
+        "name": "edge",
+        "version": "155.0.0.0",
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"
+      },
+      "extensionId": "fbnmkhhplhdhgcpidipmjkcfpjhgbnna"
+    },
+    "open": {
+      "tabId": 1936328690,
+      "url": "http://localhost:9781/fast",
+      "title": "FAST-525187",
+      "grouped": true,
+      "groupId": 1065886526,
+      "created": true
+    },
+    "ungroup": {
+      "ungrouped": 1,
+      "groups": 1
+    },
+    "ungroup2": {
+      "ungrouped": 0,
+      "groups": 0
+    },
+    "group": {
+      "tabId": 1936328689,
+      "grouped": true,
+      "groupId": 806837982,
+      "created": true
+    },
+    "ungroup3": {
+      "ungrouped": 1,
+      "groups": 1
+    },
+    "keys": [
+      {
+        "key": "A",
+        "ctrl": true,
+        "shift": false
+      }
+    ],
+    "keys2": [
+      {
+        "key": "A",
+        "ctrl": true,
+        "shift": true
+      }
+    ],
+    "badKey": {
+      "type": "result",
+      "id": "rig-15",
+      "ok": false,
+      "error": "unknown key \"Nope\". 可用 Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown、单个字符，或 \"Ctrl+A\" / \"Shift+ArrowRight\" 这类组合。",
+      "elapsedMs": 2
+    },
+    "badModifier": {
+      "type": "result",
+      "id": "rig-16",
+      "ok": false,
+      "error": "unknown modifier \"Hyper\" in key \"Hyper+A\". Valid: alt, ctrl/control, meta/command, shift —— 也可以分开写 modifiers: [\"ctrl\"] + key: \"a\"。",
+      "elapsedMs": 1
+    },
+    "closeMany": {
+      "requested": 3,
+      "closed": [
+        1936328691,
+        1936328692
+      ],
+      "alreadyGone": [
+        999999999
+      ],
+      "failed": []
+    },
+    "hangResp": {
+      "type": "result",
+      "id": "rig-20",
+      "ok": true,
+      "result": {
+        "tabId": 1936328690,
+        "url": "http://localhost:9781/fast",
+        "title": "FAST-525187",
+        "loadPending": true,
+        "pendingUrl": "http://localhost:9781/hang"
+      },
+      "elapsedMs": 5681
+    }
+  },
+  "checks": [
+    {
+      "name": "hello.protocol === 1",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "tabs.open 回 grouped=true",
+      "ok": true,
+      "detail": "{\"tabId\":1936328690,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-525187\",\"grouped\":true,\"groupId\":1065886526,\"created\":true}"
+    },
+    {
+      "name": "ungroup 报出解散了标签与分组",
+      "ok": true,
+      "detail": "{\"ungrouped\":1,\"groups\":1}"
+    },
+    {
+      "name": "ungroup **没有关掉任何标签页**",
+      "ok": true,
+      "detail": "before=2 after=2"
+    },
+    {
+      "name": "再拆一次是空操作（幂等）",
+      "ok": true,
+      "detail": "{\"ungrouped\":0,\"groups\":0}"
+    },
+    {
+      "name": "tabs.group 回 grouped=true",
+      "ok": true,
+      "detail": "{\"tabId\":1936328689,\"grouped\":true,\"groupId\":806837982,\"created\":true}"
+    },
+    {
+      "name": "归的组是真的（ungroup 能数到它）",
+      "ok": true,
+      "detail": "{\"ungrouped\":1,\"groups\":1}"
+    },
+    {
+      "name": "页面收到一次 keydown 且 ctrlKey=true",
+      "ok": true,
+      "detail": "[{\"key\":\"A\",\"ctrl\":true,\"shift\":false}]"
+    },
+    {
+      "name": "分开写 modifiers 也生效（ctrl+shift）",
+      "ok": true,
+      "detail": "[{\"key\":\"A\",\"ctrl\":true,\"shift\":true}]"
+    },
+    {
+      "name": "未知键名 → 失败",
+      "ok": true,
+      "detail": "{\"type\":\"result\",\"id\":\"rig-15\",\"ok\":false,\"error\":\"unknown key \\\"Nope\\\". 可用 Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp, ArrowDown, ArrowLeft, ArrowRi"
+    },
+    {
+      "name": "错误文案说明可用键名与组合写法",
+      "ok": true,
+      "detail": "unknown key \"Nope\". 可用 Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, En"
+    },
+    {
+      "name": "未知修饰键 → 失败且指出修饰键",
+      "ok": true,
+      "detail": "unknown modifier \"Hyper\" in key \"Hyper+A\". Valid: alt, ctrl/control, meta/command, shift —— 也可以分开写 modifiers: [\"ctrl\"] + key: \"a\"。"
+    },
+    {
+      "name": "requested=3 且不再存在的那条进了 alreadyGone",
+      "ok": true,
+      "detail": "{\"requested\":3,\"closed\":[1936328691,1936328692],\"alreadyGone\":[999999999],\"failed\":[]}"
+    },
+    {
+      "name": "两个真标签都关掉了（closed 里都有）",
+      "ok": true,
+      "detail": "[1936328691,1936328692]"
+    },
+    {
+      "name": "nav 在 20s 内回来了（不再挂到桥的 60s 兜底）",
+      "ok": true,
+      "detail": "5685ms {\"type\":\"result\",\"id\":\"rig-20\",\"ok\":true,\"result\":{\"tabId\":1936328690,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-5"
+    },
+    {
+      "name": "并且如实报 loadPending（不假装掉地）",
+      "ok": true,
+      "detail": "{\"tabId\":1936328690,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-525187\",\"loadPending\":true,\"pendingUrl\":\"http://localhost:9781/hang\"}"
+    }
+  ]
+}

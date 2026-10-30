@@ -1,0 +1,23 @@
+# P0 取证：浏览器桥端口被占 → DSH 启动退出（2026-09-25）
+
+方法：独立 DSH_HOME=~/.dsh-probe（绝不同 DSH_HOME 并起两个 dsh web），探针 profile 装 dsh-browser-unified 0.7.4
+      + browser-unified-core 0.1.0，cordis.patch.yml 覆盖 browser-bridge = { enabled: true, port: 9797 }；
+      探针实例自身监听 3098（正式实例在 3080 / 桥 9777，互不影响）。
+
+## 阳性对照：9797 空着
+命令：DSH_HOME=~/.dsh-probe timeout 25 dsh web --no-open --port 3098
+结果：exit=124（存活到超时=启动成功）；日志含：
+
+## 实验组：9797 被占（node 监听 127.0.0.1:9797，ss 已确认）
+命令：DSH_HOME=~/.dsh-probe timeout 30 dsh web --no-open --port 3098
+结果：exit=1；stderr：
+    dsh: fatal load failure: Error: browser-bridge: listen EADDRINUSE: address already in use 127.0.0.1:9797
+        at file:///home/wsluser/.dsh-probe/profiles/web/node_modules/.pnpm/dsh-browser-unified@file+vendor+dsh-browser-unified-0.7.4.tgz_@deepseek-ai+cordis@4.0.4_3879faed5e1e8ee706e086d6da6bc24a/node_modules/dsh-browser-unified/lib/index.js:1486:15
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+
+## 归因
+- 两次唯一差异 = 9797 是否被占；对照组存活、实验组 exit 1。
+- 崩溃路径：BridgeServer.start() 的 listen error → reconcile 带 throwOnError → apply() 内
+  controller.reconcile(...).catch(e => { throw ... }) 产生无人消费的 rejected Promise →
+  dsh-app-boot 的 installFailLoud 捕获 unhandledRejection → 打印 fatal load failure → proc.exit(1)。
+- 结论：用户第 1 条动机成立且更严重——不是「启动受影响」，是 DSH 起不来。

@@ -1,0 +1,12 @@
+# dsh-browser-unified: mounts disabled by default (same instance id and settings
+# namespace as the upstream @caob23/dsh-browser-control it replaces, so the
+# existing profile enable row and Settings UI keep working).
+# Enable via Settings -> Plugins -> DSH Browser Control, or the profile cordis.patch.yml.
+- insert:
+    - id: browser-bridge
+      name: 'dsh-browser-unified'
+      config:
+        enabled: false
+        port: 9777
+        token: dsh-local
+        urlMode: public

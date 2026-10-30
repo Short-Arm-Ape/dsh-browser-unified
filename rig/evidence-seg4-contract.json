@@ -1,0 +1,168 @@
+{
+  "at": "2026-10-17T06:01:46.637Z",
+  "rigTag": "UD1",
+  "version": "1.0.95",
+  "raw": {
+    "open": {
+      "tabId": 1278871275,
+      "url": "http://localhost:9781/fast",
+      "title": "FAST-906370",
+      "grouped": true,
+      "groupId": 42198088,
+      "created": true
+    },
+    "list1": {
+      "count": 2,
+      "windows": 1,
+      "noWindow": false,
+      "activeTabId": 1278871275,
+      "groups": [
+        {
+          "id": 42198088,
+          "title": "DSH",
+          "color": "blue",
+          "windowId": 1278871272
+        }
+      ],
+      "tabs": [
+        {
+          "id": 1278871274,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-900204",
+          "active": false
+        },
+        {
+          "id": 1278871275,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-906370",
+          "active": true,
+          "groupId": 42198088,
+          "groupTitle": "DSH",
+          "groupColor": "blue"
+        }
+      ]
+    },
+    "group": {
+      "tabId": 1278871274,
+      "grouped": true,
+      "groupId": 42198088,
+      "created": false
+    },
+    "list2": {
+      "count": 2,
+      "windows": 1,
+      "noWindow": false,
+      "activeTabId": 1278871275,
+      "groups": [
+        {
+          "id": 42198088,
+          "title": "DSH",
+          "color": "blue",
+          "windowId": 1278871272
+        }
+      ],
+      "tabs": [
+        {
+          "id": 1278871274,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-900204",
+          "active": false,
+          "groupId": 42198088,
+          "groupTitle": "DSH",
+          "groupColor": "blue"
+        },
+        {
+          "id": 1278871275,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-906370",
+          "active": true,
+          "groupId": 42198088,
+          "groupTitle": "DSH",
+          "groupColor": "blue"
+        }
+      ]
+    },
+    "ungroup": {
+      "ungrouped": 2,
+      "groups": 1
+    },
+    "list3": {
+      "count": 2,
+      "windows": 1,
+      "noWindow": false,
+      "activeTabId": 1278871275,
+      "groups": [],
+      "tabs": [
+        {
+          "id": 1278871274,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-900204",
+          "active": false
+        },
+        {
+          "id": 1278871275,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-906370",
+          "active": true
+        }
+      ]
+    }
+  },
+  "checks": [
+    {
+      "name": "开回来的标签在分组里（groupTitle=DSH）",
+      "ok": true,
+      "detail": "{\"id\":1278871275,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-906370\",\"active\":true,\"groupId\":42198088,\"groupTitle\":\"DSH\",\"groupColor\":\"blue\"}"
+    },
+    {
+      "name": "list 回了一览 groups（含 DSH）",
+      "ok": true,
+      "detail": "[{\"id\":42198088,\"title\":\"DSH\",\"color\":\"blue\",\"windowId\":1278871272}]"
+    },
+    {
+      "name": "分组带颜色（DSH 应为 blue）",
+      "ok": true,
+      "detail": "{\"id\":42198088,\"title\":\"DSH\",\"color\":\"blue\",\"windowId\":1278871272}"
+    },
+    {
+      "name": "先确认它本来不在任何组里",
+      "ok": true,
+      "detail": "{\"id\":1278871274,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-900204\",\"active\":false}"
+    },
+    {
+      "name": "tabs.group 后 list 里带上了组名",
+      "ok": true,
+      "detail": "{\"id\":1278871274,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-900204\",\"active\":false,\"groupId\":42198088,\"groupTitle\":\"DSH\",\"groupColor\":\"blue\"}"
+    },
+    {
+      "name": "两个标签在同一个组（groupId 相同）",
+      "ok": true,
+      "detail": "组内 2 个"
+    },
+    {
+      "name": "ungroup 报出解散数量",
+      "ok": true,
+      "detail": "{\"ungrouped\":2,\"groups\":1}"
+    },
+    {
+      "name": "标签页数量不变（只解除归属、不关标签）",
+      "ok": true,
+      "detail": "2 -> 2"
+    },
+    {
+      "name": "list 里再没有分组字段",
+      "ok": true,
+      "detail": "{\"id\":1278871274,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-900204\",\"active\":false}"
+    },
+    {
+      "name": "groups 一览也空了",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "未归组标签没有 groupId/groupTitle",
+      "ok": true,
+      "detail": "{\"id\":1278871274,\"url\":\"http://localhost:9781/fast\",\"title\":\"FAST-900204\",\"active\":false}"
+    }
+  ]
+}

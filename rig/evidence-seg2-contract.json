@@ -1,0 +1,237 @@
+{
+  "at": "2026-10-13T12:20:33.593Z",
+  "rigTag": "UC3",
+  "version": "1.0.93",
+  "raw": {
+    "dom": {
+      "cursorCandidates": 0,
+      "items": [
+        {
+          "rect": {
+            "h": 21,
+            "w": 177,
+            "x": 8,
+            "y": 12
+          },
+          "ref": "e1",
+          "tag": "input",
+          "value": "",
+          "why": "native"
+        },
+        {
+          "rect": {
+            "h": 21,
+            "w": 177,
+            "x": 8,
+            "y": 37
+          },
+          "ref": "e2",
+          "tag": "input",
+          "value": "",
+          "why": "native"
+        },
+        {
+          "name": "go",
+          "rect": {
+            "h": 21,
+            "w": 31,
+            "x": 185,
+            "y": 37
+          },
+          "ref": "e3",
+          "tag": "button",
+          "type": "submit",
+          "why": "native"
+        }
+      ],
+      "scanTruncated": false,
+      "scanned": 3,
+      "tabId": 1469760409,
+      "title": "PRESS-32263",
+      "total": 3,
+      "url": "http://localhost:9781/press",
+      "mode": "dom",
+      "limitedTo": 60
+    },
+    "ax": {
+      "tabId": 1469760409,
+      "mode": "ax",
+      "title": "PRESS-32263",
+      "url": "http://localhost:9781/press",
+      "total": 3,
+      "ax": {
+        "nodes": 11,
+        "candidates": 3,
+        "unresolved": 0,
+        "invisible": 0
+      },
+      "items": [
+        {
+          "ref": "e1",
+          "tag": "input",
+          "why": "ax",
+          "role": "textbox",
+          "type": "text",
+          "value": "",
+          "rect": {
+            "h": 21,
+            "w": 177,
+            "x": 8,
+            "y": 12
+          }
+        },
+        {
+          "ref": "e2",
+          "tag": "input",
+          "why": "ax",
+          "role": "textbox",
+          "type": "text",
+          "value": "",
+          "rect": {
+            "h": 21,
+            "w": 177,
+            "x": 8,
+            "y": 37
+          }
+        },
+        {
+          "ref": "e3",
+          "tag": "button",
+          "why": "ax",
+          "role": "button",
+          "name": "go",
+          "type": "submit",
+          "value": "",
+          "rect": {
+            "h": 21,
+            "w": 31,
+            "x": 185,
+            "y": 37
+          }
+        }
+      ],
+      "limitedTo": 60
+    },
+    "edge": {
+      "tabId": 1469760409,
+      "mode": "ax",
+      "title": "PRESS-32263",
+      "url": "http://localhost:9781/press",
+      "total": 3,
+      "ax": {
+        "nodes": 11,
+        "candidates": 3,
+        "unresolved": 0,
+        "invisible": 0
+      },
+      "items": [
+        {
+          "ref": "e1",
+          "tag": "input",
+          "why": "ax",
+          "role": "textbox",
+          "type": "text",
+          "value": "",
+          "rect": {
+            "h": 21,
+            "w": 177,
+            "x": 8,
+            "y": 12
+          }
+        },
+        {
+          "ref": "e2",
+          "tag": "input",
+          "why": "ax",
+          "role": "textbox",
+          "type": "text",
+          "value": "",
+          "rect": {
+            "h": 21,
+            "w": 177,
+            "x": 8,
+            "y": 37
+          }
+        },
+        {
+          "ref": "e3",
+          "tag": "button",
+          "why": "ax",
+          "role": "button",
+          "name": "go",
+          "type": "submit",
+          "value": "",
+          "rect": {
+            "h": 21,
+            "w": 31,
+            "x": 185,
+            "y": 37
+          }
+        }
+      ],
+      "limitedTo": 5
+    }
+  },
+  "checks": [
+    {
+      "name": "回 mode=dom",
+      "ok": true,
+      "detail": "dom"
+    },
+    {
+      "name": "有 items 且带 ref",
+      "ok": true,
+      "detail": "[{\"rect\":{\"h\":21,\"w\":177,\"x\":8,\"y\":12},\"ref\":\"e1\",\"tag\":\"input\",\"value\":\"\",\"why\":\"native\"},{\"rect\":{\"h\":21,\"w\":177,\"x\":8,\"y\":37},\"ref\":\"e2\",\"tag\":\"input\",\"value\":\"\",\"why\":\"native\"}]"
+    },
+    {
+      "name": "回 mode=ax（不是静默忽略）",
+      "ok": true,
+      "detail": "ax"
+    },
+    {
+      "name": "带 ax 统计（nodes/candidates）",
+      "ok": true,
+      "detail": "{\"nodes\":11,\"candidates\":3,\"unresolved\":0,\"invisible\":0}"
+    },
+    {
+      "name": "至少有一条带 role（这才是 AX 的价值）",
+      "ok": true,
+      "detail": "[{\"ref\":\"e1\",\"tag\":\"input\",\"why\":\"ax\",\"role\":\"textbox\",\"type\":\"text\",\"value\":\"\",\"rect\":{\"h\":21,\"w\":177,\"x\":8,\"y\":12}},{\"ref\":\"e2\",\"tag\":\"input\",\"why\":\"ax\",\"role\":\"textbox\",\"type\":\"text\",\"value\":\"\",\"rect\":{\"h\":21,\"w\":177,\"x\":8,\"y\":37}},{\"ref\":\"e3\",\"tag\":\"button\",\"why\":\"ax\",\"role\":\"button\",\"name\":\"go\",\"type\":\"submit\",\"value\":\"\",\"rect\":{\"h\":21,\"w\":31,\"x\":185,\"y\":37}}]"
+    },
+    {
+      "name": "AX 条目 why=ax",
+      "ok": true,
+      "detail": "ax"
+    },
+    {
+      "name": "页面上打到的 ref 数 == ax items 数",
+      "ok": true,
+      "detail": "stamped=3 items=3"
+    },
+    {
+      "name": "ref 名字与返回的一致",
+      "ok": true,
+      "detail": "e1,e2,e3"
+    },
+    {
+      "name": "ax 结果里有按钮",
+      "ok": true,
+      "detail": "{\"ref\":\"e3\",\"tag\":\"button\",\"why\":\"ax\",\"role\":\"button\",\"name\":\"go\",\"type\":\"submit\",\"value\":\"\",\"rect\":{\"h\":21,\"w\":31,\"x\":185,\"y\":37}}"
+    },
+    {
+      "name": "按 [data-dsh-ref=…] 点得动（ref 契约没变）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "表单被提交了 1 次（ref 指向的是真按钮）",
+      "ok": true,
+      "detail": "{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}"
+    },
+    {
+      "name": "小 limit 下仍是 ax（不因额度小就落回）",
+      "ok": true,
+      "detail": "ax"
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "at": "2026-10-12T17:46:19.776Z",
+  "rigTag": "UC1",
+  "extensionVersion": "1.0.91",
+  "browser": {
+    "name": "edge",
+    "version": "155.0.0.0",
+    "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"
+  },
+  "page": "http://localhost:9781/press",
+  "press": {
+    "afterX": {
+      "value": "x",
+      "formValue": "",
+      "keydown": 1,
+      "keypress": 1,
+      "input": 1,
+      "submit": 0,
+      "beforeinput": 1
+    },
+    "after7": {
+      "value": "7",
+      "formValue": "",
+      "keydown": 1,
+      "keypress": 1,
+      "input": 1,
+      "submit": 0,
+      "beforeinput": 1
+    },
+    "afterShiftX": {
+      "value": "x",
+      "formValue": "",
+      "keydown": 1,
+      "keypress": 1,
+      "input": 1,
+      "submit": 0,
+      "beforeinput": 1
+    },
+    "afterEnter": {
+      "value": "x",
+      "formValue": "",
+      "keydown": 0,
+      "keypress": 0,
+      "input": 0,
+      "submit": 1,
+      "beforeinput": 0
+    },
+    "afterArrow": {
+      "value": "",
+      "formValue": "",
+      "keydown": 1,
+      "keypress": 0,
+      "input": 0,
+      "submit": 0,
+      "beforeinput": 0
+    }
+  },
+  "emulate": {
+    "desktop": {
+      "tabId": 794592662,
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1,
+      "isMobile": false,
+      "hasTouch": false,
+      "userAgent": null
+    }
+  },
+  "checks": [
+    {
+      "name": "字母 x：value === \"x\"（不是 \"xx\"）",
+      "ok": true,
+      "detail": "实际 \"x\""
+    },
+    {
+      "name": "字母 x：input 事件 = 1",
+      "ok": true,
+      "detail": "实际 1"
+    },
+    {
+      "name": "字母 x：keypress = 1",
+      "ok": true,
+      "detail": "实际 1"
+    },
+    {
+      "name": "数字 7：value === \"7\"",
+      "ok": true,
+      "detail": "实际 \"7\""
+    },
+    {
+      "name": "Shift+X：只插入 1 个字符",
+      "ok": true,
+      "detail": "实际 \"x\""
+    },
+    {
+      "name": "Enter：表单只提交 1 次",
+      "ok": true,
+      "detail": "实际 1"
+    },
+    {
+      "name": "ArrowRight（不带 text）：不插入任何字符",
+      "ok": true,
+      "detail": "实际 \"\""
+    },
+    {
+      "name": "ArrowRight：keydown 仍然发生",
+      "ok": true,
+      "detail": "实际 1"
+    },
+    {
+      "name": "device:\"desktop\" 回包里 userAgent 是显式 null（这就是插件侧必须归一化的原因）",
+      "ok": true,
+      "detail": "实际 null"
+    }
+  ]
+}

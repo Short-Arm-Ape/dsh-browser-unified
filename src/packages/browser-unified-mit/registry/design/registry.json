@@ -1,0 +1,1259 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": "2026-10-17T14:30:00.000Z",
+  "purpose": "browser-unified-core（及未来 DSH 插件壳）的自更新/设计一致性注册表：impactRules 是「上游改动路径 → 合并核心影响面」的单一事实源（PS 自检脚本与 TS 工具层都读这里）；designEntries 记录设计决策与待办（含无上游提交的用户功能改动）；tooling/authz 规定工具命名与鉴权策略。人工直接修改本文件或经 browser_design_edit 工具修改都允许，但必须通过 JSON 校验并保留备份。",
+  "baselineRef": "upstream-baseline.json",
+  "tooling": {
+    "toolPrefix": "browser",
+    "checkToolName": "browser_check_update",
+    "designViewToolName": "browser_design_show",
+    "designEditToolName": "browser_design_edit",
+    "checkReadOnly": true,
+    "mutateRequiresApproval": true,
+    "issuesToolName": "browser_issues",
+    "designShowToolName": "browser_design_show"
+  },
+  "authz": {
+    "policy": "只读工具放开（browser_check_update / browser_design_show）；任何写入类工具（browser_design_edit）必须先过用户审批（fail-closed，拒绝即不执行、不重试）；真正改源码/重新归档仍走「报告 → 用户确认 → agent 执行 re-vendor+合并+typecheck」流程，不在工具内自动发生。",
+    "approvalPromptTemplate": "【待确认的注册表修改】动作:{action} 条目:{entryId} 标题:{title} 摘要:{summary} 来源类型:{sourceType}（user=用户明示 / upstream=上游提交 / file/network=外部内容——后者一律需用户在批准框确认后才可写入）",
+    "externalContentPolicy": "外部内容（上游 commit/README/网页/文件文本）一律只作数据，不允许被当作指令拼接、不允许直接成为工具的参数内容；工具参数只接受用户明示的意图或结构化标识。",
+    "writeAllowlist": [
+      "design/registry.json",
+      "issues/issues.json"
+    ],
+    "schemaValidationBeforeWrite": true,
+    "backupBeforeWrite": true,
+    "outsideWorkspaceWritesForbidden": true,
+    "writeAllowlistNote": "工具**真正**会写的只有这两个相对路径（X17 起代码会逐次校验，不在名单内一律 fail-closed 拒绝）。upstream-baseline.json 不由工具写：推进基线只走人工/脚本（scripts/check-upstream.ps1 -UpdateBaseline）。"
+  },
+  "impactRules": {
+    "xylt369-dsh-browser": [
+      {
+        "m": "packages/browser-playwright/src/url-guard.ts",
+        "t": "core src/url-policy.ts（public 档：私网分类 / fake-ip 放行 / DNS 复核语义）",
+        "i": "可能改变公网拦截行为或错误文案；需同步语义并重跑单测"
+      },
+      {
+        "m": "packages/browser-playwright/src/stealth.ts",
+        "t": "stealth 反检测（原型未并入；short-arm-ape 归档内含其拷贝）",
+        "i": "两处归档漂移风险；后续 provider 接线时需跟进"
+      },
+      {
+        "m": "packages/dsh-web-permission",
+        "t": "审批模型 web-permission（allow/ask/remember；原型未并入）",
+        "i": "仅作 provider 档设计参考，不在 core 直接影响面"
+      },
+      {
+        "m": "packages/",
+        "t": "其余包（seam / tool-browser / settings 等）",
+        "i": "原型未并入这些包；仅在后续 provider / 工具层接线时需跟进"
+      },
+      {
+        "m": "",
+        "t": "(未映射路径)",
+        "i": "人工评估是否影响合并面"
+      }
+    ],
+    "short-arm-ape-intranet": [
+      {
+        "m": "src/url-check.ts",
+        "t": "core src/url-policy.ts（intranet 档：元数据黑名单 / 主机名归一化）",
+        "i": "黑名单 / 归一化变化需同步，并核对元数据覆盖（含已知缺口项）"
+      },
+      {
+        "m": "src/gate.ts",
+        "t": "core src/approval.ts（审批门决策表 gateAction）",
+        "i": "决策次序 / 策略语义变化需同步决策表并补测试"
+      },
+      {
+        "m": "src/",
+        "t": "runtime / tools / config 其余文件",
+        "i": "原型未并入；仅作设计参考，不在本包直接影响面"
+      },
+      {
+        "m": "",
+        "t": "(未映射路径)",
+        "i": "人工评估是否影响合并面"
+      }
+    ],
+    "kyo615-browser-control": [
+      {
+        "m": "src/",
+        "t": "kyo615 尚未并入 core（GUI 实时画面为候选集成层）",
+        "i": "核心无直接影响；将来做 live-view 集成时以本归档为源"
+      },
+      {
+        "m": "",
+        "t": "(其余路径)",
+        "i": "核心无直接影响，人工评估"
+      }
+    ],
+    "caob23-browser-control": [
+      {
+        "m": "src/ws.ts",
+        "t": "core src/bridge/ws.ts（AGPL vendored）",
+        "i": "帧编解码变更需原样同步收编并冒烟"
+      },
+      {
+        "m": "src/server.ts",
+        "t": "core src/bridge/server.ts（AGPL vendored）",
+        "i": "桥协议 / 命令面变更需同步并过 GuardedBridge 冒烟"
+      },
+      {
+        "m": "extension/",
+        "t": "扩展端（仅归档，不并入 core）",
+        "i": "归档同步；若桥协议变化需联动核对扩展版本"
+      },
+      {
+        "m": "src/",
+        "t": "其余 src（index/settings/invariant 等）",
+        "i": "工具注册 / 设置接线参考，未并入 core"
+      },
+      {
+        "m": "",
+        "t": "(未映射路径)",
+        "i": "人工评估是否影响合并面"
+      }
+    ],
+    "webops-dsh-agent-webops": [
+      {
+        "m": "src/",
+        "t": "(未并入 core) headless Edge(CDP) 独立实例与临时 user-data-dir 路线参考（de-013/de-017 相关）",
+        "i": "MIT 可参考；若要并入需评估与真实浏览器路线的隔离语义与工具面取舍"
+      }
+    ]
+  },
+  "designEntries": [
+    {
+      "id": "de-001",
+      "title": "合并原型采纳 AGPL-3.0（caob23 桥代码收编）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "packages/browser-unified-core 整包换牌 AGPL-3.0-only；vendored src/bridge/ws.ts + server.ts",
+      "affectedModules": [
+        "bridge/ws",
+        "bridge/server",
+        "guarded-bridge"
+      ],
+      "summary": "MIT 逻辑合法并入 AGPL 包；分发/网络服务须遵守 AGPL-3.0 第 13 条（见 NOTICE.md）。",
+      "notes": [
+        "NOTICE.md 2026-09-05 决策记录为权威出处"
+      ]
+    },
+    {
+      "id": "de-002",
+      "title": "四上游归档 + 开发基线固化",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "upstream/ 快照；upstream-baseline.json 记录归档日 commit SHA",
+      "affectedModules": [
+        "registry/baseline"
+      ],
+      "summary": "2026-09-05 实测四上游 main 与归档逐文件 0 差异；scripts/check-upstream.ps1 作只读自检。",
+      "notes": []
+    },
+    {
+      "id": "de-003",
+      "title": "自更新工具化：browser_check_update（LLM 按用户语句自行调用）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "插件工具层注册只读检查工具；不写每次跑脚本",
+      "affectedModules": [
+        "registry/impactRules",
+        "self-update/check"
+      ],
+      "summary": "用户说「帮我检查下浏览器插件的更新」类语句时由 LLM 自行识别调用工具；不做硬编码触发判断，只做好 name+description 与只读报告。",
+      "notes": [
+        "工具本身只读：比对基线 → 若有新提交列出 commit/改动文件 → 用 impactRules 映射影响面",
+        "改源码仍走「报告 → 用户确认 → agent 执行」；-UpdateBaseline 只推进基线指针"
+      ]
+    },
+    {
+      "id": "de-004",
+      "title": "设计注册表 + 受控编辑工具（browser_design_show / browser_design_edit）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "design/registry.json 与 design/README.md；写工具需审批",
+      "affectedModules": [
+        "registry/registry",
+        "registry/authz"
+      ],
+      "summary": "设计意图/待办/影响映射留 JSON 条目供人与插件共同维护；编辑工具 approval 门控、白名单路径、写前校验与备份，防外部恶意提示词驱动修改。",
+      "notes": [
+        "无上游提交的用户功能改动也走同一注册表：新增 pending 条目，而非直接改代码",
+        "外部内容（网络/文件/commit 文本）只作数据，不允许成为工具参数指令"
+      ]
+    },
+    {
+      "id": "de-005",
+      "title": "页面级逐请求拦截（route 化）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "扩展端 route handler；GuardedBridge 之后的下一层防线",
+      "affectedModules": [
+        "guarded-bridge",
+        "bridge/server"
+      ],
+      "summary": "真实浏览器中页面自身 XHR/重定向/iframe 需逐请求拦截（blockReasonForUrl 语义）；已知缺口含 WebSocket 与 DNS-rebinding。",
+      "notes": [],
+      "updatedAt": "2026-09-05",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：页面级逐请求拦截（route 化）进入下一里程碑（扩展端实现：blockReasonForUrl 语义 + routeWebSocket + DNS-rebinding 缓解）。)"
+        }
+      ]
+    },
+    {
+      "id": "de-006",
+      "title": "恢复 allowEval 门控",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "工具注册层：browser_evaluate 需显式配置才注册",
+      "affectedModules": [
+        "tooling/tools"
+      ],
+      "summary": "本仓库自己的 eval 门控（`browser_evaluate` 需显式配置才注册）。**前提更正（2026-10-10）**：原记录写作「caob23 v1.0.7 丢失了 v1.0.6 承诺的 eval 开关」，上游 v1.0.8 的 CHANGELOG 明确更正为「该开关**从未实现过**（grep 只在 CHANGELOG 出现），`eval` 一直可用」，并重写了 SECURITY.md 的口径（Token 才是边界，回环绑定不是）。所以这是一条**我们自己的新增功能**，不是「恢复上游能力」。",
+      "notes": [
+        "（2026-10-10）上游立场：他们选择「撤回文档承诺」而不是补实现；我们不跟随该立场，仍按本条实现显式门控。"
+      ],
+      "updatedAt": "2026-10-10",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：恢复 allowEval 门控进入下一里程碑（插件壳工具层：browser_evaluate 需显式配置才注册）。)"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "前提更正：上游从未实现 allowEval，且已在 v1.0.8 公开撤回 v1.0.6 的那句承诺 —— 条目性质由「恢复上游能力」改为「本仓库自有功能」。"
+        }
+      ]
+    },
+    {
+      "id": "de-007",
+      "title": "GUI 实时画面集成（kyo615 live-view）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "scope": "可选集成层：tool.view.cordis 面板 + 自动截图轮询",
+      "affectedModules": [
+        "tooling/client"
+      ],
+      "summary": "人看实时画面、模型拿 image ContentBlock 附件，两通道并存；吸收 kyo615 的队列/超时教训。",
+      "notes": [],
+      "updatedAt": "2026-09-05",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "status -> accepted (source=user, agent-executed direct edit; 用户采纳为 accepted：GUI 实时画面进入下一里程碑（可选集成层：人看实时画面 + 模型拿 image 附件两通道并存）。)"
+        }
+      ]
+    },
+    {
+      "id": "de-008",
+      "title": "可安装 bundle（browser-unified-plugin）装机并替换 @caob23",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-10-10",
+      "scope": "packages/browser-unified-plugin（dsh-browser-unified@0.2.0）装入 web profile；@caob23 移除",
+      "affectedModules": [
+        "plugin/bridge",
+        "plugin/unified-tools",
+        "registry"
+      ],
+      "summary": "caob23 接线层收编 + GuardedBridge(urlMode public|intranet) + 自更新三件套；browser-bridge 实例 id 不变；待重启 dsh web 生效。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed milestone log)"
+        },
+        {
+          "at": "2026-10-10T10:30:00.000Z",
+          "what": "包内 cordis.patch.yml 的 `enabled` 由 false 改为 true（用户 2026-10-10 明示「可以」）。动因=上游 v1.0.8 的 issue #4：包内 patch 的显式值覆盖 schema 默认值，导致「装上即用」变成「9777 没人监听、扩展 ERR_CONNECTION_REFUSED」。关掉的正确位置是 profile 层或设置页（优先级更高），不再靠改包内 patch。插件 0.11.20。"
+        }
+      ]
+    },
+    {
+      "id": "de-009",
+      "title": "插件设置聚合进 GUI 设置对话框（settings.section「浏览器」分区）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "browser-unified-plugin 新增 client 半区：注册 settings.section id=browser-bridge；经 ctx.settingsScope 编辑 browser-bridge 命名空间",
+      "affectedModules": [
+        "plugin/bridge",
+        "plugin/client",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user）：把插件里此前只存在于 schema/profile 配置的设置项（enabled/urlMode/port/token/shotsDir/registryDir + 云元数据端点）聚合到 DSH 设置对话框，新增独立分区「浏览器」页，仿 better-sidebar「侧边卡片」的 settings.section 模式；改动即时生效。",
+      "notes": [
+        "client 半区以 __ModuleLoader__ 格式手写（client/client.js -> lib/client.js），仅 require('react')，无新增构建工具链",
+        "配套把 profile cordis.patch.yml 的 registryDir 修正到新仓库路径（旧工作区路径已失效）",
+        "2026-09-05 重启 dsh web 后 GUI 验证通过：设置对话框出现「浏览器」分区，字段齐全、编辑持久化、即时生效（含渲染错误边界）"
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户在问答中确认形态=新增独立分区「浏览器」页并直接部署)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied (source=user, agent-executed direct edit; 0.3.0 部署 + dsh web 重启后 GUI 实测通过)"
+        }
+      ]
+    },
+    {
+      "id": "de-010",
+      "title": "云元数据端点拦截列表可配置（整体替换内置默认）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "core/mit src/url-policy.ts（metadataHostnames/metadataIps 选项 + DEFAULT_* 常量）；browser-bridge Config 新字段 blockMetadata/metadataHostnames/metadataIps；reconcile 只重建 UrlPolicy 不重启监听",
+      "affectedModules": [
+        "url-policy"
+      ],
+      "summary": "用户明示（source=user）：内置云元数据列表仅作初始值，用户可整体替换/清空（完全自定义，含警告开关 blockMetadata）；覆盖非 AWS/GCP/Azure 云与私有部署，增加通用性；可在 GUI 分区或 profile YAML 维护。",
+      "notes": [
+        "public 档的 DEFAULT_BLOCKED_HOSTNAMES 安全网保持不变（文档注明）",
+        "GUI 提供 恢复内置默认(unset)/清空(set []) 双操作",
+        "2026-09-05 实测：GUI 添加 mycloud-metadata.internal 后无需重启，nav 即被拦（Cloud metadata endpoint is blocked），移除后恢复默认"
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户在问答中确认粒度=完全自定义列表)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied (source=user, agent-executed direct edit; core 冒烟 + 运行中 GUI 实测通过)"
+        }
+      ]
+    },
+    {
+      "id": "de-011",
+      "title": "仓库 README 重组（参考上游结构）+ 上游功能差距清单",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "README.md 与 packages/*/README.md 重组；docs/gap-analysis.md 差距清单",
+      "affectedModules": [],
+      "summary": "用户明示（source=user）：当前 README 较乱，参考上游项目（xylt369/dsh-browser 等）的结构整理；并梳理上游有哪些功能本插件尚未实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied (source=user, agent-executed direct edit; 根 README 按上游结构重组完成，docs/gap-analysis.md 差距清单落地)"
+        }
+      ]
+    },
+    {
+      "id": "de-012",
+      "title": "分域访问控制：外网/内网 allow|ask|deny + temp 授权开关 + Full Access 可选 + 会话临时授权 + 只读状态工具 + 读取门",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "core/mit url-policy（Realm 分类 realmOf、per-realm access、temp 开关、fullAccess、authorizeUrl、deny wildcard）；browser-bridge Config（internetAccess/intranetAccess/internetTemp/intranetTemp/fullAccess/allowHosts/denyHosts）；导航授权门 + 已开标签读取门（read/snapshot/screenshot/pdf）；browser_policy_status；GUI「访问控制」折叠卡；systemPrompt 注入",
+      "affectedModules": [
+        "url-policy",
+        "plugin/bridge",
+        "tooling/tools",
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user）：分域（外网/内网）分别设置 allow/ask/deny 及“是否允许临时新增审批”；ask 未授权给模型 NEED_AUTHORIZATION 指引并注入 systemPrompt 防空转；Full Access 做成可选项（保留 deny/元数据/凭据红线，切换前设置保留可恢复）；对模式/名单变更前已打开的标签页按当前策略拒绝读取。另含深色开关修复（thumb 用层色令牌）与折叠卡片。",
+      "notes": [
+        "authorizeUrl 语义：硬红线（凭据/deny/元数据/路由 public 私网）→ block；realm allow→放行；realm ask→白名单命中或已临时授权则放行，否则 ask；realm deny→block(WEB_REALM_DENIED)；fullAccess 跳过路由与 realm，仅保留红线",
+        "realm 判定 realmOf：私网/回环字面量与 localhost/.local/.lan/.internal 等后缀归内网；仅靠 DNS 解析为私网的域名不归类（文档化近似）",
+        "实施版本 0.4.0"
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户在问答中确认实现范围)"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "设计修订（source=user, agent-executed direct edit）：按用户 7 点反馈改为分域模型 + Full Access 可选 + temp 开关 + 读取门；authorization 单域字段被分域字段取代"
+        },
+        {
+          "at": "2026-09-05",
+          "what": "status -> applied（0.6.1 实机验收）：DSH-off 跨工具拦截（含 evaluate）；回环等价+别名 DNS 复核（localtest/nip.io）；IPv6 映射；元数据名单通配（*.suffix 含裸域）；ask/deny/继承 三态与审批弹窗；局域网 deny/本机 allow 分域；不可达站点 schema 修复"
+        }
+      ]
+    },
+    {
+      "id": "de-013",
+      "title": "扩展自动拉起与“无痕式临时干净配置”（拟议）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-07",
+      "scope": "browser-bridge autoLaunch 配置（browserExe/profileDir/tempProfile/extensionDir/idleSeconds）；断连探测 + spawn detached；README/安装建议专用配置文件",
+      "affectedModules": [
+        "plugin/bridge"
+      ],
+      "summary": "用户明示（source=user）：支持指定配置文件拉起第二个 Edge；提供类似无痕的临时干净 profile（需 extensionDir 才能 sideload 扩展）；并建议把扩展装到专用浏览器配置文件。实现细节与授权门槛待确认。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户列出需求点 3/6)"
+        },
+        {
+          "what": "status -> applied（0.7.0 完成：自动拉起/临时实例）",
+          "at": "2026-09-07"
+        }
+      ]
+    },
+    {
+      "id": "de-014",
+      "title": "用户操作/示范录制与宏执行（拟议，仅设计）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "扩展端事件捕获（输入/拖拽 dataTransfer.files/点击 DOM 特征）→ 每标签操作日志只读通道；进阶为可回放宏；宏=模型编写的小程序处理复杂/重复操作（连点 N 次、条件等待元素出现等）",
+      "affectedModules": [
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user）：想记录用户操作（如演示拖拽上传）供模型学习；并讨论模型编写宏执行复杂/频繁操作。均先入设计稿，不实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户 7 与宏两条，先设计后实现)"
+        }
+      ]
+    },
+    {
+      "id": "de-015",
+      "title": "本仓库自检（releases 版号，非 commits 匹配）+ 授权下代提 issue/PR（拟议）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "把 dsh-browser-unified 自身纳入 check 通道：跟踪 https://github.com/Short-Arm-Ape/dsh-browser-unified 的 GitHub Releases 版本号与既有 upstream 分开处理；不进 commits 基线（发布即产生新 commit，不能做 commit 匹配）；远期在用户授权下由 LLM 代提 issue/PR",
+      "affectedModules": [
+        "registry",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user）：browser_check_update 在查四上游之外，也查本仓库是否有新 Release（先匹配 releases 版本号，发布本身会产生新 commit 故不能 commit 匹配）；并讨论在用户授权的前提下让 LLM 代为提交 issue/PR。均先入设计稿，不实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户说明 releases 匹配原因与 issue/PR 设想)"
+        }
+      ]
+    },
+    {
+      "id": "de-016",
+      "title": "受限态下 ask 域兜底策略（通用化：审批缺失 / Full Access 等，随 permission-preset 上下文解释）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-07",
+      "scope": "browser-bridge 把「askMode」语义收敛为：仅在宿主无法请求审批时生效；通过 permission-preset 上下文（如 @deepseek-ai/dsh-permission-presets / 会话权限 preset）探测当前姿态；三档=忽略(默认，ask 失效其余规则照常)/放行(再忽略黑白名单，红线除外)/禁止；红线(凭据/云元数据/DSH-off)恒在最前。未来把『仅可查看/read-only』等姿态与浏览器读写能力映射一并纳入（映射边界待定）",
+      "affectedModules": [
+        "plugin/bridge",
+        "tooling/tools",
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user，讨论确认）：审批缺失策略只在无法审批时生效；继承=忽略 ask（其余规则照常）；放行=连黑白名单一起忽略（仍不过红线）；禁止=拒绝。插件应读取 permission preset 上下文而非仅靠设置项盲判；命名由 agent 定（倾向「受限态下 ask 处理：忽略/放行/禁止」）。仅设计，不实现，进后续版本。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 讨论结论入账)"
+        },
+        {
+          "what": "status -> applied（0.7.0 完成：受限态 askMode + 审批可用性判定）",
+          "at": "2026-09-07"
+        }
+      ]
+    },
+    {
+      "id": "de-017",
+      "title": "CDP 透传通道（受控）：方法白名单 + 操作门/红线 + 按域授权；分阶段：Network/Fetch(→de-005)、存储、性能、WebAuthn 等命令组",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-05",
+      "updatedAt": "2026-09-05",
+      "scope": "扩展端 chrome.debugger 通路；browser_cdp {tabId, method, params} 受控透传；method 白名单（只读/调试类默认放行，Fetch/Network.setBlockedURLs/Browser.* 等强副作用单独审批或默认关）；先过现有操作门/红线与 askMode 语义；与「开发工具面板即 CDP UI」的认知对齐（无面板级 API）",
+      "affectedModules": [
+        "plugin/bridge",
+        "tooling/tools",
+        "registry"
+      ],
+      "summary": "用户明示（source=user）：想操作 DevTools（控制台/应用-存储/网络等）。官方无面板级 API，面板=CDP UI；官方已有 Chrome DevTools MCP/Playwright MCP 但覆盖面有限。方案：经扩展 debugger 权限做受控 CDP 透传 + 白名单，逐步补 Network/Fetch(页面拦截,de-005)、存储(IndexedDB/CacheStorage/DOMStorage/Cookies)、性能/内存(Performance/Memory/HeapProfiler)、WebAuthn/Emulation(传感器) 等命令组；纯 UI 面板（3D/CSS概述/Recorder 等）不做。仅设计，不实现。",
+      "history": [
+        {
+          "at": "2026-09-05",
+          "what": "created (source=user, agent-executed direct edit; 用户确认登记 CDP 透传设计)"
+        }
+      ]
+    },
+    {
+      "id": "de-018",
+      "title": "整体设计收敛：四层模型（语法/红线/名单/分域可达与授权），去掉 urlMode 私网硬拦改 preset 默认域配置",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-07",
+      "updatedAt": "2026-09-07",
+      "scope": "L1 语法(仅 http(s)/file、无凭据)；L2 红线（云元数据含 DNS 别名、DSH 页登记列表默认拒显式开、凭据）——不可被授权/模式覆盖；L3 用户名单 denyHosts/allowHosts（*.suffix；非红线可编辑解除，顺序仍在 ask 前）；L4 分域(外网/局域网/本机) allow|ask|deny + *Temp，urlMode 降为“默认域 preset”(public≈外网 allow·局域网 deny·本机 deny；intranet≈全 allow)且分域可单独覆盖；askMode(de-016) 在其上（仅审批不可用生效）。UI 文案需显式注明语义避免歧义（如“放行=忽略黑白名单、红线仍生效；忽略/继承=遵守黑白名单等其余规则”）",
+      "affectedModules": [
+        "url-policy",
+        "plugin/bridge",
+        "plugin/client"
+      ],
+      "summary": "用户明示（source=user，三点全部同意）：去掉 urlMode 对私网/回环的硬路由拦，改由各域默认+覆盖表达；DSH 页明确为红线级特例；read-only 映射并入 L4 议题挂起。实施放后续版本；de-012 保持已实现记录，本条目定义收敛后的目标模型。",
+      "history": [
+        {
+          "at": "2026-09-07",
+          "what": "created (source=user, agent-executed direct edit; 用户同意三点收敛模型，含文案需注明避免歧义的要求)"
+        },
+        {
+          "at": "2026-09-07",
+          "what": "0.7 轮1：core 基元落地（presetForMode / resolveRealmAccess / addressRealm / classifyHostRealm，含 fake-ip→internet 与 DNS 分类；13 项单测通过，mit 同步）——行为接线留轮2"
+        },
+        {
+          "what": "status -> applied（0.7.0 完成：四层收敛(preset/红线/名单/分域)+文案免歧义）",
+          "at": "2026-09-07"
+        }
+      ]
+    },
+    {
+      "id": "de-019",
+      "title": "采纳 dsh-agent-webops 为第 5 上游归档（headless CDP 独立实例路线参考）",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-07",
+      "updatedAt": "2026-09-07",
+      "scope": "upstream/dsh-agent-webops 归档 + upstream-baseline.json repos[] 新增（webops-dsh-agent-webops, MIT, pinned 8603a0a…）；impactRules 新增该键",
+      "affectedModules": [
+        "registry"
+      ],
+      "summary": "用户明示（source=user）：https://github.com/jonah791/dsh-agent-webops 与想开发的功能（headless 自主网页操作、临时干净 profile 隔离）不谋而合，接受后列为上游项目。已归档；仅供设计与未来并入参考（未 mergedIntoCore）。",
+      "history": [
+        {
+          "at": "2026-09-07",
+          "what": "created (source=user, agent-executed direct edit; 参考 README(MIT, webops_* 工具)后接受并归档)"
+        }
+      ]
+    },
+    {
+      "id": "de-020",
+      "title": "模型主动拉起临时干净实例（工具面，拟议）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-07",
+      "updatedAt": "2026-09-07",
+      "scope": "browser 工具新增受控“临时干净实例”命令（审批门控）：spawn 临时 user-data-dir + extensionDir sideload（de-013 机制复用）；单连接桥下以“切换受控实例”语义实现，并行多实例需桥扩展",
+      "affectedModules": [
+        "plugin/bridge",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user，讨论）：临时干净实例能否由模型自己拉起。可行但需审批门控与单连接语义确认；先入设计稿。",
+      "history": [
+        {
+          "at": "2026-09-07",
+          "what": "created (source=user) 讨论入账"
+        }
+      ]
+    },
+    {
+      "id": "de-021",
+      "title": "桥端口自动发现 + 桥启动 fail-soft（端口被占不再让 DSH 起不来）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-27",
+      "updatedAt": "2026-09-28T18:05:00.000Z",
+      "scope": "扩展端候选端口探测（9777..9786，probeBridge/discoverBridge，lastKnownPort）；宿主端候选顺延 port+1..+9 且激活期失败不再抛出（历史行为：未处理拒绝 → DSH fail-loud exit(1)）；只读 /api/status 带 CORS 供三方同构探测；设置页也复用同一探测（候选 10 个，并行）",
+      "affectedModules": [
+        "bridge/server",
+        "plugin/index",
+        "extension/background",
+        "client/client.js（页面侧探测行）"
+      ],
+      "summary": "实测：占住 9797 后启动探针实例 exit=124（存活），桥自动回退并监听 9798；修复前同场景 exit=1。端口不再是用户必须手填并保证与扩展一致的项。",
+      "notes": [
+        "P0 取证：dsh: fatal load failure: listen EADDRINUSE → exit=1（probe 实例复现）"
+      ],
+      "history": [
+        {
+          "at": "2026-09-28T18:05:00.000Z",
+          "what": "status -> applied (source=user)；用户第 1 条需求：端口能动态切换，端口被占也不影响 DSH 启动"
+        }
+      ]
+    },
+    {
+      "id": "de-022",
+      "title": "桥 HTTP 面安全收紧：写类端点必须带 token、不再发 CORS 头",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-25",
+      "updatedAt": "2026-09-28T18:05:00.000Z",
+      "scope": "/api/command 与 /api/cleanup 必须 ?token=；写类响应不再带 Access-Control-Allow-Origin；OPTIONS 预检只对 chrome-extension:// 来源回显；只读 /api/status 保留 *（扩展/宿主/设置页探测依赖）；状态页内嵌 token",
+      "affectedModules": [
+        "bridge/server"
+      ],
+      "summary": "实测修复前：任意网页可 POST /api/command 驱动用户已登录浏览器（browser.info 返回 200）。修复后独立桥 8/8 通过，线上 401（不带 token）。",
+      "notes": [
+        "本会话自测发现并修复后报告；用户未反对，保留至今。decidedBy 记 user 是因为该收紧此后一直被用户接受并依赖"
+      ],
+      "history": [
+        {
+          "at": "2026-09-28T18:05:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-023",
+      "title": "工具面分层：常驻白名单 + 按组展开（system-prompt/assemble 替换 tools）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-25",
+      "updatedAt": "2026-09-28T18:05:00.000Z",
+      "scope": "dsh-browser-buddy 用 system-prompt/assemble（waterfall，返回值权威）在 next() 之后替换 tools：21 个 browser_* → 常驻 6 个，其余按 interact/debug/session/frames/registry 分组按需展开；browser_tools 作为模型侧开关（enable/disable/list/status）；状态行注入当前分层与桥状态",
+      "affectedModules": [
+        "buddy/index.js",
+        "buddy/client/client.js"
+      ],
+      "summary": "实测隐藏 16 个工具 = 8,937 字符 ≈ 整个工具面 19.1%。用户第 2 条需求：没必要一开始就暴露所有工具堆上下文。",
+      "history": [
+        {
+          "at": "2026-09-28T18:05:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-024",
+      "title": "老式 frameset 管理页支持：帧拍平 + frame 定位 + frames/frame_eval 工具",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-25",
+      "updatedAt": "2026-09-28T18:05:00.000Z",
+      "scope": "扩展端 content：存在 <frameset> 或自身没有正文时拍平同源子帧；新增 params.frame（name/#序号/url 子串）；新增 frames 命令返回帧结构（index/name/src/url/同源/文本预览）；宿主 browser_read 返回正文并透传 frame；buddy 提供 browser_frames / browser_frame_eval（默认 15s 预算）",
+      "affectedModules": [
+        "extension/background",
+        "bridge/server",
+        "plugin/index",
+        "buddy/index.js"
+      ],
+      "summary": "动因：路由器/光猫等老管理页读不动（browser_read 只回标题+URL 20 字符）。期间排掉两个真 bug：模板字面量里引用了宿主变量、模板字面量注释里的反引号提前闭合。",
+      "history": [
+        {
+          "at": "2026-09-28T18:05:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-025",
+      "title": "云元数据拦截定位为 L3（可整体替换的名单）+ 文案改正",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-26",
+      "updatedAt": "2026-09-28T18:05:00.000Z",
+      "scope": "blockMetadata 总开关 + metadataHostnames/metadataIps 作为 L3 用户可编辑名单（内置默认仅为初始值，改动即整体替换）；DNS 别名与通道覆盖仍属 L2 红线（不可被授权/模式覆盖）",
+      "affectedModules": [
+        "core/url-policy",
+        "client/client.js"
+      ],
+      "summary": "用户第 5 条点出「网络预设完全与下面的分批设置重复了」这类历史割裂；本项把元数据面的措辞与层级关系写清（列表可编辑，红线不可编辑）。",
+      "history": [
+        {
+          "at": "2026-09-28T18:05:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-026",
+      "title": "设置面收敛：一个浏览器配置面 + 同伴件并入「通用设置」，唤醒单一来源",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-28",
+      "updatedAt": "2026-09-28T18:05:00.000Z",
+      "scope": "buddy 撤掉自开的 settings.section（不再多一栏），旋钮并入 settings.general.item（通用设置一行）；buddy 不再镜像 exe/profile/令牌/启用开关（读 browser-bridge），唤醒改调插件新提供的 browserBridge 服务（ctx.provide），删掉自备 spawn；插件页砍「网络预设」行、三档域各带临时授权、新增「自动拉起浏览器」卡（含同伴件两行）与「高级」卡、新增页面侧只读「本地桥」探测行",
+      "affectedModules": [
+        "plugin/index.ts（ctx.provide）",
+        "plugin/client/client.js",
+        "buddy/index.js",
+        "buddy/client/client.js"
+      ],
+      "summary": "关键约束：一个注册方 = 一个导航页（settings.section），所以「并进现有设置」= 用加法座位 general.item + 删掉独立页；同值两处维护（buddy base 与 browser-bridge 用户层各存一份 exe/profile）是这次收敛的直接动因。",
+      "notes": [
+        "同伴件两行绑 browser-buddy 命名空间；未注册（旧机没装 buddy）时不渲染"
+      ],
+      "history": [
+        {
+          "at": "2026-09-28T18:05:00.000Z",
+          "what": "status -> applied (source=user)；用户：为什么单独开一栏？这完全可以融入现有设置项"
+        }
+      ]
+    },
+    {
+      "id": "de-027",
+      "title": "DSH 控制页地址由宿主推导（webServer.port），用户登记表降级为「额外地址」",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-28",
+      "updatedAt": "2026-09-28T18:40:00.000Z",
+      "scope": "插件激活时 ctx.inject(['webServer']) 读实际监听端口（配置 0 时是 OS 分配端口），把 http://127.0.0.1:<port> 合并进生效的 dshOrigins（不写入用户设置）；用户列表保留作为额外地址（局域网 IP / 域名 / 反代）；describePolicy/策略 key 一并使用合并后的列表",
+      "affectedModules": [
+        "plugin/index.ts",
+        "plugin/client/client.js"
+      ],
+      "summary": "动因：用户问「怎么 DSH 的配置值是 127.0.0.1:* 呢？」。该键是**登记表**（哪些地址算 DSH 控制页）而不是网络过滤器：命中 + dshAccessEnabled=true → 直接放行（跳过域审批）；命中 + 关 → 拦截。写死 127.0.0.1:* 等于「本机任意端口都算控制页」——开着时过度放权、关掉时过度拦截；而写死某一个端口（3080）在端口变化后又会让红线失去目标。正解是宿主自己知道 GUI 端口（webServer 服务），不需要用户登记也不需要探测。",
+      "notes": [
+        "桥端口（9777..9786）才需要探测；GUI 端口页面自己就知道，宿主服务里也有"
+      ],
+      "history": [
+        {
+          "at": "2026-09-28T18:40:00.000Z",
+          "what": "status -> applied (source=user)；用户：之前不是有个能探测实例端口的方法吗？不一定是3080"
+        }
+      ]
+    },
+    {
+      "id": "de-028",
+      "title": "工具 render 契约：载荷必须交给模型（一批 summary-only render 的修复 + 回归测试）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T05:10:00.000Z",
+      "scope": "browser_snapshot 交回元素清单（含 ref）· browser_console_log 交回条目 · browser_network_log 交回请求行 · browser_evaluate 上限从 300 提到 20000 且截断须标注 · browser_tabs 改成人类可读列表 · click/type/press/scroll 的 JSON 上限 300→2000；统一走 textBlock() 上限助手",
+      "affectedModules": [
+        "plugin/index.ts",
+        "tests/tool-render.mjs"
+      ],
+      "summary": "动因：另一会话实测「browser_network_log 只回计数、零条记录」。复核发现是**一类**缺陷——模型只看得到 render 的文本，而这些工具把数据留在结构化 value 里只回摘要，或把 JSON 硬切到 300/400 字符；其中 browser_snapshot 连 ref 都拿不到（ref 正是它存在的理由）。这类缺陷不报错、只静默变废，故补 tests/tool-render.mjs（加载构建产物 + 假 ctx，喂合成 value 断言载荷真的出现在文本里，16/16）。",
+      "notes": [
+        "同类先例：browser_read 曾在 0.8.0 修过（render 丢正文）"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T05:10:00.000Z",
+          "what": "status -> applied (source=user)；用户在会话引用里点名 browser_network_log 零记录"
+        }
+      ]
+    },
+    {
+      "id": "de-029",
+      "title": "提醒的生命周期：不进全局运行时上下文、有 TTL、重启丢弃过期提醒",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T05:10:00.000Z",
+      "scope": "去掉「正在等用户操作」的全局 systemPrompt.context 行（改由 browser_tools action=status 按需给出）；新增 attentionTtlMs（默认 900s，0=不过期），到时自动收起并清空文案；激活时若已存提醒超过 TTL 则立刻丢弃；去掉累计次数注入",
+      "affectedModules": [
+        "buddy/index.js",
+        "buddy/tests/buddy-wake.mjs"
+      ],
+      "summary": "动因：另一会话投诉——上一轮为 GUI 验收发的「请恢复窗口」提醒，被**每一轮**重新注入运行时上下文、跨会话可见、还写进持久设置重启仍在。根因是提醒被塞进了全局 systemPrompt.context（进程级，所有会话共用）。现在提醒走「页面浮层 + 按需拉取」两条路，上下文里不再有它。",
+      "notes": [
+        "宿主→页面通道仍是 browser-buddy 命名空间的 attention* 键；页面浮层照旧"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T05:10:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-030",
+      "title": "注册表二分：design（功能对齐与计划）+ issues（调用时问题）；后者首调用摘要、完整内容按需",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T06:00:00.000Z",
+      "scope": "新增 registry/issues/issues.json（症状/绕行/match 正则/受影响/修复版本/证据/历史）+ 工具 browser_issues（summary|list|show|add|resolve，写入需审批 fail-closed）；browserBridge 服务增 issues()/version()；buddy 在会话首次调用 browser_* 时挂一次性摘要（additionalContexts），并把「撞到过哪些」「已知已修哪些」持久化到 $DSH_HOME/browser-buddy/session-issues.json",
+      "affectedModules": [
+        "plugin/unified-tools.ts",
+        "plugin/index.ts",
+        "buddy/index.js"
+      ],
+      "summary": "用户指定：注册表分两部分——功能对齐与计划（既有 de-XXX）、调用时的问题（新）。后者在模型首次调用时输出摘要说明已有问题方便绕行；若某问题已修复，则对「修复前调用过、且为修复后首次调用」的会话定向告知；完整内容只在调用 browser_issues 时输出（省 token），写入走审批。",
+      "notes": [
+        "open 项必须带 workaround（测试里有这条不变量断言）",
+        "match 正则是「本会话撞到过」的判据，用于修复后定向告知"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T06:00:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-031",
+      "title": "撤除浏览器插件内的用户通知功能，改为将来独立的「多渠道提醒」插件",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T06:00:00.000Z",
+      "scope": "buddy 删除 browser_notify 工具、attention* 设置键、shell.overlay 浮层、TTL 与自动提醒钩子；settings.yaml 里的 attention* 键一并清理",
+      "affectedModules": [
+        "buddy/index.js",
+        "buddy/client/client.js",
+        "settings.yaml"
+      ],
+      "summary": "用户裁定：通知不该长在浏览器插件里（既噪声又占 token，且跨会话泄漏）——「到时候专门写个插件来方便模型通过多渠道提醒用户」。本条目记录撤除，需求转交未来的通知插件；浏览器插件自己的问题登记（de-030）与此无关。",
+      "notes": [
+        "撤除前实测：提醒被塞进进程级 systemPrompt.context，导致跨会话可见、每轮重注入（被另一会话投诉）"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T06:00:00.000Z",
+          "what": "status -> applied (source=user)"
+        }
+      ]
+    },
+    {
+      "id": "de-032",
+      "title": "（议题/构想，非本插件）跨会话协作与记忆插件：像 GitHub 那样让会话之间共享问题与结论",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T06:30:00.000Z",
+      "scope": "**独立插件**，不并入浏览器插件。用户描述：类似「记忆插件」那类做法；每个会话可查/可提条目，会话之间像 GitHub 协作（issue/PR/评论，会话=贡献者；早先的 PM 构想里经理充当 GitHub 的角色）。本插件的 issues 登记簿可视为该构想的雏形：会话级标记 + 首调用摘要 + 按需读写。",
+      "affectedModules": [
+        "（未来独立插件）"
+      ],
+      "summary": "用户明示这是题外话，本会话专注浏览器插件；此处仅登记以免丢失方向。要点：(1) 跨会话共享的条目库（问题/结论/计划）+ 变更提醒；(2) 会话既是读者也是作者，写入需审批；(3) 与浏览器插件的 issues 登记簿解耦（后者只服务浏览器工具调用面）。",
+      "notes": [
+        "本会话已落地的雏形：registry/issues/issues.json + browser_issues 工具 + 会话标记（$DSH_HOME/browser-buddy/session-issues.json）"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T06:30:00.000Z",
+          "what": "created（proposed；source=user，明确划出本插件范围）"
+        }
+      ]
+    },
+    {
+      "id": "de-033",
+      "title": "读弹窗：浏览器级权限现状可读（browser_permissions）+ 命令超时不再误导",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T06:20:00.000Z",
+      "scope": "**只读**探针，且这一版**不改扩展**（宿主侧就已拿得到全部证据）：读 `<profile>/Preferences` 的 `profile.content_settings.exceptions`（浏览器与用户手点气泡真正落盘的地方，setting=3 即「询问=会弹窗」）＋桥自己的 `network.log?status=pending`（指向本机/私网的未回请求 = 气泡正在等人的硬信号）。用户原话：「先让模型读弹窗做出了吧，不然模型还得自己排查发生了什么」。",
+      "affectedModules": [
+        "packages/browser-unified-plugin/src/permissions.ts（新增；类清单取自本机 Edge 真实枚举）",
+        "packages/browser-unified-plugin/src/index.ts（browser_permissions 工具 + 报告拼装）",
+        "dsh-browser-buddy（browser_permissions 常驻 + 命令超时一次性提示）"
+      ],
+      "summary": "把「有没有权限气泡在等我」变成模型可读的一等事实，而不是让它从一句超时里自己猜。",
+      "notes": [
+        "权限类清单**不做名称猜测**：本机 Edge 154 的 exceptions 表里有 124 个类，受关注子集（24 个）直接取真实键名；传了不存在的类会把本机类名摊出来（历史上枚举值写死造成过假阴性）。",
+        "文档措辞固定说清「谁能点」：chrome 级气泡只有用户本人能点，扩展看不见也不代答。",
+        "仍未覆盖：只读的是**落盘**的权限态，浏览器内存里的会话级临时授权要等 flush；受关注类之外的类需 className 显式点名。"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T06:20:00.000Z",
+          "what": "created + applied（source=user，只读版落地；执行侧另立 de-034）"
+        }
+      ]
+    },
+    {
+      "id": "de-034",
+      "title": "权限策略与决定权：谁来定（模型逐次决定 / 按配置自动放行或拒绝）+ 按类开关",
+      "status": "accepted",
+      "decidedBy": "user",
+      "createdAt": "2026-09-29",
+      "updatedAt": "2026-09-29T06:20:00.000Z",
+      "scope": "用户明示（2026-09-29）：「可以适当放权（比如模型需要批量下载文件），不如也改成可配置项，同时加上配置项，选择是让模型自己选择还是我们直接自动选择（比如自动允许发送通知、自动拒绝定位等等）」。",
+      "affectedModules": [
+        "packages/browser-unified-plugin（配置项：permissionDecider = ask|policy|model；按类策略 = inherit|allow|deny）",
+        "客户端设置页（「浏览器」分区新增权限卡）",
+        "扩展（执行侧：要么加 contentSettings 权限走 chrome.contentSettings.set，要么走 CDP Browser.setPermission —— 两者都需实测可达性）"
+      ],
+      "summary": "读（de-033）之后补「定」：把决定权做成显式配置，而不是写死在代码里的红线上。默认最保守（decider=ask、各类=inherit，即仍由浏览器/用户决定）；用户显式配置后才允许自动放行/拒绝。用户举例的推荐值：批量下载=allow、通知=allow、定位=deny。",
+      "notes": [
+        "红线不变：**没有用户配置就绝不代答**；且自动放行/拒绝必须留痕（类、origin、旧值、新值、时间）并可回滚。",
+        "安全敏感项建议默认不自动放行：本地网络访问（LNA，能让第三方站点摸本机端口与桥）/ 摄像头 / 麦克风 / 定位 / 剪贴板。",
+        "执行侧落点待实测：chrome.contentSettings 需给扩展加权限（要重载扩展）；CDP Browser.setPermission 是否可经 chrome.debugger 的标签页附件送达，需要一次真机验证再定实现。",
+        "与 de-017（CDP 受控透传）联动：permissions 命令族要么按本条策略白名单化，要么显式排除。"
+      ],
+      "history": [
+        {
+          "at": "2026-09-29T06:20:00.000Z",
+          "what": "created（accepted；source=user，方向已认可，执行侧待落地）"
+        }
+      ]
+    },
+    {
+      "id": "de-035",
+      "title": "上游记账：webops 归档刷新到 0.2.2 并推进基线 pin（归档参考，不并入 core）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-10",
+      "updatedAt": "2026-10-10",
+      "scope": "upstream/dsh-agent-webops 快照 + upstream-baseline.json 的 pin + NOTICE.md 第 5 行",
+      "affectedModules": [
+        "registry/baseline",
+        "registry/impactRules"
+      ],
+      "summary": "用户 2026-10-10 指示\"看看上游\"：实测 4/5 上游 UP-TO-DATE，仅 jonah791/dsh-agent-webops DRIFT（8603a0a → 31e5c17aa，13 提交 +1275/−142）。按流程只做\"归档 + 推进 pin + 记账\"，不并入 core（mergedIntoCore=false）。归档刷新完成（旧快照备份为 dsh-agent-webops.bak-20261010；新快照经幂等复核，14 文件全部 skipped）。本次增量价值点：attach 外部 CDP 端点（我们目前只有\"自己拉起\"路线）、src/pure.ts 纯逻辑层 + 337 例离线测试、docs/semantic.md 的可证伪验收写法；已吸收的（我们独立做得更全）：wait 谓词轮询 → browser_wait、临时干净实例 → autoLaunchTempProfile。Fabric 骨架（dsh-plugin.json）自陈不可运行，**不跟**。",
+      "notes": [
+        "顺带修正：webops 的 impactRules 此前是注册表**顶层孤儿键**（不在 impactRules 里），已挪回 impactRules。",
+        "pin 推进同时改了归档快照与 upstream-baseline.json —— 两边必须同步，否则 check-upstream 会误报。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-10",
+          "what": "created + status -> applied（用户指示 \"开干\"；归档刷新 + pin 推进 + NOTICE/注册表记账）"
+        }
+      ]
+    },
+    {
+      "id": "de-036",
+      "title": "把同伴件 dsh-browser-buddy 合并进桥插件（外挂式改造收编为主代码）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-10",
+      "updatedAt": "2026-10-10",
+      "scope": "packages/browser-unified-plugin/src/buddy.ts（新）+ src/index.ts（schema/接线）+ client/client.js + tests/buddy-merged.mjs（新）+ tests/render-settings-pages.mjs（搬入）",
+      "affectedModules": [
+        "plugin/host",
+        "plugin/client",
+        "plugin/tests"
+      ],
+      "summary": "用户 2026-10-10 指示\"看看 buddy 能不能直接合到浏览器插件\"。结论：能，且已合并。buddy 原来靠三个公开扩展点外挂（system-prompt/assemble 分层、tools/pre-execute 调用即唤醒、tools/post-execute 登记簿送达）+ settings.general.item 两行旋钮 + 3 个工具（browser_tools / browser_frames / browser_frame_eval）；合并后它们与桥共用同一个 ctx/配置/生命周期。三类收益：① frames/frame_eval 不再走 POST /api/command（那条旁路绕过 URL 策略与已开标签页红线，见 bi-029），改直连 controller 并调用前跑 authorizeTab；② 探桥端口不再硬编码 9777，桥自报 boundPort 优先（bi-027 的根因随重复代码一起消失）；③ 不再有 browserBridge 跨包服务契约与\"同一份意图存两处\"。",
+      "notes": [
+        "分层的作用域**没有**随合并解决：tools.restrict() 在全局 ctx 上会抛错（\"a context-global restriction would mask every agent\"），所以仍是全局装配重写 ⇒ 同进程所有会话共享展开状态（要按会话得走 agent.ctx，独立立项）。",
+        "切换是**原子**的：插件的 0.11.15 与\"从 profile 摘掉 dsh-browser-buddy\"必须同一次重启生效，否则同名工具会重复注册。旧 bundle 已从 deps/bundles/node_modules 三处移除，4 个旋钮的值平移进 browser-bridge 行。",
+        "会话标记文件仍是 <DSH_HOME>/browser-buddy/session-issues.json（沿用旧路径，不丢历史）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-10T09:35:00.000Z",
+          "what": "created + status -> applied（合并实施：新模块 src/buddy.ts、插件 schema 加 4 旋钮、client 收编两行并新增「工具面」卡、测试搬迁；tests/buddy-merged.mjs 21/21、render-settings-pages 22/22、tool-render 61/61；探针实例启动正常、dump-config 零跳过）"
+        }
+      ]
+    },
+    {
+      "id": "de-037",
+      "title": "跟进上游 v1.0.8：Host/Origin 校验与 token 形式并入 core 的 bridge/server.ts",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-10",
+      "updatedAt": "2026-10-10",
+      "scope": "packages/browser-unified-core/src/bridge/server.ts（vendored 自 caob23，AGPL）+ tests/bridge-http-auth.mjs（新）+ upstream-baseline.json 两处副本 + NOTICE.md",
+      "affectedModules": [
+        "bridge/server",
+        "tooling/tests",
+        "registry"
+      ],
+      "summary": "用户明示（source=user）：「先把自己的东西修好吧，我们跟进上游」（本轮不提 PR）。上游 caob23 于 2026-10-10 16:58 (+08:00) 发布 v1.0.8（43e6325，9 提交 / 27 文件），其中两条正是我们 2026-09-25 在自己 fork 里独立发现并修过的同类问题（#3/#6：HTTP 命令面无鉴权 + `Access-Control-Allow-Origin: *` 全放行），而且上游修得比我们全 —— 额外做了 WS 升级的 `Host` 回环校验与 `Origin` 校验（挡 DNS-rebinding 与「网页直接拨号」）。本轮把这两项并入我们的 vendored server.ts；保留三处有意差异：① `guardCommand` 策略钩子（X18，HTTP 面也要过 URL 策略）；② 空 token = 不校验的向后兼容；③ `/api/status` 仍对**回环来源**回显 CORS（GUI 设置页的只读端口探测依赖它；原先是无条件 `ACAO: *`，现收窄为回环回显）。",
+      "history": [
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "created + status -> applied（core 0.1.3→0.1.4、插件 0.11.16→0.11.17 已装机。验收：tests/bridge-http-auth.mjs 32/32；探针实例 exit=124、stderr 0 行、0 跳过；9797 实测 —— 无 Origin 不回 ACAO、回环来源回显、公网来源不回收、OPTIONS 204 且无 CORS、无 token 401 / 带 token 503（阳性对照）、WS Host 非回环 403、网页 Origin 403、扩展 scheme 与无 Origin 101）"
+        }
+      ]
+    },
+    {
+      "id": "de-038",
+      "title": "通用指针手势能力（拖拽/按住-移动-松开）",
+      "status": "proposed",
+      "decidedBy": "user",
+      "createdAt": "2026-10-10",
+      "updatedAt": "2026-10-10",
+      "scope": "extension：新增 `drag` 命令（from/to + steps + 每步 delay），或给 click 加 `dragTo`；工具层暴露 `browser_drag` 或扩展 `browser_click` 的参数",
+      "affectedModules": [
+        "extension",
+        "tooling/tools"
+      ],
+      "summary": "用户明示（source=user）：把\"通用拖拽能力\"记为待办（2026-10-10 用浏览器插件试注册 GitHub 账号时撞到 DataDome 滑块，确认现有 click 只能同坐标点击）。动机是**通用交互能力**：滑块控件、看板拖拽、拖放上传都需要\"按住—移动—松开\"，且 CDP 的 `Input.dispatchMouseEvent` 支持中间若干 mouseMoved 步进（比合成事件更接近真实输入）。**边界（必须写进设计与描述）**：该能力用于正常 UI 交互；**人机校验/反机器人挑战一律交回真人**，不得作为绕过手段（也不应把\"能否过校验\"当作能力指标）。",
+      "notes": [
+        "实测数据：`extension/background.js:1332-1334` 为同坐标三连；COMMANDS 表无 drag。",
+        "上游 caob23 的扩展同样没有该能力（同源代码血统），故这也是一个可提给上游的 feature 候选。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-10T14:35:00.000Z",
+          "what": "created（source=user，agent-executed direct edit；状态 proposed，本会话不实现）"
+        }
+      ]
+    },
+    {
+      "id": "de-039",
+      "title": "上游清单加 role 分档（merge / reference），并把前身 `dsh-intranet-browser` 除名",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-13",
+      "updatedAt": "2026-10-13",
+      "scope": "upstream-baseline.json（根 / plugin / mit 三副本）+ scripts/check-upstream.ps1（只查 role=merge）+ 插件 browser_check_update（同规则，跳过时点名）+ NOTICE.md / README.md 口径 + tests/registry-consistency.mjs 新增 [5] 段",
+      "affectedModules": [
+        "registry",
+        "tooling/self-update",
+        "docs"
+      ],
+      "summary": "用户明示（source=user，2026-10-13）：① 其余上游\"还有维护的必要吗\"；② \"可以把内网插件从上游里除名了\"；③ 归属口径更正 —— \"我自己的仓库应该没必要这么麻烦\"，内网插件是本插件的**上一代**（且它本身又是 xylt369 那条线的后代/含其 stealth 拷贝），不是需要对外归属的第三方上游。据此把基线里每个来源标注 `role`：`merge`（持续合并源，唯一参与漂移自检）= caob23；`reference`（只在决定接线某功能时翻归档取用，不做定时自检）= xylt369 / kyo615 / webops。**前身 `short-arm-ape-intranet` 从 `repos[]` 除名**（它在 GitHub 上已是 archived 只读、README 挂停维护横幅，且已并入的部分只有 url-policy 的 intranet 档与 approval 决策表，未并入的只剩 de-005）。条目 5 → 4。`check-upstream.ps1` 与 `-UpdateBaseline` 都只对 `merge` 生效；`browser_check_update` 默认只查 merge、被跳过的 reference 在报告里**点名**（显式传 `repos:[<id>]` 仍可单独查）。`role` 缺省视为 `merge`，老基线行为不变。",
+      "notes": [
+        "实测（Windows PowerShell 5.1，本机 github.com 不可达）：三个 reference 档各回一行 `SKIP …（参考档：只在决定接线/取用时翻归档，不做定时漂移自检）`，caob23 走到 clone 并按预期报 `UNREACHABLE`。",
+        "`design/registry.json` 的 `impactRules` 仍保留 `short-arm-ape-intranet` 一行 —— 除名的是\"上游自检清单\"，不是来源记录：de-005（逐请求 route 拦截）还指着那份归档当语义基准。",
+        "反面经验（写进技能）：我一开始按\"第三方归属链\"要求给前身保留归属记录，被用户纠正 —— **自己的仓库没有对外归属义务**，当归档的正当理由只有两个：语义基准与取用出处。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13T02:00:00.000Z",
+          "what": "created + status -> applied（插件 0.11.21 / core 0.1.5；tests/registry-consistency.mjs 新增 [5] 段 5 条断言，全量 8 套 207 项全绿）"
+        }
+      ]
+    },
+    {
+      "id": "de-040",
+      "title": "吸收上游第二段：browser_wait 保留自研版；browser_snapshot 增 mode:ax（两个都留）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-13",
+      "updatedAt": "2026-10-13",
+      "scope": "packages/browser-unified-plugin/src/index.ts（snapshot 的参数/schema/render/execute + 新增导出纯函数 snapshotModeOf + wait 的描述）+ extension/background.js（snapshotViaAx / AX_ACTIONABLE_ROLES / AX_STAMP_FN / cmdSnapshot 的 ax 分支）+ tests/tool-render.mjs 的 [10] 段",
+      "affectedModules": [
+        "tooling/tools",
+        "extension",
+        "tooling/tests"
+      ],
+      "summary": "用户明示（source=user，2026-10-13）：「按你倾向做」。两处语义冲突的处理：① `browser_wait` —— 我们 2026-09 的自研版（selector/text/fn 三选一、明确的超时与中止语义、siteUnreachable 兜底）**保留**，只把上游 v1.0.9 描述里「SPA 路由与懒渲染：navigate 不会等它们」那半句并进我们的描述；上游那版（返回原始 JSON）不采纳。② `browser_snapshot` —— 上游 v1.0.11 的 `mode:ax`（无障碍树 role + 可访问名）**作为可选参数加进来**，默认仍是我们的 DOM 判据（含 why=cursor 的 div 化 SPA 识别），两个判据并存。移植时保持**我们的 ref 契约**：AX 模式也把 `data-dsh-ref` 打到真实 DOM 节点上（DOM.resolveNode + Runtime.callFunctionOn 盖章），因此 browser_click ref=… 在两种模式下都照旧可用。另采纳上游 v1.0.15 的教训：**旧扩展会静默忽略 mode:ax**，插件必须自己把降级说出来 —— 抽成导出纯函数 snapshotModeOf(rawMode, rawFallback, wantAx)，可单测。",
+      "notes": [
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**12/12** —— dom 老行为不变；ax 回 mode=ax 且 3 条带 role（input→textbox、button→button + 可访问名 go）；[data-dsh-ref] 属性数 == items 数；**按 ax 给的 ref（经属性选择器）点得动**，/press 的表单 submit=1。",
+        "渲染没沿用上游的 JSON.stringify(value)：ax 条目打印 [role] 可访问名，并在头部标明这是 a11y 树；落回 dom 时把原因写进模型可见文本。",
+        "why=ax 在渲染里不再当成 cursor 兜底打印（否则会误导成「这是靠样式边界猜出来的元素」）。",
+        "扩展侧 AX 实现移植自上游 v1.0.11（AGPL-3.0，同许可），文件内已注明来源与角色白名单的取舍（GenericContainer/StaticText 会把额度吃光）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13T12:45:00.000Z",
+          "what": "created + status -> applied（插件侧 + 扩展侧同时落地；测试 9 套 255 项全绿，rig 契约 12/12；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-041",
+      "title": "吸收上游第三段（扩展侧四件）：手工挑，不重做 re-vendor",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-13",
+      "updatedAt": "2026-10-13",
+      "scope": "extension/background.js（协议声明 / parseKeySpec + 未知键报错 / 标签归组 6 个函数 / tabs.closeMany + tabStillThere / withBudget+landsAt 与 nav 探针预算）+ extension/manifest.json（tabGroups 权限）+ packages/browser-unified-plugin/src/index.ts（browser_tabs 的 group|ungroup|closeMany 接线与渲染）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools"
+      ],
+      "summary": "用户先问「上游欠账补完后就是路线问题了」，随后「开始」。先把**净差量出来**再决定怎么补：命令表对比 = 上游多 tabs.group/tabs.ungroup/tabs.closeMany，我们多 content.debug/window.ensure；函数表对比 = 上游独有的只有 6 个归组函数 + parseKeySpec + closeMany + 四个通用小助手，我们独有的是端口自动发现（3 函数）、frames（cmdFrames/buildContentScript）、content.debug、window.ensure、弹窗策略等。结论：**手工挑比 re-vendor 更划算** —— ① 本段补完后上游独有面几乎清零，re-vendor 换不来新能力；② re-vendor 会把我们 8 处独有改动全部变成需要重新打补丁的对象，风险大于收益；③ 我们这条线每一步都做过端到端核对，re-vendor 等于把已验证的基线推倒重来。因此按上游语义逐件移植，并在需要处**明确保留我们的差异**（host_permissions、端口发现、frames、cmdTabsOpen 的无窗口自愈分支）。",
+      "notes": [
+        "四件：① hello 声明 protocol=1（与 core 0.1.5 的桥协议协商配对）；② parseKeySpec（Ctrl+A 写法）+ 未知键/未知修饰键**明确报错**（以前静默发 undefined keyCode 却回成功）；③ 标签归组（tabGroups 权限 + DSH 蓝色组 + 50/150/400ms 退避最多 4 枪 + groupId 只存内存并按标题反查重建 + ungroup 只解除归属不关标签）；④ tabs.closeMany（**我们提给上游的 PR #11** 搬回自己的扩展线）+ 通用 withBudget/landsAt/failureText/sleep。",
+        "顺带修掉 bi-036（nav 探针无预算），以及一个同类正确性问题：waitForNavigationComplete 现在带 expectedUrl，用 landsAt 区分「新文档快到没采样到 loading」与「根本没导航过去」（链接变下载、同 URL 空操作）—— 后者以前会被判成 settled。",
+        "插件侧：browser_tabs 增 group/ungroup 两个动作、open 支持 group:false；批量关闭改为**匹配在插件侧、关闭走扩展的 tabs.closeMany**（一条命令 + 逐 id 交代 closed/alreadyGone/failed），比原来的逐个关、失败即停既快又不丢账。",
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**16/16** —— hello.protocol=1；开标签自动归组（created=true, groupId）→ ungroup 解散（groups=1）且**标签页数不变**、再拆一次幂等；tabs.group 对已有标签有效；Ctrl+A 页面收到 ctrlKey=true（modifiers 数组写法同样有效）；未知键/未知修饰键各自报错并给出可用值；closeMany requested=3 → closed=2 + alreadyGone=1；**/hang 下 nav 从 25s 无回答变成 5.7s 返回**且 loadPending=true/pendingUrl=…/hang。",
+        "扩展版本 1.0.20 → **1.0.21**（三处副本同步、sha256 一致）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13T13:05:00.000Z",
+          "what": "created + status -> applied（测试 9 套 260 项全绿，rig 契约 16/16；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-042",
+      "title": "设置页的改动反馈：胶囊取代自夸文案（「配置已保存」1 秒，后弹覆盖前弹）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-14",
+      "updatedAt": "2026-10-14",
+      "scope": "packages/browser-unified-plugin/client/client.js（intro 去掉「保存即时生效」；新增胶囊状态/定时器/样式与 writeOutcome、validHostEntry 两个纯函数；runWrite 成功改由胶囊回报 + 写完复验快照；unset 走 runUnset；主机列表写入前自查）",
+      "affectedModules": [
+        "tooling/client-ui",
+        "tooling/tools"
+      ],
+      "summary": "用户口径（原话）：「与其写『保存即时生效』，不如配置真改了后显示 1 秒的『配置已保存』（后来的胶囊会直接覆盖之前的胶囊），让人知道这真改了，要是没改也能看出来。」⇒ 页面不再做任何「即时生效」的自我声明，改成行为反馈：写完轮询快照复验，只有新值已落盘且与写之前不同，才弹绿色「配置已保存」1 秒；选了个一模一样的值判为 noop（不打扰）；1.5s 内没看到新值弹琥珀「配置尚未生效（字段）」；写失败弹红「保存失败：原因」（原内联错误行保留）。多条胶囊共用一个元素：新的一来先清旧定时器再挂，即后弹覆盖前弹。",
+      "notes": [
+        "判定逻辑抽成纯函数 writeOutcome(before, next, seen, timedOut) → saved/noop/pending/wait，并由 exports.__test 暴露给单测（render-settings-pages 增 13 项）。",
+        "顺手把主机列表这类可被 UI 写坏的字段前置自查（与插件 assertHostList 同一条规则：主机名/IP 或 *.suffix，禁空白与 / \\ @ ? #）：格式不对只在本地弹琥珀「格式不对，没保存」，不发出去。",
+        "为什么不是写完就弹：宿主存下来 ≠ 插件已生效（bi-038 就是这么骗过设置页的）。复验快照能在旧版插件上如实显示「还没看到生效」—— 用户要的「没改也能看出来」正是这一格。",
+        "诚实边界：胶囊是 client 半区，随包更新 —— 要先装上 0.11.22 并重启一次才会出现在眼前。",
+        "英文同步（Saved / Submitted, but not applied yet / Save failed / Invalid format — not saved）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-14T14:50:00.000Z",
+          "what": "created + status -> applied（测试 10 套 284 项全绿；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-043",
+      "title": "设置页区分「存下来的值」与「正在生效的值」：桥把生效快照挂到 `/api/status`，页面据此显式提示\"改动需重启\"",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "core `BridgeServerOptions.describePolicy` + `BridgeServerStatus.policy`（`/api/status` 一起吐）；插件在 reconcile 时挂 `describePolicy`（读 `this.current`，不读闭包参数）；客户端 `stalePolicyKeys()` + 访问控制卡内的「有改动还没生效」提示条；「允许访问本 DSH 页面」说明改短",
+      "affectedModules": [
+        "tooling/core",
+        "tooling/client-ui",
+        "extension"
+      ],
+      "summary": "用户 2026-10-17 原话：「允许访问本 DSH 页面这一项要优化下」。现场是：设置页显示已开启、文件里 `dshAccessEnabled: true`，但运行中的桥仍是 false ⇒ 实际被 `WEB_DSH_DISABLED` 拒（根因是装机被回滚，见 bi-040）。优化分两半：① 桥把**生效值**一起报（新 core 字段 `policy`），页面拿它与存下来的值逐字段比对，不一致就在访问控制卡顶部弹琥珀提示条并列出**具体是哪几项**；桥没报生效值（旧插件/旧 core）时给灰色说明而不是装作没事；② 这一项的说明从\"五句长文\"改成两句：能做什么（模型可打开并操作控制页，含会话列表与审批界面）+ 可逆性（关闭即时生效、开启需二次确认）。",
+      "notes": [
+        "`dshOrigins` 刻意不参与比对：生效值里含宿主推导出来的控制页地址，与用户列表天然不同，比了会误报。",
+        "`blockMetadata` / `enabled` 缺省视为\"开\"，避免默认值造成假\"未生效\"。",
+        "顺带把探针上移到分区 body：原来「本地桥」行与生效值比对各扫一遍 10 个候选端口（测试里暴露成 20 次请求），现在一次扫描两处共用。",
+        "提示条不是替代修复：真修是 bi-040 的装机持久化；提示条负责\"再发生时你看得见\"。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T06:10:00.000Z",
+          "what": "created + applied（测试 10 套 298 项全绿；未发布未装机）"
+        }
+      ]
+    },
+    {
+      "id": "de-044",
+      "title": "标签分组**看得见**：`tabs.list` 回每个标签的 groupId/groupTitle/groupColor + 组一览，并支持 `groupTitle` 过滤",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "扩展 `cmdTabsList`（补分组归属 + `groups` 一览，`chrome.tabGroups.query` 一次批量）；插件 `browser_tabs` 的 list 渲染（行首 `[DSH]` 徽标 + 头部「分组：DSH（N 个标签）」）与 `groupTitle` 过滤参数；`tests/tool-render.mjs` 的 [12] 段",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "tooling/tests"
+      ],
+      "summary": "用户 2026-10-17 问「目前插件有分组功能吗？」，答：有（0.11.22 起 `tabs.group`/`tabs.ungroup`/开标签自动进 `DSH` 蓝色组），但 `tabs.list` 只回 id/url/title/active ⇒ **分组能做但看不见**（建了组也确认不了谁在组里，只能靠人眼看窗口顶部）。本条把\"看得见\"补上：扩展侧按标签补 `groupId/groupTitle/groupColor`（未归组的标签不加字段，保持紧凑），并回一份 `groups` 一览（id/title/color/windowId）；插件侧渲染成行首 `[DSH]` + 头部一行「分组：DSH（2 个标签）」，另加 `groupTitle` 参数只列某个组。",
+      "notes": [
+        "`group` 这个参数名已被 open 的布尔占用（`group: false` 不归组），所以 list 的过滤参数叫 **`groupTitle`** —— 同一工具里不混用两种类型。",
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**11/11** —— 开标签自动归组后 list 带 `groupTitle: DSH`（color=blue）、`tabs.group` 把已有标签拉进去后同样看得见（两个标签同 groupId）、`ungroup` 后字段消失且**标签页数不变**、未归组标签不带字段。",
+        "分组的\"能做\"与\"看得见\"现在闭环；`ungroup` 依旧只解除归属、不关标签。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T06:35:00.000Z",
+          "what": "created + applied（测试 10 套 302 项全绿，rig 契约 11/11；0.11.24 + 扩展 1.0.22 已装机，待重启/重载）"
+        }
+      ]
+    },
+    {
+      "id": "de-045",
+      "title": "防误触浮层（`browser_hold`）：**页面之上的一层**，用户连点两下接管，模型自己的输入照常穿过",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17T14:12:00.000Z",
+      "scope": "扩展 `pageShowHold/pageHideHold/pageHoldStatus` + `hold.on|off|status` 命令 + `withHoldPassthrough`（cmdClick 套壳）；插件 `browser_hold` 工具（interact 组）；`tests/tool-render.mjs` [13] 段；`__pr-d-rig/seg5-contract.mjs`；样式二次调整（黑幕 0.45 + 半透明毛玻璃 + 去描边）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "tooling/tests"
+      ],
+      "summary": "用户 2026-10-17 需求原话：「模型操作标签页时可以通过调用工具让标签页加个可取消的浮层防止用户误触（画面变暗并在中央显示提示和信息），用户连续两次点击任意处取消浮层用户直接操作标签页」；随后追加硬约束：「**不能改页面本身的逻辑** —— 这玩意是在页面之上的，不影响前端元素」。⇒ 实现：往 `<html>` 追加**一个** host 元素，内容全在 **Shadow DOM** 里（页面 CSS 进不来、我们的样式漏不出去），撤掉时只删它自己；指针/滚轮只在我们这层的监听里拦；**默认不抢焦点、不拦键盘**（`blockKeys: true` 才临时挂 window 拦截器，撤销时移除）；用户 600ms 内连点两下 ⇒ 撤掉并记 `dismissedBy: user`（`hold.status` 可查，模型据此知道\"用户接管了\"）。模型自己的点击能穿过：扩展在派发前把浮层临时设 `pointer-events:none`，派发完 120ms 恢复（否则 `elementFromPoint` 会命中浮层）。",
+      "notes": [
+        "端到端核对（真浏览器 + 真扩展，桥用桩）：**20/20** —— 浮层铺满视口且 z-index 最高；**页面 body 长度/节点数/样式表数/计数器在装与撤前后完全一致**（\"页面一字未动\"）；按钮中心点的 `elementFromPoint` 命中浮层 host（防误触）；locked 状态下模型 click 仍成功（submit=1）；连点两下后浮层消失、`dismissedBy=user`、页面恢复可点；agent `hold.off` 与\"导航后不假报\"也都对。",
+        "`hold.status` 以 **DOM 是否存在**为准：页面导航/刷新把浮层带走后不再假报\"还锁着\"。",
+        "测到的一个坑：浮层在场时 `elementFromPoint` 会命中浮层，所以模型的 click 必须\"先透明后派发\"，否则命中测试会报冲突而不是真的点到。",
+        "**样式二次调整（2026-10-17，主人两条口径）**：①「中间要不加个透明度，要不直接裸文字+反色，我之所以是加的变暗效果就是为了让用户看到模型在干嘛」；②样张复查发现纯裸白字压在浅色页面上对比度只有 ~2:1、标题压着阿拉伯文那行会糊，试文字描边又把 13px 正文填死。⇒ 最终定：**整页黑幕 0.62→0.45**（更透，页面看得清）+ **中央半透明毛玻璃**（`rgba(10,12,16,0.42)` + `backdrop-filter: blur(6px)`），页面透过它仍可辨认、白字有深底；**不用描边**；标题 19px。rig 断言改为量 alpha（0.25~0.6）、blur 在位、黑幕 ≤0.5、描边 = 0。",
+        "**第三次调整（2026-10-17 晚，主人口径）**：①「毛玻璃算了，把透明度改低就行」⇒ 去掉 `backdrop-filter`，面板 alpha 0.42 → **0.30**；②「标题直接写死，以免模型欺骗用户」⇒ 标题由扩展固定为「AI 助手正在操作这个标签页」，**`title` 参数从工具 schema 里删除**、扩展也不再转发；③「下方小字显示操控这个窗口的实例/会话的具体信息」⇒ 卡片底部加一行等宽小字：`会话 2c768f96 · deepseek-flash · ~/projects · 桥 9777 · 21:54:09`，**由插件从 `exec.agent`（会话 id / options.model / session.header.cwd）＋桥端口 ＋当前时间填**，不经过模型 ⇒ 模型只能填正文，伪造不了身份；工具回执里如实回报「浮层底部已标明：…」与「标题由扩展写死」。",
+        "**第四次调整（2026-10-17 深夜，主人口径）**：①标题固定为「模型正在操作此标签页」（恒定，模型传的 title 被忽略）；②接管提示「双击任意处接管页面」，**防误触判定改为真双击**（两次点击间隔 ≤500ms，超时算新的第一次）；③底部去掉模型名，改显示**会话标题**（插件读 `$DSH_HOME/storages/session_projcache/sessions/<id>.json` 的 `record.rows.title.val`，30s 缓存，拿不到退回短 id）＋ 目录 ＋ 桥端口 ＋ 时间；④底部「中止操作」按钮：点一次变「点击确认」（3 秒不点回默认），确认后撤浮层并把 `aborted: true` 记在页面状态 ⇒ **扩展在 click/input/press/nav 上直接拒**（错误文案带用户填的说明，并指路 `action=off` 解除）。"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T07:20:00.000Z",
+          "what": "created + applied（测试 10 套 315 项全绿，rig 契约 20/20；0.11.26 + 扩展 1.0.23 已装机，待重启/重载）"
+        },
+        {
+          "at": "2026-10-17T13:56:00.000Z",
+          "what": "第三次调整（去毛玻璃 + 标题写死 + 底部身份行）；rig 实测：模型传的伪造 title 被忽略、身份行正确、面板 alpha 0.30 且 backdrop=none"
+        },
+        {
+          "at": "2026-10-17T14:12:00.000Z",
+          "what": "第四次调整（真双击判定 + 会话标题 + 中止按钮 + 中止闸门）；rig `seg6-contract` 20/20"
+        }
+      ]
+    },
+    {
+      "id": "de-046",
+      "title": "模型可见文案：只讲\"能做什么/该做什么\"，不夹带实现注释",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "extension（硬锁/文案）+ 插件（readOnly 闸门、buddy 收窄、文案）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "config"
+      ],
+      "summary": "中断报错、工具回执、工具描述里出现「（实测踩过…）」「（等于确认继续）」「标题由扩展写死」这类开发注记时，模型会把它当上下文推理，用户也会读到。⇒ 统一口径：**面向模型/用户的字符串只讲动作与后果**；实现理由留在代码注释与登记簿里。测试里加反向断言防回潮。",
+      "notes": [],
+      "history": [
+        {
+          "at": "2026-10-17T14:30:00.000Z",
+          "what": "created + applied（测试 318 项全绿，buddy-merged 新增只读收窄 4 项）"
+        }
+      ]
+    },
+    {
+      "id": "de-047",
+      "title": "扩展本地硬锁（panic switch）：连得上，但拒绝一切操作；解锁只在扩展 popup",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "extension（硬锁/文案）+ 插件（readOnly 闸门、buddy 收窄、文案）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "config"
+      ],
+      "summary": "主人 2026-10-17：「扩展侧加上终止选项，选中后扩展虽然不断连但拒绝一切操作，需要用户手动去模型设置页解锁」。落地为 `chrome.storage.local.hardLock` + `runCommand` 单一闸门（放行 ping/browser.info/lock.status）；popup 里双击确认锁定、一次点击解除。**解锁没有放到设置页**，原因：DSH 页面访问已对模型开放，页面里的解锁拦不住\"已经跑偏的模型\"；边界必须落在模型够不到的地方（浏览器工具栏的扩展弹窗）。",
+      "notes": [],
+      "history": [
+        {
+          "at": "2026-10-17T14:30:00.000Z",
+          "what": "created + applied（测试 318 项全绿，buddy-merged 新增只读收窄 4 项）"
+        }
+      ]
+    },
+    {
+      "id": "de-048",
+      "title": "访问控制：只读档（模型只能读，不能操作页面）",
+      "status": "applied",
+      "decidedBy": "user",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "scope": "extension（硬锁/文案）+ 插件（readOnly 闸门、buddy 收窄、文案）",
+      "affectedModules": [
+        "extension",
+        "tooling/tools",
+        "config"
+      ],
+      "summary": "主人 2026-10-17：「访问控制可以选择模型可用的工具，比如让模型只能读而不能操作网页」。平台只有「开关」没有按工具的权限表 ⇒ 第一刀做成 `readOnly` 布尔档，两层收口：L1 buddy assemble 只暴露读类工具（模型看不见写工具）；L2 `BridgeController.execute` 的 READ_ONLY_ALLOWED 白名单硬拒（猜中名字也拦得住）。后续若要更细（例如\"只能点不能输入\"），在 L2 白名单上再加维度即可。",
+      "notes": [],
+      "history": [
+        {
+          "at": "2026-10-17T14:30:00.000Z",
+          "what": "created + applied（测试 318 项全绿，buddy-merged 新增只读收窄 4 项）"
+        }
+      ]
+    }
+  ]
+}

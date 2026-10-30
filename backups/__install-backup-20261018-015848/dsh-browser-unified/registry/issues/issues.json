@@ -1,0 +1,1081 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": "2026-10-17T23:00:00.000Z",
+  "purpose": "浏览器插件的**第二部分注册表：调用时的问题**（第一部分 registry/design/registry.json 记「功能对齐与计划」，本文件记「实际调用时踩到的坑」）。用法：模型在某会话里首次调用 browser_* 时会收到 open 问题的绕行摘要（+ 自上次调用以来已修复的问题告知）；完整内容只在调用 browser_issues 时输出，避免每轮占 token。",
+  "fields": {
+    "status": "open（仍存在，必须给 workaround）| fixed（已修，写 fixedIn）| wontfix（不修，写原因）",
+    "symptom": "调用时具体看到什么（报错原文/现象），供模型对照",
+    "workaround": "模型可以怎么绕过（open 项必填）",
+    "match": "可选正则（大小写不敏感）：工具结果/错误文本命中即视为「本会话撞到过」，用于修复后定向告知",
+    "affected": "受影响版本范围",
+    "fixedIn": "在哪个版本修复",
+    "evidence": "取证（谁的哪个实测、读数）"
+  },
+  "issues": [
+    {
+      "id": "bi-001",
+      "title": "snapshot / console_log / network_log 只回计数，载荷全丢在结构化值里",
+      "status": "fixed",
+      "symptom": "browser_network_log 返回 'Tab X: 15 of 62 network requests'、browser_console_log 返回 'Tab X: N of M console entries'、browser_snapshot 返回 'N interactive elements on T; click or fill them by ref.' —— 都拿不到任何一条实际数据（snapshot 连 ref 都没有）。",
+      "workaround": "改用 browser_evaluate 自取（DOM 查询 / performance.getEntriesByType('resource')）",
+      "match": "interactive elements on|console entries|network requests",
+      "affected": "≤0.8.5",
+      "fixedIn": "0.8.6",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "render",
+        "token"
+      ],
+      "evidence": "另一会话两次调用 browser_network_log（'15 of 62'、'5 of 209'）零条记录；本会话复核发现是 render 丢数据的一类缺陷（含 evaluate 硬砍 300 字符、tabs 切 400 字符）。",
+      "history": [
+        {
+          "at": "2026-09-29T05:00:00.000Z",
+          "what": "created（另一会话实测 + 本会话复核为一类）"
+        },
+        {
+          "at": "2026-09-29T05:05:00.000Z",
+          "what": "status -> fixed（0.8.6：五处 render 改为交回载荷，新增 textBlock() 上限助手；tests/tool-render.mjs 16/16）"
+        }
+      ]
+    },
+    {
+      "id": "bi-002",
+      "title": "browser_evaluate 结果被硬砍到 300 字符",
+      "status": "fixed",
+      "symptom": "长结果只回前 300 字符，且**不提示被截断**（实测约 250 字符即断），长内容只能自己分片取。",
+      "workaround": "自己把结果分片（例如先存到 window 上再分段读）",
+      "match": "Evaluate in page",
+      "affected": "≤0.8.5",
+      "fixedIn": "0.8.6",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "render",
+        "token"
+      ],
+      "evidence": "另一会话实测『硬截断在 ~250 字符，逼我一片一片取』；代码为 render: value.json.slice(0, 300)。",
+      "history": [
+        {
+          "at": "2026-09-29T05:05:00.000Z",
+          "what": "status -> fixed（0.8.6：上限 20000，超限时文本里明确写「已截断：全文 N 字符」）"
+        }
+      ]
+    },
+    {
+      "id": "bi-003",
+      "title": "指定了不存在的 tabId 时静默退回 tabs[0]（授权判在别的标签页上）",
+      "status": "fixed",
+      "symptom": "传错 tabId 时，授权检查落在**第一个**标签页上，真正的命令再由扩展回一句 'No tab with id: …'，且不列出可用 id —— 调用方还得多跑一次 browser_tabs 才知道有哪些。",
+      "workaround": "先 browser_tabs 拿真实 id 再调用",
+      "match": "No tab with id",
+      "affected": "≤0.8.7",
+      "fixedIn": "0.8.8",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "tabId",
+        "diagnostics"
+      ],
+      "evidence": "另一会话手抄 tabId 错位（875896480 vs 875806480）后只得到一句 No tab with id；复核宿主 currentTabUrl() 无匹配即 pick = tabs[0]。",
+      "history": [
+        {
+          "at": "2026-09-29T05:15:00.000Z",
+          "what": "status -> fixed（0.8.8：明确报错并列出可用 id，含 active 标记）"
+        }
+      ]
+    },
+    {
+      "id": "bi-004",
+      "title": "SPA / 微前端：browser_navigate 返回 ≠ 正文就绪",
+      "status": "open",
+      "symptom": "navigate 返回了正常标题与 URL，但紧跟其后读到的正文只有几百字符（微应用还在渲染）；实测 363 字符 → 轮询约 8s 才 1869 字符。",
+      "workaround": "navigate 后若正文为空或极短，用 browser_read / browser_evaluate 复查（必要时轮询几秒）再下结论；别把「标题拿到了」当成「内容就绪」",
+      "match": "",
+      "affected": "≤0.8.9",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "spa"
+      ],
+      "evidence": "另一会话在奇安信威胁情报中心（微前端）实测；工具描述已补提示（0.8.8），但插件本身不做等待/就绪探测。",
+      "history": [
+        {
+          "at": "2026-09-29T05:20:00.000Z",
+          "what": "created（open；描述已在 0.8.8 写入提示）"
+        }
+      ]
+    },
+    {
+      "id": "bi-005",
+      "title": "history.pushState 不触发 SPA 重渲染：用它在站内翻页会读到上一条页面",
+      "status": "open",
+      "symptom": "在 browser_evaluate 里 pushState 之后，URL 变了、页面内容没变；随后按新 URL 抽取，得到的其实是上一条通告的数据（会把 A 的受影响版本安到 B 头上）。",
+      "workaround": "换页用 browser_navigate（真实导航）；每次抽取前先核对页面身份（标题 / 编号 / QVD）再取数据",
+      "match": "",
+      "affected": "任意版本（CDP/浏览器语义如此，非插件缺陷）",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "spa",
+        "false-green"
+      ],
+      "evidence": "另一会话实测：两条通告抽出同一个受影响版本 0.1.2-alpha.1，靠标题+QVD 自证身份才发现是残留。",
+      "history": [
+        {
+          "at": "2026-09-29T05:20:00.000Z",
+          "what": "created（open；browser_evaluate 描述已在 0.8.8 写入该坑）"
+        }
+      ]
+    },
+    {
+      "id": "bi-006",
+      "title": "JS 对话框会被桥自动 accept（涉及确认框的页面不能驱动）",
+      "status": "open",
+      "symptom": "页面弹 confirm/alert/prompt 时，桥按 dialogPolicy 自动应答（默认 accept → confirm() 得到 true、prompt() 得到页面默认值、alert() 被关掉）——等于替用户点掉了确认框。",
+      "workaround": "涉及确认/授权语义的页面**不要**驱动；确实需要时把策略切 manual 后由用户本人点，卡死时用 browser_tools action=dialog answer=accept|dismiss 解卡",
+      "match": "",
+      "affected": "扩展 1.0.x（设计如此）",
+      "firstSeen": "2026-09-28",
+      "tags": [
+        "discipline",
+        "dialog"
+      ],
+      "evidence": "本机用 fixtures/dialog/probe.html 实测三种策略下的返回值；这是**纪律问题**而非待修缺陷。",
+      "history": [
+        {
+          "at": "2026-09-29T05:20:00.000Z",
+          "what": "created（open，标记为设计+纪律）"
+        }
+      ]
+    },
+    {
+      "id": "bi-007",
+      "title": "没有窗口 / 窗口被最小化时真实鼠标键盘不可达",
+      "status": "open",
+      "symptom": "browser_click 等报 'browser window is minimized — real keyboard/mouse input cannot reach a 0x0 viewport'；而 browser_read / browser_snapshot / browser_policy_status 这类只读调用仍能成功。",
+      "workaround": "需要真实输入时请用户恢复窗口；只读任务可继续（但要意识到「只读成功」不代表输入可用）",
+      "match": "window is minimized|cannot reach a 0x0 viewport",
+      "affected": "任意版本（自动化不改窗口尺寸/位置，设计如此）",
+      "firstSeen": "2026-09-28",
+      "tags": [
+        "window",
+        "input"
+      ],
+      "evidence": "本会话实测（最小化状态点击失败、只读成功）；Extension 明确拒绝而不自动改窗口。",
+      "history": [
+        {
+          "at": "2026-09-29T05:20:00.000Z",
+          "what": "created（open，设计如此 + 需要人配合）"
+        }
+      ]
+    },
+    {
+      "id": "bi-008",
+      "title": "browser_notify 提醒跨会话残留、且每轮重注入运行时上下文",
+      "status": "fixed",
+      "symptom": "为一个会话发的提醒，被**每一轮**注入运行时上下文（别的会话也看得见，还带累计计数），并写进持久设置重启仍在 —— 既是噪声也是 token 成本。",
+      "workaround": "（该功能已撤，无需绕行）",
+      "match": "",
+      "affected": "buddy 0.9.0–0.9.4",
+      "fixedIn": "buddy 0.9.5（功能整体撤除）",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "notification",
+        "noise"
+      ],
+      "evidence": "另一会话投诉『上一轮那条「恢复 Edge 窗口」一直在催』；根因是提醒被塞进进程级 systemPrompt.context。多渠道路由的通知以后由专门的插件做。",
+      "history": [
+        {
+          "at": "2026-09-29T05:30:00.000Z",
+          "what": "status -> fixed（buddy 0.9.5 撤掉 browser_notify / 浮层 / attention* 键与 TTL）"
+        }
+      ]
+    },
+    {
+      "id": "bi-009",
+      "title": "审批被禁用/不可用时，写入类注册表工具把内部异常丢给模型（而不是明确拒绝）",
+      "status": "fixed",
+      "symptom": "会话里审批被禁用时调用 browser_issues action=add（或 browser_design_edit），返回 'browser_issues：Cannot read properties of undefined (reading \\'seq\\')' —— 写入确实没发生（fail-closed 的实质成立），但模型看到的是一句内部异常，不知道下一步该做什么。",
+      "workaround": "（已修）在此之前只能靠\"没有成功回执\"自行判断写入未发生",
+      "match": "reading 'seq'",
+      "affected": "≤0.9.2",
+      "fixedIn": "0.9.3",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "approval",
+        "diagnostics",
+        "fail-closed"
+      ],
+      "evidence": "本会话真机实测：browser_issues action=add 返回该异常；随后 sha256 复核登记簿文件未被改动（拒绝的实质成立）。browser_design_edit 用的是同一套审批写法，同样受影响。",
+      "history": [
+        {
+          "at": "2026-09-29T07:10:00.000Z",
+          "what": "created（真机实测）"
+        },
+        {
+          "at": "2026-09-29T07:10:00.000Z",
+          "what": "status -> fixed（0.9.3：抽出 approvalRefusal() 助手，服务缺失/抛异常/未批准三种情况都返回明确拒绝文案；两个写入工具共用）"
+        }
+      ]
+    },
+    {
+      "id": "bi-011",
+      "title": "浏览器级权限气泡（本地网络访问 LNA 等）扩展看不见：命令挂到超时且报文误导",
+      "status": "fixed",
+      "symptom": "页面触发需要授权的浏览器级动作（最典型：访问 127.0.0.1 / 私网 → 「本地网络访问」气泡；其它如批量下载、通知、定位、摄像头）时，chrome 自己的权限气泡会拦住该动作。扩展对这类气泡**没有 CDP 事件**（CDP 只给页面级 JS 对话框 Page.javascriptDialogOpening），既看不见也不回答；模型侧只看到 `eval timeout after 15000ms` —— 读起来像「页面慢 / 内容没加载」，于是反复换表达式白排查。",
+      "workaround": "先调 browser_permissions（常驻、只读）：它读浏览器自己的权限存储（Preferences 的 content_settings）+ 桥的 pending 请求 —— 若某类=询问且网络缓冲里有点向本机/私网的未回请求，就是气泡在等人。此时**让用户本人点**，或把取数改成不 await 本机地址（fire-and-forget）；不要在超时后继续猜页面。",
+      "match": "timeout after|eval_timeout",
+      "affected": "任意版本（气泡属浏览器 chrome，扩展 API 无观测面）",
+      "fixedIn": "0.9.4",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "permission",
+        "timeout",
+        "lna"
+      ],
+      "evidence": "本机实测（2026-09-29）：Edge Preferences 的 profile.content_settings.exceptions.loopback_network 在 14:01:15 记下 `https://ti.qianxin.com` = allow（用户本人点的那一次），而该页面到 127.0.0.1:8791 的 POST 在此之前一直是挂起态，模型侧当时只收到 eval 超时。修复=**可读化**（browser_permissions + 超时一次性提示），不代答。",
+      "history": [
+        {
+          "at": "2026-09-29T06:20:00.000Z",
+          "what": "created + fixed（0.9.4：读弹窗工具 + 超时提示；代答/自动放行另立 de-034）"
+        }
+      ]
+    },
+    {
+      "id": "bi-012",
+      "title": "browser_evaluate 描述暗示可写顶层 await，实际报 SyntaxError（要自己包 async IIFE）",
+      "status": "open",
+      "symptom": "工具描述写 `expression: JavaScript expression or statement sequence; awaited like a promise body`，读起来像能用顶层 await。真机实测 `await new Promise(r=>setTimeout(r,20000))` 直接失败：`page exception: SyntaxError: await is only valid in async functions and the top level bodies of modules` —— 顶层分支把表达式原样交给 CDP Runtime.evaluate，既没开 replMode 也没包 async 包裹（`frame` 分支倒是自带包裹）。",
+      "workaround": "把表达式写成 async IIFE：`(async () => { …; return x })()`；扩展的 awaitPromise=true 会等它返回的 promise。要返回 DOM 节点等不可序列化对象时，记得在表达式里 JSON.stringify。",
+      "match": "await is only valid in async",
+      "affected": "扩展 1.0.x（cmdEval 顶层分支）",
+      "firstSeen": "2026-09-29",
+      "tags": [
+        "eval",
+        "doc"
+      ],
+      "evidence": "本会话真机（插件 0.9.4 + 扩展 1.0.14）连续两次调用：裸顶层 await → SyntaxError；同一表达式改 async IIFE → 正常走超时路径（`eval timeout after 15000ms`），说明差的只是包裹。",
+      "history": [
+        {
+          "at": "2026-09-29T13:35:00.000Z",
+          "what": "created（open；修法二选一：顶层分支也包 async 包裹，或把描述改成\"返回的 promise 会被等待，但别写顶层 await\"）"
+        }
+      ]
+    },
+    {
+      "id": "bi-013",
+      "title": "browser_permissions 读不到 Windows 形态的 profile 路径（且报错把原因说反）",
+      "status": "fixed",
+      "symptom": "browser_permissions（常驻、只读）返回 `读不到 C:\\Users\\…\\Profile 3/Preferences —— autoLaunchProfileDir 要指向 profile 目录…也可能是该 profile 从未启动过`。而配置本来就是 profile 目录、浏览器也正在用该 profile —— **两条解释都与事实相反**（真实原因是：路径是 Windows 形态，宿主进程在 WSL 里，path.join 拼出不存在的相对路径）。后果：命令超时时那个\"用来判断是不是权限气泡在等人\"的工具正好失效，还把模型引向\"去改配置\"（写操作）。",
+      "workaround": "（已修，无需绕行）在老版本上：不要依赖它的返回值，改用 `browser_evaluate` 直接读 `<profile>/Preferences` 的 profile.content_settings，或让用户本人看浏览器窗口有没有权限气泡。",
+      "match": "读不到.*Preferences|autoLaunchProfileDir 要指向",
+      "affected": "插件 ≤0.11.7（Edge + WSL 宿主，profile 路径为 Windows 形态）",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "permission",
+        "path",
+        "diagnostics",
+        "wsl"
+      ],
+      "evidence": "根因复核（2026-10-09）：index.ts 把 config.autoLaunchProfileDir 原样交给 readPermissionStore，而同一文件里其它路径都过 localForm()（WSL 下 C:\\… → /mnt/c/…）。修复＝新增 readPermissionStoreTolerant（按 [原样, 形态转换后] 依次试、允许回退到配对记录里的位置、报告实际用了哪个路径）；裸读取器的错误文案改为只陈述事实。验收：`node tests/permissions-resolve.mjs` 13/13（含本机真 profile：Windows 形态 → /mnt/c 命中、读到 124 个权限类；错误文案断言\"配置写错已被排除\"）。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（2026-10-08/09 会话实测：1 次调用即报错，并导致 15s 超时无法归因）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（0.11.10：路径形态容错 + 文案不再冤枉配置；13/13 离线回归）"
+        }
+      ],
+      "fixedIn": "0.11.10"
+    },
+    {
+      "id": "bi-014",
+      "title": "browser_snapshot 对 div 化 SPA 几乎失明（只有点击处理器的 div/span 全不报）",
+      "status": "fixed",
+      "symptom": "淘宝详情页 SKU 面板只报 28 个可交互元素（**没有一个 SKU 芯片** —— 芯片是 span，只有 click 处理，无 role/tabindex/onclick 属性）；拼多多搜索结果页只报 3 个（两个价格 input + 一个\"顶部\"，**商品卡全部缺失** —— 卡片是纯 div）。⇒ 这两类站点上 ref 体系不可用，只能退回\"设 id + 真实点击\"。",
+      "workaround": "放弃 ref：用 browser_evaluate 定位目标元素 → 给它设 `el.id` + `scrollIntoView({block:\"center\"})` → `browser_click selector=#id`（真实鼠标事件，返回 hitVerified 可确认命中）。注意 JS `el.click()` 在拼多多上不触发跳转，必须真实鼠标。",
+      "match": "个可交互元素",
+      "affected": "扩展 ≤1.0.15",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "snapshot",
+        "spa",
+        "div",
+        "october-feedback"
+      ],
+      "evidence": "修复：扩展 cmdSnapshot 的候选判据加\"样式边界\"扫描 —— `cursor` 是**继承**属性，所以取「自己 pointer、父级不是 pointer」的元素（那才是可点容器），并补 [role=*交互角色]/[tabindex]/[onclick] 等；每条候选回传 `why`（native|cursor），宿主 render 会标出 cursor 类数量与 `(cursor)` 标记。⚠️ 离线只钉住了载荷契约（tests/tool-render.mjs [8]）；**真机复核（淘宝 SKU / 拼多多商品卡）尚未做** —— 若仍失明，请把本条改回 open 并附读数。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（2026-10-08/09 会话：淘宝 711532171096、拼多多搜索页实测）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（扩展 1.0.16：cursor 样式边界 + role/tabindex 判据 + why 载荷；真机复核待做）"
+        }
+      ],
+      "fixedIn": "扩展 1.0.16"
+    },
+    {
+      "id": "bi-015",
+      "title": "browser_navigate 返回 ≠ SPA 就绪；未就绪时 rawData 是 null 但 typeof 仍是 object",
+      "status": "fixed",
+      "symptom": "navigate 到拼多多搜索页后**立刻** eval：`a[href*=\"goods\"]` 计数 0、body.innerText 仅 1933 字符（看起来像\"页面空/被墙\"），二次读才对。navigate 到商品页后首次读 `window.rawData` 是 **null** —— 属性存在但值为 null，`typeof` 仍为 object，**极易把\"未就绪\"误判成\"页面没内容/结构不同\"**。",
+      "workaround": "navigate 后不要单次采样就下结论：先核 `document.readyState` + body 文本长度 + 目标全局是否非 null；需要等待就**分多次调用**（别在单次表达式里轮询）。拼多多直开商品页别读 rawData，改读 DOM `div[class*=\"sku-plus\"]`（含\"已选：<SKU>¥<价>\"）。",
+      "match": "rawData|readyState",
+      "affected": "插件 ≤0.11.7 / 扩展 ≤1.0.15",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "spa",
+        "navigate",
+        "false-green",
+        "october-feedback"
+      ],
+      "evidence": "修复：新增宿主工具 `browser_wait`（selector / text / fn 三选一，服务端在页面里轮询，返回 waitedMs）＋ `browser_navigate` 支持 waitSelector/waitText/waitFn/waitTimeoutMs；等待超时**不让导航失败**，而是在结果里给 `waitTimedOut: true` 并写明\"不等于页面没有内容\"。扩展侧 `wait` 命令本已存在（1.0.x），这次是把原语接到模型面前。验收：tests/tool-render.mjs [8]（工具注册、参数、render 文案）。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（2026-10-08/09 会话：拼多多 5 个商品页首读全为 null）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（0.11.10：browser_wait + navigate 就绪参数）"
+        }
+      ],
+      "fixedIn": "0.11.10"
+    },
+    {
+      "id": "bi-016",
+      "title": "browser_evaluate 没有 timeoutMs 旋钮，且顶层 await 与描述不符",
+      "status": "fixed",
+      "symptom": "表达式里写了轮询（`for(i<30){ await sleep(600) }`）⇒ `eval timeout after 15000ms`，**与\"页面没内容\"表现完全一样**，极易误判；同族的 `browser_frame_eval` 有 `timeoutMs` 可调，`browser_evaluate` 没有。工具描述暗示\"像 promise body 一样被 await\"，实测顶层 await 抛 `SyntaxError: await is only valid in async functions`（另登记 bi-012）。",
+      "workaround": "① 表达式内不要放轮询/sleep，只取瞬时快照，需要等待就分多次调用或改用 browser_wait；② 一律自己包 `(async()=>{…; return x})()`；③ 只返回可序列化数据；④ 确需长任务用 `browser_frame_eval`（可传 timeoutMs）。",
+      "match": "eval timeout after|SyntaxError",
+      "affected": "插件 ≤0.11.7 / 扩展 ≤1.0.15",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "eval",
+        "timeout",
+        "doc",
+        "october-feedback"
+      ],
+      "evidence": "修复：① `browser_evaluate` 增 `timeoutMs`（100–120000，透传给扩展）；② 扩展 cmdEval 把表达式按 DevTools 控制台的做法包一层 async IIFE（写了 return 按语句体、没写按表达式），**包坏时自动回退到原样执行**（SyntaxError → 重试 raw），所以\"能用顶层 await\"是纯增量；帧内分支也一并改成 async 包装。验收：扩展 `node --check` + 包装逻辑离线 6 例（含 `let x=1; x+1` 这类必须回退的写法）；tests/tool-render.mjs [8] 钉住 timeoutMs 参数与描述。注：`browser_frame_eval` 的描述此前已修（0.8.8），本次把宿主侧语义补齐。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（2026-10-08/09 会话：1 次 15s 超时；bi-012 的同族问题）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（0.11.10 + 扩展 1.0.16：timeoutMs + 顶层 await（带 raw 回退））"
+        }
+      ],
+      "fixedIn": "0.11.10（+ 扩展 1.0.16）"
+    },
+    {
+      "id": "bi-017",
+      "title": "登记簿写入的审批通道自身崩溃 ⇒ 用户批准也写不进（fail-closed 空转）",
+      "status": "fixed",
+      "symptom": "用户明确批准后，`browser_issues action=add` 四个条目**全部**返回：`browser_issues: 审批请求失败（Cannot read properties of undefined (reading 'seq')），拒绝写入（fail-closed）；请确认审批可用后重试`。即写操作在\"申请审批\"这一步就抛 TypeError，与内容无关；审批被禁用的会话里更无退路 —— 用户批准了却什么都没记下。",
+      "workaround": "（已修）老版本上的退路：把内容先落到工作区文档，等审批可用再逐条重发；或请用户直接编辑 registry 的 issues.json（**先备份**）。",
+      "match": "审批请求失败|fail-closed",
+      "affected": "插件 ≤0.11.7",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "approval",
+        "fail-closed",
+        "registry",
+        "root-cause"
+      ],
+      "evidence": "**根因（不是\"审批不可用\"，是调用形状写错）**：unified-tools.ts 的 approvalRefusal 传的是合成对象 `{ id: agent.id }`，而 `@deepseek-ai/dsh-user-approval` 的 `request()` 第一行就是 `const session = req.agent.session`，紧接着 `hasOpenTurn(session)` 读 `session.seq` ⇒ 必然抛 `reading 'seq'`。bi-009（0.9.3）当时只用 try/catch 把异常包成一句\"拒绝\"，**根因一直留着**，于是这次\"用户批准了却写不进\"。修复：传**真正的 agent**（带 `.session`）；并把三种\"问不了\"的情形分别给人话（服务没接线 / 没带会话 / 策略 never），写面依旧 fail-closed。验收：tests/tool-render.mjs（新回归）—— 断言审批服务收到的 `agent` **就是**调用方那个对象且 `.session` 可达；批准后**真的落盘**（临时 registry 写入 + 复核）；另外三例（无 session / 策略 never / 服务抛异常）都必须是明确拒绝且不含裸 TypeError。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（2026-10-09 会话：4 次 action=add 全部同一报错，用户已批准）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（0.11.10：改传真 agent + 分情形人话；离线回归钉住请求形状与真实写入）"
+        }
+      ],
+      "fixedIn": "0.11.10"
+    },
+    {
+      "id": "bi-018",
+      "title": "设置页静态渲染测试停在 0.2.0 之前（settingsScope），红着没人发现",
+      "status": "fixed",
+      "symptom": "`node tests/render-settings-pages.mjs` 第一条就红：`✗ 注册了 settings.section`，随后 `TypeError: Cannot read properties of undefined (reading 'Comp')` 崩掉。原因是测试桩只提供 `ctx.settingsScope`，而 0.2.0 起两个 client 半区都改用 `ctx.configForms`，client 在 `if (!slots || !settings) return` 处**静默跳过注册**。⇒ 这不是插件缺陷，而是\"测试过期且没人跑\"：它无法再证明任何东西，却看起来像产品坏了。",
+      "workaround": "（已修）在本地跑插件/client 测试前，先确认测试桩的平台 API 与当前 DSH 版本一致；红了的测试要么修桩、要么删掉，别让它长期躺着。",
+      "match": "settingsScope|configForms|注册了 settings.section",
+      "affected": "buddy 测试（任何 0.2.0+ 环境）",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "test",
+        "stale",
+        "configForms",
+        "0.2.0"
+      ],
+      "evidence": "修复：给该测试的 4 处 ctx 桩补上 `configForms: { get(...) }`（并注明\"不补这个桩会静默跳过注册\"）。验收：21/21 通过（含同伴件 unavailable 场景与页面侧 10 端口探测）。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（2026-10-09 修 0.11.10 时跑全量测试暴露）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（buddy 0.11.6：测试桩补 configForms，21/21）"
+        }
+      ],
+      "fixedIn": "buddy 0.11.6"
+    },
+    {
+      "id": "bi-019",
+      "title": "F-1：browser_tabs 只能一次关一个页签（收拾 13 个页签发 13 次调用）",
+      "status": "fixed",
+      "symptom": "批量核对时开了十多个页签，收拾时只能逐个 `close`（每次一个 tabId），13 个页签 = 13 次调用。",
+      "workaround": "（已修）老版本：`browser_tabs action=list` 拿全部 id 后逐个关；或让用户自己关。",
+      "match": "unknown tabs action|requires tabId",
+      "affected": "插件 ≤0.11.7",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "tabs",
+        "batch",
+        "october-feedback"
+      ],
+      "evidence": "修复：`browser_tabs action=close` 支持 `tabIds[]` / `urlPattern`（子串或 /正则/，大小写不敏感）/ `others:true`（保留 tabId，默认保留当前活动页）；返回 closed/closedIds（失败的进 failedIds），render 直接给出\"已关闭 N 个 + id 列表\"。验收：tests/tool-render.mjs [8]。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（上一会话记为功能建议 F-1）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（0.11.10：批量关闭）"
+        }
+      ],
+      "fixedIn": "0.11.10"
+    },
+    {
+      "id": "bi-020",
+      "title": "F-2：后台标签页能不能真实点击，工具描述没说（导致不敢盲点、逐个 activate）",
+      "status": "fixed",
+      "symptom": "有 16 个页签时，模型不敢直接点后台页（怕坐标落到可见页签上），只能先 `browser_tabs activate` 再点 —— 每次多一轮调用，还担心误点。",
+      "workaround": "（已修，描述已补）老版本：先 activate 目标页再点击。",
+      "match": "browser_click",
+      "affected": "插件 ≤0.11.7（行为一直如此，缺的是说明）",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "click",
+        "tabs",
+        "doc",
+        "october-feedback"
+      ],
+      "evidence": "复核：扩展 cmdClick 本来就会 `activateTabWindow(tab.id)`（注释原文：\"ensure our tab is frontmost so coordinates are meaningful\"）⇒ **后台页可以直接点**，不需要先 activate。修复＝把这条事实写进 browser_click / browser_type 描述，并同时写明唯一限制（窗口最小化 ⇒ 视口 0×0 ⇒ 真实键鼠送不进，会明确报错）。验收：tests/tool-render.mjs [8]（描述断言）。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（上一会话记为功能建议 F-2）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（0.11.10：描述说明自动置前 + 最小化限制）"
+        }
+      ],
+      "fixedIn": "0.11.10"
+    },
+    {
+      "id": "bi-021",
+      "title": "F-3：「这个问题不在登记簿里」的提示对模型自己写错表达式也触发，催登记却写不进",
+      "status": "fixed",
+      "symptom": "模型自己写错表达式抛的 `page exception: TypeError/SyntaxError …` 也命中\"登记簿里没有\"这条提示，于是收到\"去 browser_issues add 记下来\"；而登记是需要审批的写操作（当时审批通道还崩着）⇒ 噪音 + 空转。",
+      "workaround": "（已修）老版本：忽略这句提示即可 —— 页面/表达式自身报错不是插件缺陷。",
+      "match": "不在问题登记簿里|page exception",
+      "affected": "buddy ≤0.11.5",
+      "firstSeen": "2026-10-09",
+      "tags": [
+        "hint",
+        "noise",
+        "approval",
+        "october-feedback"
+      ],
+      "evidence": "修复：`maybeNovelIssueHint` 加双向闸 —— 命中\"页面侧报错特征\"（page exception / SyntaxError / ReferenceError / TypeError / await is only valid …）**且**不含插件侧特征时直接不提；同时**必须**含插件侧特征（browser_ / 桥 / WEB_ / NEED_AUTHORIZATION / eval timeout / No tab with id / 权限 / 审批 …）才提，避免闸门关死。验收：buddy tests/buddy-wake.mjs 36/36（新增三例：页面 SyntaxError 不催、页面 TypeError 不催、插件侧失败仍催）。",
+      "history": [
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "created（上一会话记为功能建议 F-3）"
+        },
+        {
+          "at": "2026-10-09T07:05:00.000Z",
+          "what": "status -> fixed（buddy 0.11.6：双向闸 + 三例回归）"
+        }
+      ],
+      "fixedIn": "buddy 0.11.6"
+    },
+    {
+      "id": "bi-022",
+      "title": "自动唤起留一张 about:blank 垃圾页、且完全没有回执（桌面自己冒出一个窗口）",
+      "status": "fixed",
+      "symptom": "\"调用即自动拉起\"开火时（装扩展的配置文件没有窗口），新窗口的落地页写死 `about:blank`：宿主 spawn 与扩展 `window.ensure` 两条路都是。后果：① 每唤起一次就多一张空白页（2026-10-02 记录过积 3 张，2026-10-10 又出现一张并成了活动页）；② 模型与用户都收不到任何回执 —— 桌面上自己冒出一个 Edge 窗口，谁也不知道是谁开的、为什么开。用户原话：\"自动唤起有问题\"。",
+      "workaround": "（已修）旧版本上：`browser_tabs action=list` 找到 `about:blank` 手动关掉；唤醒原因看 `browser_tools action=status` 里的\"已唤醒 N 次\"。",
+      "match": "about:blank|已唤醒",
+      "affected": "插件 ≤0.11.10 / buddy ≤0.11.6 / 扩展 ≤1.0.16",
+      "fixedIn": "插件 0.11.13 + buddy 0.11.7 + 扩展 1.0.19",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "autolaunch",
+        "window",
+        "receipt",
+        "ux"
+      ],
+      "evidence": "2026-10-10 16:02 实测（本机 WSL 宿主 + Edge 155）：那次 browser_* 调用触发唤起，1 秒后扩展连上（`connectedAt=16:02:09`），但窗口停在 about:blank；桥的 HTTP 面 `tabs.list` 读到 1 窗口 2 标签页（about:blank 活动 + 用户/另一会话的 Android 页）。代码出处：宿主 `spawnBrowser` 的 `args.push('about:blank')`、扩展 `ensureWindow` 的 `chrome.windows.create({url:'about:blank',focused:true})`。",
+      "history": [
+        {
+          "at": "2026-10-10T08:30:00.000Z",
+          "what": "created（用户报\"自动唤起有问题\"；复核为落地页+回执两处缺陷，非唤起失败）"
+        },
+        {
+          "at": "2026-10-10T08:30:00.000Z",
+          "what": "status -> fixed（0.11.12/0.11.7/1.0.17：落地页=本次调用的目标网址（仅策略直接放行的 http(s)）+ 唤醒后一次性回执送到模型眼前）"
+        },
+        {
+          "at": "2026-10-10T08:40:00.000Z",
+          "what": "端到端复核通过（2026-10-10 16:20 真机：关掉 Agent 窗口 → extensionConnected=false → 一次 browser_navigate 触发唤起 → 回执显示\"落地 https://example.com/\"、新窗口只有一个页签且就在该网址、无 about:blank）。同日补上剩下的两条自愈路径：扩展 resolveTab 自愈建窗与 cmdTabsOpen 无窗口分支现在都带落地网址（1.0.19）"
+        }
+      ]
+    },
+    {
+      "id": "bi-023",
+      "title": "navigate 的\"完成\"判定撞上旧文档的 complete：秒回旧页面/旧 URL，错误页与未完成页被静默报成\"已显示\"",
+      "status": "fixed",
+      "symptom": "`browser_navigate` 会**立刻返回导航前**的页面状态：2026-10-10 实测真机复现 —— navigate 到连不上的站点，工具秒回 `Tab N now shows about:blank — about:blank`，而 12 秒后该标签页才落到 `chrome-error://chromewebdata/`（ERR_CONNECTION_TIMED_OUT）。另一会话里同款：navigate 报\"已显示 <目标URL>\"，实际页面是错误页；随后带 `waitSelector` 的等待把 30s 预算烧光，模型读到的是\"等待条件未成立\"，和\"页面慢\"完全分不开 —— 用户感受就是\"第一次调用花了很长时间失败\"。",
+      "workaround": "（已修）旧版本上：navigate 后先 `browser_evaluate` 读 `location.href`（`chrome-error:` 即错误页）+ `document.body.innerText` 里有没有 `ERR_*`，再决定要不要继续等；不要只信 navigate 的文字回执。",
+      "match": "now shows|chrome-error|ERR_CONNECTION|ERR_NAME",
+      "affected": "扩展 ≤1.0.16（宿主 ≤0.11.10）",
+      "fixedIn": "扩展 1.0.17 + 插件 0.11.12",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "navigate",
+        "race",
+        "error-page",
+        "false-green"
+      ],
+      "evidence": "根因：`waitTabComplete` 先 `chrome.tabs.get()` 判 `status==='complete'`，而那个 complete 是**导航前的旧文档** ⇒ 提前 resolve。修法：新的 `waitForNavigationComplete` 必须在触发导航**之前**挂轮询、且只有\"观察到 loading 之后再 complete\"才算完成（极快页面给 1.2s 观察窗）；未等完就如实回 `loadPending: true`（宿主 render 会提示\"仍在加载，别单次采样下结论\"）。错误页判据用真机取证：`location.href=chrome-error://…` **或** `!!document.getElementById('main-frame-error')`（Edge 155 的 `body.className` 是空的，不能按 .neterror 判）。`wait` 现在每 8 次轮询探一次错误页，命中即立刻失败并给出 `ERR_*` 码（不再烧满预算）。",
+      "history": [
+        {
+          "at": "2026-10-10T08:30:00.000Z",
+          "what": "created（用户报\"第一次调用花很长时间失败\"；全量会话日志 + 真机复现定位到竞态与错误页判定）"
+        },
+        {
+          "at": "2026-10-10T08:30:00.000Z",
+          "what": "status -> fixed（扩展 1.0.17：导航完成判定改轮询竞态修复 + 错误页真机判据 + wait 快速失败；宿主 0.11.12：loadPending 透传与提示）"
+        }
+      ]
+    },
+    {
+      "id": "bi-024",
+      "title": "等待类工具的\"假绿\"：导航在途时条件在**旧文档**上命中（navigate 的等待与 browser_wait 都中招）",
+      "status": "fixed",
+      "symptom": "刚 navigate 完（页面还在加载）就等条件，条件会在**旧页面**上成立并返回\"等待条件成立\" —— 2026-10-10 真机复核实录：navigate 到连不上的站点后，同一行同时打印\"页面**仍在加载**（15s 内没等到完成）\"和\"等待条件成立（11ms）\"，命中的是旧页 example.com 的 `<a href>`。模型只取后半句就会把\"没加载\"读成\"已就绪\"。",
+      "workaround": "（已修）旧版本上：navigate 之后不要立刻等条件；先 `browser_evaluate` 核 `location.href` 是否已经是目标（导航在途时页内 href 仍是旧文档），确认后再等。",
+      "match": "等待条件成立|仍在加载",
+      "affected": "扩展 ≤1.0.17",
+      "fixedIn": "扩展 1.0.18",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "wait",
+        "false-green",
+        "navigate",
+        "race"
+      ],
+      "evidence": "根因与判据：导航在途时 `chrome.tabs` 报的 `tab.url` **已经是目标 URL**，而页内 `location.href` 还是旧文档 ⇒ 两者\"文档身份\"不一致就说明显示的文档还没跟上来。修法：`cmdWait` 每 8 次轮询探一次 `{href, err, text}` + `chrome.tabs.get`，一旦判定 stale 就**跳过条件评估**（并把跳过次数带出去 `skippedStaleHits`）；超时错误也改成\"页面仍在加载/导航还没落到新文档（跳过 N 次旧文档命中）\"，不再说成\"条件不成立\"。与 bi-023 同一类根因（旧文档 vs 新文档），只是发生在 wait 侧。",
+      "history": [
+        {
+          "at": "2026-10-10T08:25:00.000Z",
+          "what": "created（0.11.12/1.0.17 装机后的真机复核当场抓到；扩展 1.0.18 修复）"
+        },
+        {
+          "at": "2026-10-10T08:25:00.000Z",
+          "what": "status -> fixed（扩展 1.0.18：stale 文档命中一律不采信；超时文案如实说是\"仍在加载\"）"
+        },
+        {
+          "at": "2026-10-10T08:50:00.000Z",
+          "what": "真机定向复核（2026-10-10 16:27，扩展 1.0.19 + 插件 0.11.13）：旧页 example.com（含 a[href]）→ navigate 到会**卡住**的 http://example.com:81/（TCP 丢包）→ 结果 `target unreachable: ERR_CONNECTION_TIMED_OUT — example.com 响应时间太长 — 等待**已中止**（页面不可达，原因见上）`：**没有假绿**，且不再把中止说成超时。遗留观察性缺口：扩展在 wait 结果里带了 `skippedStaleHits`，但宿主 render 没透出 ⇒ \"stale 分支是否真的被走到\"无法从模型侧自证（不影响行为，下版透出即可自证）。"
+        }
+      ]
+    },
+    {
+      "id": "bi-025",
+      "title": "\"等待被中止\"被当成\"等待超时\"：页面连不上时还劝模型\"可能只是慢、加大预算\"",
+      "status": "fixed",
+      "symptom": "navigate 到连不上的站点（页面落到错误页）时，宿主把 wait 抛出的**中止**错误一律当成**超时**：结果里同时出现 `target unreachable: … ERR_CONNECTION_TIMED_OUT` 和 `等待条件在 25000ms 内**未成立**（不等于页面没有内容，可能只是慢；可加大 waitTimeoutMs 或换条件）` —— 后半句与事实相反（实测 waitedMs 显示 25000，真实只等了 1ms），正好把\"连不上\"重新包装成\"慢\"。",
+      "workaround": "（已修）旧版本上：看到 `target unreachable`/`ERR_*` 就不要理会后半句，别加大预算重试同一个域名。",
+      "match": "等待条件在.*未成立|可能只是慢",
+      "affected": "插件 ≤0.11.12",
+      "fixedIn": "插件 0.11.13",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "navigate",
+        "wait",
+        "misdiagnosis",
+        "false-green"
+      ],
+      "evidence": "根因：`browser_navigate` 的等待分支把所有异常都写成 `waitTimedOut: true` 且 `waitedMs = budget`。修法：实际计时；按错误文本区分 `wait timeout after`（真超时）与其它（中止，典型是错误页）→ 新字段 `waitAborted` + `waitError`，render 分开措辞（中止时说\"等待已中止（页面不可达，原因见上）\"，不再提\"慢/加大预算\"）。回归断言见 tests/tool-render.mjs [8]。",
+      "history": [
+        {
+          "at": "2026-10-10T08:40:00.000Z",
+          "what": "created（0.11.12/1.0.18 装机后的端到端复核当场抓到）"
+        },
+        {
+          "at": "2026-10-10T08:40:00.000Z",
+          "what": "status -> fixed（插件 0.11.13：中止 ≠ 超时，各自措辞；waitedMs 改实际计时）"
+        }
+      ]
+    },
+    {
+      "id": "bi-026",
+      "title": "denyHosts 的文档与状态面都和实现不符：askMode=放行时名单被忽略，状态却显示原值",
+      "status": "fixed",
+      "symptom": "Config 注释写 denyHosts「always denied — regardless of urlMode, realm or authorization」，askMode 注释也把它归为\"仍然生效的红线\"；而实现里 `denyHosts: config.askMode === 'allow' ? [] : …`（行为符合 de-016「放行=连黑白名单一起忽略」）。同时 `browser_policy_status` 打的是**配置原值** ⇒ 模型/用户会照一份\"其实不生效\"的名单推理。",
+      "workaround": "（已修）旧版本上：知道 askMode=allow 时 allowHosts/denyHosts 都不起作用，只有硬红线（云元数据/凭据/DSH 页/路由档）仍然生效。",
+      "match": "denyHosts|askMode",
+      "affected": "插件 ≤0.11.13",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "docs",
+        "status",
+        "misdiagnosis",
+        "policy"
+      ],
+      "evidence": "修法：① 两处注释按**实现**订正（denyHosts 是 L3 用户名单，唯一例外是 askMode=allow；红线不受影响）；② `describePolicy()` 增 `denyHostsIgnored`；③ 状态行抽成导出的纯函数 `denyHostsStatusLine()`，ignored 时打印「⚠️ askMode=放行 ⇒ 本名单当前不生效」。回归：tests/tool-render.mjs [8]（三种输入）。**注意**：这是文档/状态修正，策略行为一个字没改（符合 de-016/de-018）。",
+      "history": [
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "created（2026-10-10 代码审查批次）"
+        },
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "status -> fixed（插件 0.11.14）"
+        }
+      ],
+      "fixedIn": "插件 0.11.14"
+    },
+    {
+      "id": "bi-027",
+      "title": "同伴件探桥写死 9777：配置端口一改就报\"候选全未命中\"（并连带宿主那句假承诺）",
+      "status": "fixed",
+      "symptom": "`browser-buddy` 的 `probeBridge` 只扫 `scanBase 9777..9786`，**从不读桥的端口**：用户把 `browser-bridge.port` 改成别的值后，扩展（候选含它自己的端口设置）能连上，同伴件却报\"候选 9777..9786 全未命中\" ⇒ 状态行与实际相反，\"调用即自动拉起\"的闸门也可能误判、白开一个窗口。连带：宿主端口被占顺延到窗口之外时，`portNote` 谎称\"扩展端会自动发现\"（扩展只扫 9777..9786）。",
+      "workaround": "（已修）旧版本上：把端口改回 9777..9786 之内，或在扩展高级里手填端口。",
+      "match": "候选 .*全未命中|自动发现",
+      "affected": "buddy ≤0.11.7 / 插件 ≤0.11.13",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "probe",
+        "port",
+        "status",
+        "wake"
+      ],
+      "evidence": "修法：① buddy 新增 `bridgePortCandidates()`：**桥自报的 `describe().boundPort` 优先**（实际监听、含顺延结果）→ `config().port` → 扫描窗口；错误文案改为列出**真实试过**的候选。② 宿主 `portNote` 按\"是否落在扩展扫描窗口内\"分两种措辞（窗口外明确要求手填端口）。回归：buddy-wake [1b]（断言顺序 9999 → 9777 → 9778…，且状态行列出真实候选）。",
+      "history": [
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "created（2026-10-10 代码审查批次）"
+        },
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "status -> fixed（buddy 0.11.8 + 插件 0.11.14）"
+        }
+      ],
+      "fixedIn": "buddy 0.11.8 + 插件 0.11.14"
+    },
+    {
+      "id": "bi-028",
+      "title": "\"注册表唯一真源\"只是口号：三份并存、白名单是装饰、读的是哪份看不见",
+      "status": "fixed",
+      "symptom": "① 设计注册表同时存在三份（仓库根 `design/registry.json` 20 条 / 包内 `registry/` 34 条 / 装机 node_modules 那份），实测互相矛盾；② `authz.writeAllowlist` 只写 `design/registry.json` + `upstream-baseline.json`，**代码从不读它**，而工具真正会写的 `issues/issues.json` 根本不在名单里 ⇒ 白名单拦不住任何东西；③ `browser_design_show` 不报\"读的是哪个文件\"，没人能对上账。",
+      "workaround": "（已修）旧版本上：以装机副本（`<profile>/node_modules/dsh-browser-unified/registry/`）为准；写入后注意它会被重装覆盖。",
+      "match": "registryDir|writeAllowlist|来源",
+      "affected": "插件 ≤0.11.13",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "registry",
+        "single-source",
+        "authz",
+        "build"
+      ],
+      "evidence": "修法：① 包内 `registry/` 定为唯一真源，`build-pack` 每次打包后把仓库根 `design/registry.json` 与 `upstream-baseline.json` 同步成逐字节镜像；② `writeAllowlist` 改为工具真正会写的两个相对路径（+ `writeAllowlistNote` 说明 baseline 不由工具写），并新增 `writeAllowlistRefusal()` 在**写入前**逐次校验（读不到/authz 缺失/不在名单 → fail-closed 拒绝）；③ `browser_design_show` 第一行打印来源路径，写入回执改成打印**绝对路径**；④ `tooling` 增 `issuesToolName`。回归：新增 tests/registry-consistency.mjs 18/18（镜像一致、白名单覆盖且不多列、tooling 名与实际注册一致、两条数据不变量）+ tool-render 的白名单阳性对照。",
+      "history": [
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "created（2026-10-10 代码审查批次）"
+        },
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "status -> fixed（插件 0.11.14）"
+        }
+      ],
+      "fixedIn": "插件 0.11.14"
+    },
+    {
+      "id": "bi-029",
+      "title": "HTTP 命令面（/api/command）完全不过 URL 策略：带 token 就能对任意标签页 eval/nav",
+      "status": "fixed",
+      "symptom": "`GuardedBridge` 只对 `nav`/`tabs.open` 过策略，工具层的\"已开标签页红线\"只存在于宿主工具里；而**第三条通道** —— 桥的 HTTP 命令面 —— 任何校验都没有。同伴件的 `browser_frames` / `browser_frame_eval` 正是走它 ⇒ 持 token 即可对任意标签页（含被 deny 的主机、DSH 控制页）执行 eval，而 eval 自己又能 fetch 私网/元数据端点。叠加\"默认 token 是 dsh-local\"这条事实，这是个真实可达的旁路。",
+      "workaround": "（已修）旧版本上：把 `token` 换成强随机值并只在本机使用；不要让不可信内容驱动 browser_* 调用。0.11.15 起同伴件已合并，frames/eval 走 controller。",
+      "match": "api/command|HTTP 命令面",
+      "affected": "core ≤0.1.2 / 插件 ≤0.11.13",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "security",
+        "url-policy",
+        "http-face",
+        "bypass"
+      ],
+      "evidence": "修法：① core `BridgeServerOptions` 新增 `guardCommand(command, params)` 钩子，`POST /api/command` 在**执行前**调用它，返回非空即 403 `blocked: <原因>`（缺省不拦，保持旧行为）；② 插件把钩子接到 `guardHttpCommand()`：带 URL 的命令（nav/tabs.open）过 `authorizeUrl` 且**只放行 allow**（HTTP 面没有审批通道，ask 一律拒并指路 browser_navigate），页面内容命令（eval/content/find/frames/click/input/press/scroll/snapshot/screenshot/pdf/emulate）对**目标标签页当前 URL** 跑与工具层同一套红线；扩展未连接时不拦（交给 execute 报 503）。回归：buddy tests/verify-core-patch.mjs 10/10（新增：guard 拒绝 eval → 403 + `blocked:`；放行的命令非 403）。",
+      "history": [
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "created（2026-10-10 代码审查批次）"
+        },
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "status -> fixed（core 0.1.3 + 插件 0.11.14）"
+        },
+        {
+          "at": "2026-10-10T09:35:00.000Z",
+          "what": "de-036 合并后：同伴件的 browser_frames / browser_frame_eval 已改走 controller（并先跑工具层的已开标签页红线），HTTP 命令面上不再有这条常客 —— X18 的 guard 仍在，但\"谁能用这条通道\"的面缩小了。"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "上游对照（v1.0.8）：上游同日以 #3/#6 修复了同一类问题 —— HTTP 面要求 Token（Bearer / X-Token / ?token= + timingSafeEqual）、全部移除 ACAO、并额外加了 WS 升级的 Host 回环校验与 Origin 校验。本仓库保留自己的 X18 策略钩子（谁能在 HTTP 面执行什么），并把 WS 的 Host/Origin 那两道并入 core 0.1.4；`/api/status` 的 CORS 收窄为「只对回环来源回显」（GUI 探测依赖，公网来源不再可读）。"
+        }
+      ],
+      "fixedIn": "core 0.1.3 + 插件 0.11.14"
+    },
+    {
+      "id": "bi-030",
+      "title": "browser_check_update：无条件\"关 TLS 校验\"重试；而那条重试命令在 gnutls-only 的 git 上自己就是坏的",
+      "status": "fixed",
+      "symptom": "① 第一次 `git ls-remote` 失败后**无条件**换成 `-c http.sslBackend=openssl -c http.sslVerify=false` 重试 ⇒ 正常主机上任何一次瞬时失败（代理抖动/DNS/超时）也会走进\"不校验证书\"的分支，等于给中间人留了伪造 HEAD、让 DRIFT 静默消失的窗口；② 2026-10-10 本机实测该命令**直接失败**：`fatal: 不支持的 SSL 后端 'openssl'。支持的 SSL 后端：gnutls` —— 真需要这条回退的机器上它自己就是坏的，还抛一句与证书无关的错。",
+      "workaround": "（已修）旧版本上：看到 UNREACHABLE 且报\"不支持的 SSL 后端\"就知道是这条命令的问题，别当成网络不可达。",
+      "match": "sslVerify|SSL 后端|UNREACHABLE",
+      "affected": "插件 ≤0.11.13",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "git",
+        "tls",
+        "self-update",
+        "sandbox"
+      ],
+      "evidence": "修法：① 只有**证书/CA 类**失败（`shouldRetryInsecureGit()`：certificate / self-signed / unable to get local issuer / CAfile / schannel…）才允许回退，代理/超时/DNS 一律如实报错；② 回退命令去掉 `http.sslBackend=openssl`，改成 `-c http.sslVerify=false`（两种后端都有效，本机实测可用）；③ 报告里如实标注哪些仓库的 SHA 是\"关校验重试\"取到的（提示证据强度较弱）。回归：tool-render [8] 五例（CA 类 true；超时/DNS/连接重置 false）；另做了一次真实探测：本机明文 git 已可用 ⇒ 走正常路径、不触发回退。",
+      "history": [
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "created（2026-10-10 代码审查批次）"
+        },
+        {
+          "at": "2026-10-10T09:20:00.000Z",
+          "what": "status -> fixed（插件 0.11.14）"
+        }
+      ],
+      "fixedIn": "插件 0.11.14"
+    },
+    {
+      "id": "bi-031",
+      "title": "状态页把桥 token 内嵌进 HTML：任何能 GET / 的本机程序都读到唯一凭据",
+      "status": "fixed",
+      "symptom": "`statusPageHtml(port, token)` 把 token 直接写进页面脚本（`const TOKEN=\"…\"`）供清理按钮使用。而 `/` 是**免鉴权**只读端点 ⇒ 本机任意进程（任何用户态、任何脚本）`GET /` 一次就拿到 token，随后即可 `POST /api/command` 驱动这台已登录的浏览器。等于把「回环绑定不是边界、token 才是」这条事实反过来用：唯一凭据被状态页主动发出去。上游 v1.0.8 独立发现同一处并改掉了（改 sessionStorage + 现问）。",
+      "workaround": "（已修）core 0.1.4：状态页不再内嵌 token，清理按钮改为输入框 + sessionStorage（不写盘）并向用户索取，请求带 `Authorization: Bearer`。旧版本上：把 token 换成强随机值，并假定它已经泄露给本机进程（因为确实会）。",
+      "match": "statusPageHtml|状态页|const TOKEN=",
+      "affected": "core ≤0.1.3",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "security",
+        "token",
+        "status-page"
+      ],
+      "evidence": "对照上游 v1.0.8 的 `src/server.ts` 时发现同一处（`bridgeToken()` + sessionStorage）。修法：删掉内嵌常量，新增 `#token` 输入框与 `bridgeToken()`（无值则 prompt，存 sessionStorage），清理请求改为 `Authorization: Bearer`，401 时提示「Token 不对，清理没有执行」。回归：tests/bridge-http-auth.mjs 断言 `GET /` 正文**不含** token。",
+      "history": [
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "created（跟进上游 v1.0.8 时逐处对照发现；与上游同日独立命中同一处缺陷）"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "status -> fixed（core 0.1.4）"
+        }
+      ],
+      "fixedIn": "core 0.1.4"
+    },
+    {
+      "id": "bi-032",
+      "title": "WS 升级不过 Host/Origin：默认 token 是公开的 dsh-local ⇒ DNS-rebinding 或网页可直接拨号",
+      "status": "fixed",
+      "symptom": "`handleUpgrade` 只比对 `?token=`，不看 `Host` 与 `Origin`。两个后果：① **DNS-rebinding** —— 攻击者控制的公网域名解析到 127.0.0.1，浏览器发起的 `Host` 是那个域名，服务端照收；② **网页直接拨号** —— WS 握手不受 CORS 约束，网页只要拿到 token 就能连（而默认 token 是文档里公开的 `dsh-local`，且 token 还会被状态页内嵌，见 bi-031）。连上即等于拿到整条扩展命令面（eval/click/nav/截图）。",
+      "workaround": "（已修）core 0.1.4（随上游 v1.0.8 口径）：`Host` 必须是回环名（127.0.0.1/localhost/[::1]/::1），`Origin` 只放行扩展 scheme（chrome/moz/ms/safari-extension://）与不带 Origin 的本机客户端，其余 403。旧版本上：改强随机 token + 不要用浏览器（网页）访问桥端口。",
+      "match": "handleUpgrade|websocket rejected|DNS-rebinding",
+      "affected": "core ≤0.1.3",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "security",
+        "websocket",
+        "dns-rebinding",
+        "token"
+      ],
+      "evidence": "上游 v1.0.8 的 `isLoopbackHost()` / `isTrustedUpgradeOrigin()`（AGPL）并入本仓库 `src/bridge/server.ts`。回归：tests/bridge-http-auth.mjs —— 无 Origin/扩展 Origin + 正确 token → 101；`Origin: https://evil.example` → 403；`Host: evil.example` → 403；token 错 → 401。",
+      "history": [
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "created（上游 v1.0.8 强化对照本仓库实现时确认缺口）"
+        },
+        {
+          "at": "2026-10-10T10:06:00.000Z",
+          "what": "status -> fixed（core 0.1.4；探针实例 9797 实测 403 两条）"
+        }
+      ],
+      "fixedIn": "core 0.1.4"
+    },
+    {
+      "id": "bi-033",
+      "title": "缺「拖拽/按住-移动-松开」能力：滑块类控件（含人机校验）无法操作",
+      "status": "open",
+      "symptom": "扩展的 `click` 只做**同坐标**的 mouseMoved → mousePressed → mouseReleased（`extension/background.js:1332-1334`），命令表里没有任何 drag 类命令。于是所有\"按住并移动\"的交互都做不到：滑块控件（音量/价格区间/图片裁剪）、看板拖拽、拖放上传。2026-10-10 实测撞到：用浏览器插件试注册 GitHub 账号时被人机校验拦住（DataDome 滑块；页面自述\"您使用的 IP 地址(120.227.23.150)与网路机器人相同\"），滑块无法操作。",
+      "workaround": "（未修）需要拖拽的交互请用户本人操作。**人机校验一律交回真人**：不尝试程序化通过反机器人校验（既不合规也不可靠）。只读诊断仍按现有能力做：`browser_network_log` 看 403/挑战域名、`browser_frames` 看挑战 iframe、`browser_screenshot` 看实际画面、`browser_evaluate` 读 readyState/标题。",
+      "match": "drag|拖拽|滑块|pointer-hold|人机校验|captcha",
+      "affected": "扩展 ≤1.0.19（全版本）",
+      "firstSeen": "2026-10-10",
+      "tags": [
+        "capability-gap",
+        "extension",
+        "interaction"
+      ],
+      "evidence": "同坐标点击的代码：`extension/background.js:1332-1334`（mouseMoved/mousePressed/mouseReleased 全用 hit.x/hit.y）；整个 COMMANDS 表 grep 无 drag。本次实测链路：navigate `github.com/signup` → network_log 见 `GET /signup → 403` 且随后 `geo.captcha-delivery.com/captcha/... → 200` → evaluate 见 `readyState=complete` 但 `body.innerText` 长度 0 → screenshot 见中文滑块提示 → frames 见顶层唯一**跨域** iframe 即挑战页（解释了\"正文空但画面上有字\"）。",
+      "history": [
+        {
+          "at": "2026-10-10T14:35:00.000Z",
+          "what": "created（用户要求用浏览器插件试注册 GitHub 账号时撞到。用户明确：人机校验这步不程序化攻克；「通用拖拽能力」记为待办）"
+        }
+      ]
+    },
+    {
+      "id": "bi-034",
+      "title": "`browser_press` 一次按键插两遍：输入框得到 `xx`、`Enter` 把表单提交两次",
+      "status": "fixed",
+      "symptom": "按一次 `x`，输入框里出现 `xx`；按一次 `Enter`，表单被提交两次；数字键同样翻倍。**全程不报错** —— 页面上只是\"多了一个字符\"，看起来像用户手滑，所以坏了很多版都没人报。`browser_type` 的 `submit:true` 走的是同一条 `press` 通道（插件侧先 `input` 再 `press Enter`），所以\"填完即提交\"也会提交两次。真机读数（改前）：`value=\"xx\"`、keydown=1 **keypress=2 input=2 beforeinput=2**。",
+      "workaround": "（已修）扩展 1.0.20 + 插件 0.11.21。旧版本上：① 需要输入文本时优先用 `browser_type` 的默认 fill 模式（直写 value + input/change，不走按键通道）；② 别用 `submit:true`，改成 `browser_type` 后再显式 `browser_click` 提交按钮；③ `browser_press` 只用于不需要插入字符的键（方向键、Tab、Escape 不受影响）。",
+      "match": "browser_press|submit:true|重复触发",
+      "affected": "扩展 ≤1.0.19（全版本）",
+      "firstSeen": "2026-10-13",
+      "tags": [
+        "bug",
+        "extension",
+        "keyboard",
+        "silent-failure"
+      ],
+      "evidence": "根因：CDP `Input.dispatchKeyEvent` 的 `type:'keyDown'` **带 `text` 时 Chrome 自己会补一个 char/keypress**（`rawKeyDown` 才不补），而 `cmdPress` 在这之后又显式发了一条 `type:'char'` ⇒ 一次按键插入两遍。上游 caob23 是同一个坑（其 issue #14），2026-10-13 他自己以同样方式修掉（`908a149f9`）。真机前后对照（rig：真 Edge 155 headless=new + 真扩展 sideload + 假桥 `__pr-d-rig/stub.mjs`@9781；页面 `/press` 数事件；改前 9 项 6 失败 → 改后 9/9）：`x` → `\"xx\"`→`\"x\"`；`7` → `\"77\"`→`\"7\"`；表单内 `Enter` → submit 2→**1**；对照项 `ArrowRight`（不带 text）两版都不插字符、keydown 均 1。证据文件 `__pr-d-rig/evidence-unified-UB0.json` / `-UC1.json`，场景脚本 `unified-bugs-real.mjs`，收官 `rig edge killed: 16; left: 0`。顺带发现（本版未动）：`Shift+X` 落成小写 `x`（`text` 直接取 `key` 原文）。",
+      "history": [
+        {
+          "at": "2026-10-13T02:00:00.000Z",
+          "what": "created（真机 rig 复现并定位到 `cmdPress` 多余的 char 派发）"
+        },
+        {
+          "at": "2026-10-13T02:20:00.000Z",
+          "what": "status -> fixed（扩展 1.0.19→1.0.20；改前/改后成对真机取证 6 失败 → 9/9）"
+        }
+      ],
+      "fixedIn": "扩展 1.0.20 + 插件 0.11.21"
+    },
+    {
+      "id": "bi-035",
+      "title": "`browser_emulate` 不覆盖 UA 时**每次**抛 `ToolOutputError`（`device:\"desktop\"` 与自定义宽高全坏）",
+      "status": "fixed",
+      "symptom": "调用 `browser_emulate` 传 `device:\"desktop\"`、或只给 `width`/`height` 的自定义视口时，宿主侧固定报 `\"value.userAgent\" must be a string`（`ToolOutputError`）。只有带真 UA 的预设（`mobile-iphone-13` / `mobile-pixel-7` / `tablet-ipad`）能正常返回 —— 所以这条从 0.7 起一直坏着，却因为最常见的\"桌面预设\"恰好是最少被调的而长期没暴露。",
+      "workaround": "（已修）插件 0.11.21。旧版本上：需要桌面视口时改用 `device:\"mobile-iphone-13\"` 之类带真 UA 的预设，或给 `browser_emulate` 显式传一个 `userAgent` 字符串（传了就绕过 null）。",
+      "match": "ToolOutputError|value\\.userAgent|must be a string",
+      "affected": "插件 ≤0.11.20（扩展端始终回显式 `null`，与版本无关）",
+      "firstSeen": "2026-10-13",
+      "tags": [
+        "bug",
+        "contract",
+        "tool-output",
+        "silent-failure"
+      ],
+      "evidence": "根因：扩展在无 UA 覆盖时回的是**显式** `userAgent: null`（`extension/background.js` 的 `userAgent: userAgent || null`），而宿主的输出校验器对 `null` **会下钻判类型**（只跳过 `undefined`）；插件把回包原样透传 ⇒ 校验失败。上游 caob23 在 v1.0.14 修的是同一条。修法：新增导出纯函数 `normalizeEmulateValue()`（插件 `src/index.ts`），逐个字段按类型收口、`null`/缺字段一律不落进结果。两层验证：① 契约层 —— 新增 `tests/emulate-contract.mjs`（**用宿主机自己的校验器** `@deepseek-ai/dsh-tools` 的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue`）12/12：真机回包原样必须**不合格**（阳性对照，实测报 `\"value.userAgent\" must be a string`）、归一化后合格，另覆盖\"带真 UA 的预设不能被丢掉\"与 reset 回包；② 真机层 —— rig 里实测回包确实是 `{\"tabId\":…,\"width\":1280,\"height\":800,…,\"userAgent\":null}`（**显式 null，不是缺字段**）。",
+      "history": [
+        {
+          "at": "2026-10-13T02:30:00.000Z",
+          "what": "created（对照上游 v1.0.14 的修法时在自己的扩展/插件链路上复现）"
+        },
+        {
+          "at": "2026-10-13T02:50:00.000Z",
+          "what": "status -> fixed（插件 0.11.21；契约测试 12/12，rig 确认扩展回显式 null）"
+        }
+      ],
+      "fixedIn": "插件 0.11.21"
+    },
+    {
+      "id": "bi-036",
+      "title": "`browser_navigate` 遇到「永远加载中」的页面会挂住：扩展的落地探针没有超时，整次调用只能等桥的 60s 兜底",
+      "status": "fixed",
+      "symptom": "导航到一个**接受连接但永不回正文**的地址时（真机上如被丢包的 `example.com:81`，rig 里如假桥的 `/hang`），`browser_navigate` 不会在扩展自己那个「落地等待」预算内返回，而是一路挂到桥的 60s 兜底（新版本会报 `[command_timeout] … effectState=unknown`）。页面卡在加载态，随后的 `browser_read` 只能读到空正文。",
+      "workaround": "（已修）扩展 1.0.21：导航后的落地探针包上了 withBudget(promise, 2500, null) —— 文档卡在 commit 之前时最多等 2.5s，然后按「探不到落地地址」继续，loadPending/pendingUrl 仍然如实交代。旧版本上：别连续重试同一地址（effectState=unknown），用 browser_tabs action=list 看目标标签是不是还在 loading，必要时 action=close 掉它。",
+      "match": "command_timeout|loadPending|永远加载",
+      "affected": "扩展 ≤1.0.20（全版本）",
+      "firstSeen": "2026-10-13",
+      "tags": [
+        "bug",
+        "extension",
+        "navigation",
+        "timeout"
+      ],
+      "evidence": "2026-10-13 rig 实测（真 Edge 155 headless=new + 真扩展 1.0.92 + 假桥 9781）：`nav` 到 `http://localhost:9781/hang`（接受连接、60s 不回正文）时，`/ctl/cmd` 在 25s 预算内没有拿到任何回答（`rig timeout after 25000ms`），随后 `content` 读到 `len=0`。同一台子上「慢但有限」的 `/slow?ms=8000`（落地预算给 1500ms）正常返回 `{loadPending:true, pendingUrl:…/slow?ms=8000}` —— 差异只在「页面是否永远不完成」。定位：`cmdNav` 落地等待结束后用 `withCDP` 做落地 URL 探针（读 `location.href` 与 `#main-frame-error`），那次 `Runtime.evaluate` **没有超时预算**，文档一直不 commit 时它就挂着（对比：`cmdEval` 早就有 `evalTimeoutMs` 兜底）。上游扩展同源但另属一套实现，未核。",
+      "history": [
+        {
+          "at": "2026-10-13T12:20:00.000Z",
+          "what": "created（第一段吸收上游时，rig 契约核对里用 /hang 造边界条件撞到；同批 10 项其余全过）"
+        },
+        {
+          "at": "2026-10-13T13:05:00.000Z",
+          "what": "status -> fixed（扩展 1.0.21；rig 实测：/hang 下 nav 从「25s 无任何回答」变成 5.7s 返回 + loadPending=true + pendingUrl=…/hang。上游 v1.0.11 用同名 withBudget 修过同一现象，其注释写着「无预算的探针让 nav 40 多秒没回答」—— 与本机复现一致）"
+        }
+      ],
+      "fixedIn": "扩展 1.0.21（插件 0.11.22 起）"
+    },
+    {
+      "id": "bi-037",
+      "title": "已打开的局域网标签页也被政策拒绝（读不了路由器管理页）",
+      "status": "open",
+      "symptom": "在**已打开**的小米路由器管理页标签页（http://192.168.31.1/cgi-bin/luci/...）上调用 browser_read：`WEB_REALM_DENIED: LAN access is denied by policy: 192.168.31.1 — operating on this open tab is refused`。browser_tabs list 正常、能列出该标签页；此前 browser_navigate 到 172.18.71.254 同样被拒（LAN access is denied）。",
+      "firstSeen": "2026-10-14",
+      "history": [
+        {
+          "at": "2026-10-14T14:02:25.888Z",
+          "what": "created via browser_issues"
+        },
+        {
+          "at": "2026-10-14T14:10:00.000Z",
+          "what": "id bi-036 -> bi-037：与另一会话同日登记的 bi-036（nav 落地探针无超时）撞号。原因是两个「登记簿」副本状态不同（装机副本 34 条、仓库副本 35 条），各写各的。两处副本已合并为同一份。"
+        }
+      ],
+      "workaround": "策略行为，不是故障（局域网档默认 deny）。要读/驱动内网或路由器管理页：① 请主人把该主机加进 allowHosts，或把「局域网」档改成 allow/ask 并当场放行；② **改完必须重启 `dsh web` 才生效** —— 运行中改设置目前一律不生效（见 bi-038），所以「改了还是被拒」是预期现象，不是策略没写进去；③ 否则只能请主人自己看页面并转述关键字段（截图/念几行）。**不要对同一目标重试**。",
+      "tags": [
+        "cross-session-collision",
+        "lan",
+        "policy",
+        "realms",
+        "router-admin"
+      ]
+    },
+    {
+      "id": "bi-038",
+      "title": "运行中改设置**一律不生效**（要重启 dsh web）：插件在 apply 时把配置快照死了，且没监听 loader/volatile-update",
+      "status": "fixed",
+      "symptom": "在设置页把「局域网访问 / 本机（回环）访问」改成**放行**（写入 `~/.dsh/profiles/web/cordis.patch.yml`：`lanAccess: allow`、`localAccess: allow`），页面显示已保存，但 `browser_policy_status` 仍报「局域网: deny（预设）/ 本机: deny（预设）」，实际访问仍被 `WEB_REALM_DENIED` 拒绝。`dsh web`（pid 58952）启动于 2026-10-14 18:29，设置文件写于同日 20:00 —— 写入晚于启动，且**重启前怎么等都不会生效**。",
+      "firstSeen": "2026-10-14",
+      "evidence": "① `~/.dsh/profiles/web/cordis.patch.yml` 第 37/46 行确有 `lanAccess: allow` / `localAccess: allow`，mtime 2026-10-14 20:00；② `ps -o lstart` 显示 web 进程 18:29:21 启动（早于写入 1.5 小时）；③ 桥侧读数仍是 deny；④ 根因在 loader：`@deepseek-ai/cordis-plugin-loader/lib/index.js` 第 380-420 行 —— 纯 volatile 的 config 变更**不重跑 apply**，只把新值原地提交进运行中的引用，并发 `loader/volatile-update`（带变更路径）事件；⑤ 本插件在 `apply()` 里一次性 `unwrapVolatile(config)` 快照成 `resolved`，闭包后不再更新，且**没有订阅** `loader/volatile-update` —— 代码注释里那句「改一次设置 = 重组一次条目 = 重跑本函数」与 loader 的实际行为不符。",
+      "workaround": "（已修，0.11.22 起）档位/开关改完**即时生效**，不再需要重启。在那之前的版本上：改完要重启 `dsh web` 才生效，**别对同一目标反复重试**；给主人报状态一律以 `browser_policy_status` 的读数为准（设置页显示的是\"存下来的值\"）。",
+      "tags": [
+        "config",
+        "fixed-0.11.22",
+        "hot-reload",
+        "policy",
+        "restart-required",
+        "settings",
+        "volatile"
+      ],
+      "history": [
+        {
+          "at": "2026-10-14T14:20:00.000Z",
+          "what": "created（另一会话按「加 allowHosts/改档位」处理仍被拒后，由本会话定位到 loader 层根因）"
+        },
+        {
+          "at": "2026-10-14T14:35:00.000Z",
+          "what": "status -> fixed。修法：apply 里把校验抽成 `validate()`，并订阅 `loader/volatile-update` —— 收到事件后用**原始** config 重新 `unwrapVolatile`（那些 volatile 包装的 `.get()` 已被宿主原地提交成新值）→ `resolved = next`（`current()` 及所有闭包跟着变）→ `controller.reconcile(next)`；同时给 buddy 加 `refreshConfig(raw)` 重建 `cfg`/`enabledGroups`/`resident`（它的 apply 同样不会重跑）。校验走同一条路：非法值只 warn 并继续用上一份好配置，不许\"热更新绕过校验\"。回归测试 `tests/config-hot-update.mjs` **11/11**（仿 loader 的 volatile 包装：原地提交 + 事件 ⇒ 策略与分层立刻跟着变）。"
+        }
+      ],
+      "fixedIn": "插件 0.11.22"
+    },
+    {
+      "id": "bi-039",
+      "title": "问题登记簿有两个副本（装机包 / 源码仓库）且会各自漂移：`browser_issues add` 只按读到的那一份分配 id，跨会话会撞号",
+      "status": "open",
+      "symptom": "2026-10-14 两个会话同一天各写了一条 `bi-036`：装机副本里是「局域网标签页被政策拒绝」（那侧 add 时该副本最大 id 是 bi-035），仓库副本里是「nav 落地探针无超时」（本会话稍早写的）。两份文件都合法、各自内部 id 唯一，但**含义冲突**，而且下次 `build-pack` / 安装会用仓库那份**覆盖**装机那份（对方那条会静默消失）。",
+      "firstSeen": "2026-10-14",
+      "evidence": "装机副本 `/home/wsluser/.dsh/profiles/web/node_modules/dsh-browser-unified/registry/issues/issues.json`（35 条，lastUpdated 2026-10-14T14:02Z）与仓库副本 `packages/browser-unified-plugin/registry/issues/issues.json`（35 条，lastUpdated 2026-10-13T13:05Z）在 bi-036 上含义不同。",
+      "workaround": "① 写问题前先确认在看哪一份（`browser_issues` 读的是**装机副本**；它由包的 `registry/` 决定，配置项 `registryDir` 为空时就是装机包自带那份）；② 写完把两份同步（本会话已把两处合并成同一份：bi-036 = nav 探针（已修）、bi-037 = 局域网被拒（对方那条））；③ 想根治：把 profile 里的 `registryDir` 指向仓库那份（单一事实源），或让 `browser_issues add` 取两份的最大 id —— 两者都要重启才生效（bi-038）。",
+      "tags": [
+        "registry",
+        "cross-session-collision",
+        "id-allocation",
+        "two-copies"
+      ],
+      "history": [
+        {
+          "at": "2026-10-14T14:20:00.000Z",
+          "what": "created（合并本次撞号时发现）"
+        }
+      ]
+    },
+    {
+      "id": "bi-040",
+      "title": "「装机」不是持久的：profile 按 `package.json` 里的 `file:` tgz 重新解包，会把手工解包的新版本**静默回滚**",
+      "status": "fixed",
+      "fixedIn": "流程（2026-10-17）",
+      "firstSeen": "2026-10-17",
+      "symptom": "2026-10-14 22:28 手工把 core 0.1.6 + 插件 0.11.22 解包进 `~/.dsh/profiles/web/node_modules/`，重启后验证过 hot-update 生效。10-17 发现装机目录又变回 **core 0.1.5 + 插件 0.11.21**（lib 构建时间 10-13 23:00），`loader/volatile-update` 订阅消失 ⇒ 改「允许访问本 DSH 页面」不生效、仍报 `WEB_DSH_DISABLED`。",
+      "evidence": "`~/.dsh/profiles/web/package.json` 的 dependencies 写的是 `dsh-browser-unified: file:…/vendor/dsh-browser-unified-0.11.21.tgz`、`browser-unified-core: file:…/vendor/…-0.1.5.tgz`；而 `node_modules/dsh-browser-unified` 与 `package.json` 的 mtime 都是 2026-10-17 13:20（有一次 profile 重装）⇒ 只要 profile 被重新解析/安装，就按声明的 tgz 覆盖回旧版。手工覆盖文件从没改过声明，所以不持久。",
+      "workaround": "（已修）装机三步走：① 新 tgz 放进 `~/.dsh/profiles/web/vendor/`；② 改 `package.json` 的 dependencies 指向新文件名；③ 再解包（或让 profile 重装）。只做第 ③ 步等于临时覆盖。装完核 `package.json` 版本 + `lib/` 里是否含本轮新代码。",
+      "tags": [
+        "install",
+        "profile",
+        "vendor-tarball",
+        "regression",
+        "durability"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T06:10:00.000Z",
+          "what": "status -> fixed（0.11.23 起按 vendor+package.json 装；本次已按此流程装好）"
+        }
+      ]
+    },
+    {
+      "id": "bi-041",
+      "title": "帧协议协商形同虚设：桥在 hello 落库时**漏拷 `protocol`**，`extensionProtocol` 恒为 0",
+      "status": "fixed",
+      "fixedIn": "core 0.1.8（插件 0.11.25 起）",
+      "firstSeen": "2026-10-17",
+      "symptom": "`browser_info` 一直显示「协议：桥 v1 / 扩展 **v0**（对得上）」，而扩展 1.0.21+ 明明在 hello 里声明了 `protocol: 1`（部署件与 rig 的 hello 帧都能验到 1）。⇒ 0.11.22 移植进来的协议协商从来没真正生效过。",
+      "evidence": "实测 `curl 127.0.0.1:9777/api/status`：`hello.version=1.0.22` 但 `hello.protocol=null`、`extensionProtocol=0`；而扩展源码/部署件 `background.js` 只有一处发 hello，且带 `protocol: PROTOCOL_VERSION`（=1），`send()` 是裸 `JSON.stringify`。根因在桥侧：`handleExtensionFrame` 把 hello **逐字段手抄**进 `this.hello`，抄的时候漏了 `protocol`。",
+      "workaround": "（已修）hello 规范化成纯函数 `normalizeHello(msg)`（含 protocol 校验：整数、>=0、非法忽略），落库直接用它的结果。旧版本上：`extensionProtocol` 一律当 0 看待，别据此判断扩展够不够新。",
+      "tags": [
+        "protocol",
+        "hello",
+        "negotiation",
+        "silent",
+        "core"
+      ],
+      "history": [
+        {
+          "at": "2026-10-17T07:00:00.000Z",
+          "what": "created + fixed（`error-contract` 增 7 项断言：protocol 保留 / 缺省 undefined / 非法忽略 / 小数截断 / 兜底）"
+        }
+      ]
+    },
+    {
+      "id": "bi-042",
+      "title": "扩展启动即抛 `Cannot access 'hardLocked' before initialization`，且锁定状态在 SW 唤醒后失效",
+      "status": "fixed",
+      "severity": "high",
+      "createdAt": "2026-10-17",
+      "updatedAt": "2026-10-17",
+      "symptom": "DSH 的扩展问题面板报 `Uncaught (in promise) ReferenceError: Cannot access 'hardLocked' before initialization`（background.js:2048）。更严重的后果不是这条报错本身：MV3 的 service worker 被回收再唤醒后 `let hardLocked` 回到 false，而启动时那次读盘在 TDZ 上就抛了 ⇒ **用户以为锁着，其实锁已静默失效**。",
+      "cause": "在模块顶层写了 `void readHardLock()`，而 `let hardLocked` 声明在文件更靠后的位置（硬锁区块在 hold 区块之前、alarms 在更前面），顶层语句先执行 ⇒ 命中 TDZ。",
+      "fix": "删掉顶层调用；改成幂等的 `ensureHardLock()`，在 `runCommand` 入口 await（所以每条命令都绕不过去），popup 查状态时也先 `ensureHardLock()`。",
+      "prevention": "扩展里凡是在模块顶层\"用状态\"的语句，都要检查声明顺序；状态型安全开关一律走\"用到前先读一次\"的幂等加载，不依赖顶层初始化。",
+      "relatedDesign": [
+        "de-047"
+      ],
+      "fixedIn": "1.0.36",
+      "firstSeen": "2026-10-17 22:5x（DSH 扩展问题面板）",
+      "affected": "扩展 1.0.33–1.0.35"
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+{
+  "at": "2026-10-17T14:09:43.147Z",
+  "rigTag": "UK1",
+  "version": "1.0.107",
+  "raw": {
+    "t1": {
+      "present": true,
+      "kids": [
+        {
+          "tag": "div",
+          "text": "模型正在操作此标签页"
+        },
+        {
+          "tag": "div",
+          "text": "正在把「局域网」档改成放行"
+        },
+        {
+          "tag": "div",
+          "text": "双击任意处接管页面"
+        },
+        {
+          "tag": "div",
+          "text": "会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:09:36"
+        },
+        {
+          "tag": "button",
+          "text": "中止操作"
+        }
+      ],
+      "button": "中止操作"
+    },
+    "slow": {
+      "present": true,
+      "kids": [
+        {
+          "tag": "div",
+          "text": "模型正在操作此标签页"
+        },
+        {
+          "tag": "div",
+          "text": "正在把「局域网」档改成放行"
+        },
+        {
+          "tag": "div",
+          "text": "再双击一次接管页面"
+        },
+        {
+          "tag": "div",
+          "text": "会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:09:36"
+        },
+        {
+          "tag": "button",
+          "text": "中止操作"
+        }
+      ],
+      "button": "中止操作"
+    },
+    "fast": {
+      "present": false
+    },
+    "armed": {
+      "present": true,
+      "kids": [
+        {
+          "tag": "div",
+          "text": "模型正在操作此标签页"
+        },
+        {
+          "tag": "div",
+          "text": "正在改档（测试中止）"
+        },
+        {
+          "tag": "div",
+          "text": "双击任意处接管页面"
+        },
+        {
+          "tag": "div",
+          "text": "会话 测试会话标题 · 桥 9777 · 22:09:39"
+        },
+        {
+          "tag": "button",
+          "text": "点击确认"
+        }
+      ],
+      "button": "点击确认"
+    },
+    "disarmed": {
+      "present": true,
+      "kids": [
+        {
+          "tag": "div",
+          "text": "模型正在操作此标签页"
+        },
+        {
+          "tag": "div",
+          "text": "正在改档（测试中止）"
+        },
+        {
+          "tag": "div",
+          "text": "双击任意处接管页面"
+        },
+        {
+          "tag": "div",
+          "text": "会话 测试会话标题 · 桥 9777 · 22:09:39"
+        },
+        {
+          "tag": "button",
+          "text": "中止操作"
+        }
+      ],
+      "button": "中止操作"
+    },
+    "afterAbort": {
+      "present": false
+    },
+    "off": {
+      "tabId": 63903385,
+      "aborted": false,
+      "active": false,
+      "at": 1792246179155,
+      "closedAt": 1792246183112,
+      "dismissedBy": "abort",
+      "text": "正在改档（测试中止）"
+    }
+  },
+  "checks": [
+    {
+      "name": "基线：停在 /press",
+      "ok": true
+    },
+    {
+      "name": "标题是固定文案",
+      "ok": true,
+      "detail": "模型正在操作此标签页"
+    },
+    {
+      "name": "模型传的伪造标题没出现",
+      "ok": true
+    },
+    {
+      "name": "接管提示是「双击任意处接管页面」",
+      "ok": true
+    },
+    {
+      "name": "底部显示的是会话标题（不是模型名）",
+      "ok": true,
+      "detail": "[\"模型正在操作此标签页\",\"正在把「局域网」档改成放行\",\"双击任意处接管页面\",\"会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:09:36\",\"中止操作\"]"
+    },
+    {
+      "name": "底部有「中止操作」按钮",
+      "ok": true,
+      "detail": "中止操作"
+    },
+    {
+      "name": "两次点击间隔过大 ⇒ 浮层仍在（不误判成双击）",
+      "ok": true
+    },
+    {
+      "name": "status 也仍是 active",
+      "ok": true,
+      "detail": "{\"tabId\":63903385,\"aborted\":false,\"active\":true,\"at\":1792246176227,\"dismissedBy\":null,\"shadow\":true,\"text\":\"正在把「局域网」档改成放行\"}"
+    },
+    {
+      "name": "快双击之后浮层消失",
+      "ok": true
+    },
+    {
+      "name": "status：dismissedBy=user",
+      "ok": true,
+      "detail": "{\"tabId\":63903385,\"aborted\":false,\"active\":false,\"at\":1792246176227,\"closedAt\":1792246177600,\"dismissedBy\":\"user\",\"shadow\":false,\"text\":\"正在把「局域网」档改成放行\"}"
+    },
+    {
+      "name": "点一次 ⇒ 按钮文案变「点击确认」",
+      "ok": true,
+      "detail": "点击确认"
+    },
+    {
+      "name": "超时（3.4s）⇒ 回默认「中止操作」",
+      "ok": true,
+      "detail": "中止操作"
+    },
+    {
+      "name": "中止后浮层消失",
+      "ok": true
+    },
+    {
+      "name": "status：dismissedBy=abort 且 aborted=true",
+      "ok": true,
+      "detail": "{\"tabId\":63903385,\"aborted\":true,\"active\":false,\"at\":1792246179155,\"closedAt\":1792246182839,\"dismissedBy\":\"abort\",\"shadow\":false,\"text\":\"正在改档（测试中止）\"}"
+    },
+    {
+      "name": "中止后模型 click 被拒",
+      "ok": true,
+      "detail": "用户在这个标签页上点了「中止操作」（浮层说明：正在改档（测试中止）） —— click 已拦下。先与用户确认是否继续；确认后调 browser_hold action=off 解除"
+    },
+    {
+      "name": "中止后模型 nav 也被拒",
+      "ok": true,
+      "detail": "用户在这个标签页上点了「中止操作」（浮层说明：正在改档（测试中止）） —— nav 已拦下。先与用户确认是否继续；确认后调 browser_hold action=off 解除中止"
+    },
+    {
+      "name": "页面没收到那次点击（submit 仍为 0）",
+      "ok": true,
+      "detail": "{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}"
+    },
+    {
+      "name": "off 之后 aborted 被清掉",
+      "ok": true,
+      "detail": "{\"tabId\":63903385,\"aborted\":false,\"active\":false,\"at\":1792246179155,\"closedAt\":1792246183112,\"dismissedBy\":\"abort\",\"text\":\"正在改档（测试中止）\"}"
+    },
+    {
+      "name": "解除后模型 click 恢复",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "这次点击真的落到页面（submit=1）",
+      "ok": true,
+      "detail": "{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}"
+    }
+  ]
+}
