@@ -371,6 +371,32 @@ console.log('\n[3] 页面侧探测（fetch 桩返回一座在 9778 的桥）')
 	check('端口与配置不一致时给出顺延提示', rendered.includes('已自动顺延'))
 }
 
+console.log('\n[3b] 桥就在配置端口上时，不能显示「已自动顺延」')
+{
+	React.__reset()
+	const seen3b = []
+	installEnv(React, (url) => {
+		seen3b.push(url)
+		if (!String(url).includes(':9777/')) return Promise.resolve({ ok: false, json: async () => null })
+		return Promise.resolve({ ok: true, json: async () => ({ ok: true, wsUrl: 'ws://127.0.0.1:9777/ws', extensionConnected: true, hello: { version: '1.0.50' } }) })
+	})
+	const mod = loadClient(vendorClient, React)
+	const regs = []
+	const scopes = { 'browser-bridge': makeScope('browser-bridge', { port: 9777, token: 't' }, 'ready') }
+	mod.apply({
+		slots: { inject: (n, cb) => { cb(); return () => {} }, register: (o, C) => { regs.push({ opts: o, Comp: C }); return () => {} } },
+		settingsScope: { bind: ({ namespace }) => scopes[namespace] || makeScope(namespace, undefined, 'unavailable') },
+		configForms: { get: (namespace) => scopes[namespace] || makeScope(namespace, undefined, 'unavailable') },
+	})
+	const first3b = toText(regs[0].Comp(regs[0].opts.inject()))
+	await new Promise((r) => setTimeout(r, 50))
+	const rendered3b = toText(regs[0].Comp(regs[0].opts.inject()))
+	if (process.env.DBG) console.log('--- rendered[3b] ---\n' + first3b + '\n  ==>\n' + rendered3b + '\n--- end ---')
+	check('探测同样发到 10 个候选端口', seen3b.length === 10, '实际 ' + seen3b.length)
+	check('桥在 9777（= 配置端口）', rendered3b.includes('127.0.0.1:9777'), '')
+	check('端口一致时**不**出现顺延提示', !rendered3b.includes('已自动顺延'), rendered3b.slice(0, 120))
+}
+
 // ---- [胶囊] 2026-10-14：写完"真改了"才弹「配置已保存」，改不动要能看出来 --------
 {
 	const mod = loadClient(vendorClient, React)

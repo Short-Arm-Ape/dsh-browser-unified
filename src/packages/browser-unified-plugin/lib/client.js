@@ -1258,6 +1258,9 @@ window.__ModuleLoader__.load({
 				createElement('span', { style: pillStyle }, t('idBadge')),
 				createElement(BridgeStatus, {
 					probe: probe,
+					// 配置端口要一起传：少了它，组件里 f.port !== undefined 永远成立，
+					// 「已自动顺延」就会在**没有顺延**时也一直显示（2026-10-31 用户报的正是这个）。
+					basePort: basePort,
 					onRetry: function () { setProbe({ phase: 'loading', found: probe.found, nonce: probe.nonce + 1 }) },
 				}),
 				createElement(MasterSwitch, {
