@@ -333,7 +333,7 @@ export class BridgeServer {
     if (signal !== undefined) {
       entry.onAbort = (): void => {
         if (!this.pending.delete(id)) return
-        entry.reject(new Error(`browser command cancelled: ${command}`))
+        entry.reject(new Error(`browser command cancelled while in flight: ${command}`))
       }
       signal.addEventListener('abort', entry.onAbort, { once: true })
     }

@@ -1187,7 +1187,10 @@ class BridgeController {
 	 * 主人 2026-10-17：「模型权限我觉得可以细化，比如让不让调用类似 devtools 这类」——
 	 * 先把最危险的一类单独拎出来做成开关；其余按 read-only 那档兜。
 	 */
-	private static readonly SCRIPT_COMMANDS = new Set(['eval', 'content.debug', 'content'])
+	// `content` 是**读**：扩展里 cmdContent 只注入脚本取 title/url/正文，不执行模型给的代码。
+	// 以前把它划进"脚本类"，于是关掉「允许执行任意脚本」或打开只读档时 browser_read 直接失败，
+	// 而这两处的文案都在保证"读取不受影响"（2026-10-31 审计发现）。
+	private static readonly SCRIPT_COMMANDS = new Set(['eval', 'content.debug'])
 
 	/** 会让扩展"自动补浮层"的命令 + 浮层自身的命令：执行前把当前模式推下去。 */
 	private static readonly HOLD_MODE_COMMANDS = new Set([
@@ -1198,6 +1201,8 @@ class BridgeController {
 	private static readonly READ_ONLY_ALLOWED = new Set([
 		'ping', 'browser.info', 'tabs.list', 'snapshot', 'screenshot', 'find', 'frames',
 		'console.log', 'network.log', 'wait', 'hold.status', 'lock.status', 'pdf',
+		// 读页面正文也是只读操作（同上，以前漏了它就等于只读档下 browser_read 不可用）。
+		'content',
 	])
 
 	/**
@@ -3245,7 +3250,10 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 			} catch { /* 网络缓冲读不到不影响权限现状本身 */ }
 			// 修 bi-013：配置里存的可能是 Windows 形态路径（浏览器在 Windows 侧），而这个进程在 WSL 里；
 			// 直接把原值交给 path.join 会读不到**配置正确**的 profile。候选顺序：配置值 → 配对记录学到的位置。
-			const pairingDir = controller.describePolicy().pairing?.profileDir
+			// pairing.profileDir 只是裸目录名（"Profile 3"），单独把它交给 path.join 会拼出
+			// "Profile 3\Preferences" 这种相对路径 —— 必须和 userDataDir 拼成真实目录。
+			const pairing = controller.describePolicy().pairing
+			const pairingDir = pairing === undefined ? undefined : path.join(pairing.userDataDir, pairing.profileDir)
 			const resolvedStore = readPermissionStoreTolerant([config.autoLaunchProfileDir, pairingDir])
 			const store = resolvedStore.store
 			const requested = args.className === undefined ? undefined : String(args.className)

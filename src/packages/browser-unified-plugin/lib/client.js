@@ -1068,27 +1068,35 @@ window.__ModuleLoader__.load({
 
 		// --- section body; props = { ctx, scope } injected by the slot registration ---
 		function BrowserSectionBody(props) {
-			// Re-render when the DSH UI language (<html lang>) changes.
+			// 只订阅、只分派：hook 数量恒定为 2。
+			// 2026-10-31 审计：早退原先夹在 hook 之间 —— 首帧 loading 走 4 个 hook，数据到达后走 9 个，
+			// React 会抛 "Rendered more hooks than during the previous render"，整个浏览器分区消失。
 			useSyncExternalStore(subscribeLang, getLangVersion, getLangVersion)
-			var ctx = props.ctx
 			var scope = props.scope
 			var snapshot = useSyncExternalStore(
 				function (cb) { return scope.subscribe(cb) },
 				function () { return scope.getSnapshot() },
 				function () { return scope.getSnapshot() },
 			)
+			if (snapshot.status === 'unavailable') {
+				return createElement('div', { style: { fontSize: '13px', color: T.warn } }, t('unavailable'))
+			}
+			if (snapshot.status === 'loading' || snapshot.value === undefined) {
+				return createElement('div', { style: cardSubStyle }, t('loading'))
+			}
+			return createElement(BrowserSectionBodyInner, { ctx: props.ctx, scope: props.scope, snapshot: snapshot })
+		}
+
+		function BrowserSectionBodyInner(props) {
+			useSyncExternalStore(subscribeLang, getLangVersion, getLangVersion)
+			var ctx = props.ctx
+			var scope = props.scope
+			var snapshot = props.snapshot
 			var busyState = useState(null)
 			var busy = busyState[0]
 			var setBusy = busyState[1]
 			var writeBusy = useRef(false)
 
-			var status = snapshot.status
-			if (status === 'unavailable') {
-				return createElement('div', { style: { fontSize: '13px', color: T.warn } }, t('unavailable'))
-			}
-			if (status === 'loading' || snapshot.value === undefined) {
-				return createElement('div', { style: cardSubStyle }, t('loading'))
-			}
 			var value = snapshot.value || {}
 
 			// --- 胶囊（toast）------------------------------------------------------------

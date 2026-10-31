@@ -23,7 +23,9 @@ export type BridgeErrorCode =
 	| 'extension_offline'    // 桥在跑，但浏览器扩展没连上
 	| 'command_timeout'      // 扩展在时限内没回结果
 	| 'link_lost'            // 命令在途时扩展掉线/链路被换掉
-	| 'cancelled'            // 调用方主动取消
+	| 'cancelled'            // 调用方主动取消（命令还没发出去）
+	/** 命令**已经发出**、取消发生在路上：写操作的副作用可能已经落地（不能当"重试安全"）。 */
+	| 'cancelled_in_flight'
 	| 'not_configured'       // 还没拿到任何一份配置
 	/** 【本仓库扩展】URL 策略在**发出命令之前**把目标拦下了（上游没有策略层，故无此码）。 */
 	| 'policy_blocked'
@@ -80,6 +82,7 @@ const HINTS: Record<BridgeErrorCode, string> = {
 	extension_offline: '浏览器扩展没连上：让用户打开装了 DSH Browser Control 的那个浏览器（扩展图标应为绿色），确认端口与令牌两边一致后再试。',
 	command_timeout: '扩展超时未回应：先别重试。用 browser_find / browser_snapshot 看页面当前状态，判断动作是否其实已经生效。',
 	link_lost: '命令在途时链路断了：动作可能已经落到页面上。先用只读工具确认页面状态，再决定是否重做。',
+	cancelled_in_flight: '这次调用在命令发出之后被取消（用户停止/会话中断），页面可能已经动过了。不要直接重发：先用只读工具确认当前状态，再决定是否重做。',
 	cancelled: '调用被取消：按需重新发起，不必当作错误处理。',
 	not_configured: '插件还没读到配置：确认 dsh 已加载本插件（dsh plugin list / dsh --profile web --dump-config）后再试。',
 	policy_blocked: '目标被 URL 策略拦下了：这是插件的策略决定，不是页面错误，重试同一目标不会有不同结果。要么改用允许的目标，要么让用户在设置 →「浏览器」分区调整 urlMode / allowHosts；人机校验、反机器人挑战类目标一律交回真人。',
@@ -163,11 +166,15 @@ export function classify(command: string, error: unknown): BridgeError {
 	else if (/no browser extension connected/.test(message)) code = 'extension_offline'
 	else if (/disconnected mid-command|browser-bridge stopped/.test(message)) code = 'link_lost'
 	else if (/timed out after/.test(message)) code = 'command_timeout'
+	else if (/cancelled while in flight|in flight/i.test(message)) code = 'cancelled_in_flight'
 	else if (/cancelled/.test(message)) code = 'cancelled'
 	else if (/尚未加载配置|not configured yet/.test(message)) code = 'not_configured'
 	else if (/未启用|not enabled|桥接启动失败|listen EADDR|settings integration/.test(message)) code = 'bridge_disabled'
 	else code = 'command_failed'
-	const effectState: EffectState = code === 'command_timeout' || code === 'link_lost'
+	// `cancelled_in_flight` = 命令已经发给扩展、取消发生在路上（server.ts 用这个词报告在途取消）：
+	// 对写操作来说副作用可能已经落地，报 not_started 会让模型"以为没生效"而重试，于是点两次/提交两次。
+	const midFlight = code === 'cancelled_in_flight'
+	const effectState: EffectState = code === 'command_timeout' || code === 'link_lost' || midFlight
 		? (unknownIsPossible ? 'unknown' : 'not_started')
 		: code === 'command_failed'
 			? (unknownIsPossible ? 'unknown' : 'not_started')

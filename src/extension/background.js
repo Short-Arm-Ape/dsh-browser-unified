@@ -888,11 +888,20 @@ function trimNetworkMap(tabMap) {
 	for (let i = 0; i < overflow; i++) tabMap.delete(keys.next().value);
 }
 
-function detachTab(tabId) {
+/**
+ * 只清缓存、不调 detach：会话已经被 Chrome 弄丢时，再 detach 一次只会多一个错误。
+ * 缓存是「要不要重新 attach」的唯一判据 —— 缓存说 attached 而实际已断，
+ * 之后每条命令都会失败在 "Debugger is not attached"，直到标签页被关掉。
+ */
+function clearAttachment(tabId) {
 	attachedTabs.delete(tabId);
 	consoleLog.delete(tabId);
 	networkLog.delete(tabId);
 	tabBufferGenerations.delete(tabId);
+}
+
+function detachTab(tabId) {
+	clearAttachment(tabId);
 	chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
 }
 
@@ -920,27 +929,59 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 	tabBufferGenerations.delete(tabId);
 });
 
-/* Clean up when DevTools steals a tab (detach event fires). */
-chrome.debugger.onDetach.addListener((_source, reason) => {
-	if (reason === 'target_closed' || reason === 'canceled_by_user') {
-		// attachedTabs cleanup is handled by chrome.tabs.onRemoved
-	}
+/* 任何原因导致的 detach 都要让缓存失效：用户在这个标签页上开了 DevTools、页面变成 chrome-extension://、
+ * 或者导航竞态，都会把 CDP 会话拿走。缓存不清，ensureAttached() 就会一直命中缓存、
+ * 后续每条命令都失败在 "Debugger is not attached"。chrome.tabs.onRemoved 里也清一次（幂等）。 */
+chrome.debugger.onDetach.addListener((source) => {
+	const tabId = source && typeof source === 'object' ? source.tabId : undefined;
+	if (tabId !== undefined) clearAttachment(tabId);
 });
+
+/**
+ * Chrome 报"会话丢了"的几种文案。缓存可能仍写着 attached（SW 重启、和 DevTools 的竞态、
+ * detach 事件漏收），所以这里按文案兜底：清缓存并标 `cdp_detached`，交给 withCDP 透明重连一次。
+ * 不含 "Cannot access a chrome-extension:// URL"：那是 attach 路径的错，属于永久拒绝，重连没用。
+ */
+const CDP_DETACHED_RE = /not attached|Detached while handling|Inspected target navigated or closed/i;
 
 function dbgSend(tabId, method, params) {
 	return new Promise((resolve, reject) => {
 		chrome.debugger.sendCommand({ tabId }, method, params ?? {}, (res) => {
 			const err = chrome.runtime.lastError;
-			if (err) reject(new Error(`${method} failed: ${err.message}`));
-			else resolve(res);
+			if (!err) { resolve(res); return; }
+			if (CDP_DETACHED_RE.test(err.message)) {
+				clearAttachment(tabId);
+				const stale = new Error(`${method} failed: ${err.message}`);
+				stale.code = 'cdp_detached';
+				reject(stale);
+				return;
+			}
+			reject(new Error(`${method} failed: ${err.message}`));
 		});
 	});
 }
 
-/** Persistent CDP: attaches (if not already) and holds. */
+/**
+ * Persistent CDP：附加（如果还没附）并保持。
+ *
+ * 会话在命令途中丢了 → 重连**一次**并重放闭包。重放范围刻意收窄：**只有当闭包的第一个 CDP 调用就是
+ * 失败的那一个时**才重放。之后的调用意味着副作用已经落到页面上了，重跑会重复触发 ——
+ * 例如 cmdClick 的闭包是 evaluate(几何) → mouseMoved → mousePressed → mouseReleased，
+ * 在 mouseReleased 上丢会话再重放，同一个点击会派发两遍（6 个鼠标事件而不是 3 个）。
+ * 第二条失败一律原样抛出，让调用方按"新命令"处理，而不是我们替它重放。
+ */
 async function withCDP(tabId, fn) {
+	let sends = 0;
+	const call = (method, params) => { sends += 1; return dbgSend(tabId, method, params); };
 	await ensureAttached(tabId);
-	return fn((method, params) => dbgSend(tabId, method, params));
+	const started = sends;
+	try {
+		return await fn(call);
+	} catch (error) {
+		if (!error || error.code !== 'cdp_detached' || sends > started + 1) throw error;
+		await ensureAttached(tabId);
+		return fn(call);
+	}
 }
 
 /* ------------------------------------------------------- command handlers */
@@ -1810,7 +1851,6 @@ async function cmdContent(params) {
 	const flatten = params.flattenFrames !== false;
 	const script = buildContentScript(mode, frameSpec, flatten);
 	const payload = await withCDP(tab.id, async (send) => {
-		await assertNotAborted(send, 'input')
 		return await send('Runtime.evaluate', {
 			expression: script,
 			awaitPromise: false, returnByValue: true, userGesture: true,
@@ -1976,8 +2016,11 @@ async function cmdInput(params) {
 		surface = await withCDP(tab.id, (send) => inputSurface(tab.id, send, activation, '键盘输入'));
 	}
 
-	// Locate + focus + clear in one evaluate, shared by both modes.
-	const located = await withCDP(tab.id, (send) => send('Runtime.evaluate', {
+	// 用户按过「中止操作」时，输入也一并拦下（以前这一枪误挂在了 cmdContent 上，
+	// 于是 click/press/nav 都被拦、browser_type 却照旧往页面里写 —— 2026-10-31 审计发现）。
+	const located = await withCDP(tab.id, async (send) => {
+		await assertNotAborted(send, 'input');
+		return await send('Runtime.evaluate', {
 		expression: `(() => {
 			${DEEP_HELPER}
 			const picked = __dshPick(${JSON.stringify(String(params.selector))}, ${JSON.stringify(fingerprintFor(params.selector))});
@@ -2005,7 +2048,8 @@ async function cmdInput(params) {
 	}).then((res) => {
 		if (res.exceptionDetails) throw new Error(res.exceptionDetails.text);
 		return res.result.value;
-	}));
+	});
+	});
 	if (!located) throw new Error(`element not found: ${params.selector}`);
 
 	if (mode === 'fill') {
@@ -2667,14 +2711,20 @@ async function maybeAutoHold(params) {
 
 /** 命令跑完：浮层原本在、现在没了 ⇒ 用户双击/按 Esc 撤的 ⇒ 这个标签页别再自动加。 */
 async function suppressAutoHoldIfTaken(tabId) {
-	const present = await withCDP(tabId, (send) => send('Runtime.evaluate', {
-		expression: '!!document.getElementById("__dsh_hold_overlay__")',
+	// 不能只凭"浮层不在 DOM 里"就断定用户接管了：**导航会把浮层连同旧文档一起销毁**，
+	// 那样一次 nav / 会跳转的 click / 页面自己跳的 eval 就会把这一页永久标记成"用户已接管"
+	// （还写进 storage.local，SW 重启后也不补）。真正的判据是页面里的只读镜像
+	// `window.__dshHold.dismissedBy` —— 用户双击/中止才会把它设成 'user'/'abort'，
+	// 文档被换掉时镜像随之消失（探不到就不下结论，宁可不抑制）。
+	const state = await withCDP(tabId, (send) => send('Runtime.evaluate', {
+		expression: '(() => { var s = window.__dshHold || null; return { active: !!document.getElementById("__dsh_hold_overlay__"), dismissedBy: s ? s.dismissedBy : null }; })()',
 		awaitPromise: false, returnByValue: true, userGesture: true,
-	})).then((res) => !!(res && res.result && res.result.value === true)).catch(() => true);
-	if (!present) {
-		holdAutoSuppressedTabs.add(tabId);
-		await persistHoldState();
-	}
+	})).then((res) => (res && res.result && res.result.value) || null).catch(() => null);
+	if (state === null) return;
+	if (state.active === true) return;
+	if (state.dismissedBy !== 'user' && state.dismissedBy !== 'abort') return;
+	holdAutoSuppressedTabs.add(tabId);
+	await persistHoldState();
 }
 
 /* ------------------------------------------------------------ 防误触浮层（hold） */

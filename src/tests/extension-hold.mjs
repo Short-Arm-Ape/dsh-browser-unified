@@ -76,8 +76,13 @@ function makeChrome(onSend) {
 	const calls = { tabsUpdate: [], tabsCreate: [], tabsGroup: [], windowsUpdate: [], focusThrows: 0 };
 	let windowState = 'normal';
 	const eventListeners = [];
+	const detachListeners = []
+	let pendingSendFailures = []   // [{ method, occurrence, message }]，按方法名 + 第几次命中消费
 	const debuggerApi = {
+		attachCount: 0,
+		sendCount: 0,
 		attach: async (target, version, cb) => {
+			debuggerApi.attachCount += 1
 			debuggerApi.attached = true
 			if (typeof version === 'function') version()
 			else if (typeof cb === 'function') cb()
@@ -87,7 +92,21 @@ function makeChrome(onSend) {
 			if (typeof cb === 'function') cb()
 		},
 		sendCommand: async (target, method, params, cb) => {
+			debuggerApi.sendCount += 1
 			const tabId = target && typeof target === 'object' ? target.tabId : target
+			const hitCount = (pendingSendFailures.hits ||= new Map())
+			const bumped = (hitCount.get(method) || 0) + 1
+			hitCount.set(method, bumped)
+			const idx = pendingSendFailures.findIndex((row) => row.method === method && row.occurrence === bumped)
+			if (idx >= 0) {
+				const failure = pendingSendFailures.splice(idx, 1)[0]
+				runtimeRef.lastError = { message: failure.message }
+				// 回调是同步的：扩展在回调里读 lastError，读完就清掉（真 chrome 也是这样，
+				// 不清会让下一次 attach 误读到这条旧错误）。
+				if (typeof cb === 'function') { cb(undefined); runtimeRef.lastError = null; return undefined }
+				runtimeRef.lastError = null
+				return undefined
+			}
 			const handled = onSend(method, params, tabId)
 			let out = handled
 			if (out === null || out === undefined) {
@@ -114,7 +133,7 @@ function makeChrome(onSend) {
 			return out
 		},
 		onEvent: { addListener: (fn) => eventListeners.push(fn) },
-		onDetach: { addListener: noop },
+		onDetach: { addListener: (fn) => detachListeners.push(fn) },
 		attached: false,
 	}
 	const chrome = {
@@ -150,8 +169,12 @@ function makeChrome(onSend) {
 		i18n: { getMessage: (k) => k },
 	}
 	return {
-		chrome, local, session, calls,
+		chrome, local, session, calls, debugger: debuggerApi,
 		setWindowState: (next) => { windowState = next },
+		/** 让指定方法的第 occurrence 次 sendCommand 失败；只消费一次。 */
+		failOnMethod: (method, message, occurrence = 1) => { pendingSendFailures.push({ method, occurrence: Math.max(1, occurrence), message }) },
+		/** 模拟 Chrome 主动 detach（用户开了 DevTools、页面变成 chrome-extension://、导航竞态）。 */
+		fireDetach: (tabId, reason = 'canceled_by_user') => { for (const fn of detachListeners) fn({ tabId }, reason) },
 		fireCdp: (tabId, method, params) => { for (const fn of eventListeners) fn({ tabId }, method, params) },
 	}
 }
@@ -562,6 +585,107 @@ async function testWindowStateAndViewport() {
 	}
 }
 
+async function testHoldEvidenceAndInputGate() {
+	/* H1：只有页面里的只读镜像记着"用户接管"才抑制自动补层。
+	 * 导航会销毁浮层（镜像也随之消失），不能因此把这一页永久标记成"用户已接管"。 */
+	{
+		const { ctx, fake } = await loadWorker((method, params) => {
+			if (method === 'Runtime.evaluate' && String(params.expression).includes('__dshHold')) {
+				return { result: { value: { active: false, dismissedBy: 'user' } } }
+			}
+			return null
+		})
+		await ctx.suppressAutoHoldIfTaken(7)
+		const stored = await fake.local.get('holdSuppressed')
+		ok('H1：镜像说 dismissedBy=user ⇒ 抑制成立', Array.isArray(stored.holdSuppressed) && stored.holdSuppressed.includes(7), JSON.stringify(stored))
+	}
+	{
+		const { ctx, fake } = await loadWorker((method, params) => {
+			if (method === 'Runtime.evaluate' && String(params.expression).includes('__dshHold')) {
+				// 文档被换掉：浮层没了，镜像也没了（dismissedBy=null）
+				return { result: { value: { active: false, dismissedBy: null } } }
+			}
+			return null
+		})
+		await ctx.suppressAutoHoldIfTaken(7)
+		const stored = await fake.local.get('holdSuppressed')
+		ok('H1：浮层因导航消失 ≠ 用户接管（不抑制）', !(Array.isArray(stored.holdSuppressed) && stored.holdSuppressed.includes(7)), JSON.stringify(stored))
+	}
+	{
+		const { ctx, fake } = await loadWorker(() => null)
+		// 探针失败（CDP 卡住/页面在导航）⇒ 不下结论
+		await ctx.suppressAutoHoldIfTaken(7)
+		const stored = await fake.local.get('holdSuppressed')
+		ok('H1：探不到状态时不动抑制表', !(Array.isArray(stored.holdSuppressed) && stored.holdSuppressed.includes(7)), JSON.stringify(stored))
+	}
+
+	/* H2：用户在浮层上按了「中止操作」之后，输入也必须被拦（以前这一枪误挂在读命令上）。 */
+	{
+		const { ctx } = await loadWorker((method, params) => {
+			const ex = String(params && params.expression ? params.expression : '')
+			if (ex.includes('s.aborted === true')) return { result: { value: JSON.stringify({ text: '用户点了中止' }) } }
+			return null
+		})
+		let err = null
+		try { await ctx.cmdInput({ selector: '#x', value: 'v', tabId: 7 }) } catch (e) { err = e }
+		ok('H2：中止之后 input 被拒', err !== null && /用户终止控制/.test(err.message), err && err.message)
+	}
+}
+
+async function testCdpSessionRecovery() {
+	const DETACHED = 'Debugger is not attached to the tab with id: 7'
+
+	/* A. 第一条 CDP 就撞上"会话丢了" ⇒ 透明重连一次并成功 */
+	{
+		const { ctx, fake } = await loadWorker(() => ({ result: { value: 'ok' } }))
+		fake.failOnMethod('Runtime.evaluate', DETACHED, 1)
+		const out = await ctx.withCDP(7, (send) => send('Runtime.evaluate', { expression: '1', returnByValue: true }))
+		eq('A：读命令照常返回结果', out && out.result ? out.result.value : out, 'ok')
+		eq('A：重新 attach 了一次', fake.debugger.attachCount, 2)
+	}
+
+	/* B. 失败发生在第二条 CDP 调用上 ⇒ **不重放**（重放会重复派发副作用） */
+	{
+		const { ctx, fake } = await loadWorker(() => ({ result: { value: 'ok' } }))
+		await ctx.withCDP(7, (send) => send('Runtime.evaluate', { expression: 'warm', returnByValue: true }))
+		const before = fake.debugger.attachCount
+		fake.failOnMethod('Runtime.evaluate', DETACHED, 3)
+		let err = null
+		try {
+			await ctx.withCDP(7, async (send) => {
+				await send('Runtime.evaluate', { expression: '1', returnByValue: true })
+				await send('Runtime.evaluate', { expression: '2', returnByValue: true })
+			})
+		} catch (e) { err = e }
+		ok('B：第二条失败必须抛出（不替调用方重放）', err !== null && /not attached/i.test(err.message), err && err.message)
+		eq('B：没有因为这次失败而重连', fake.debugger.attachCount, before)
+	}
+
+	/* C. Chrome 主动 detach 后，缓存必须失效，下一条命令重新 attach */
+	{
+		const { ctx, fake } = await loadWorker(() => ({ result: { value: 'ok' } }))
+		await ctx.withCDP(7, (send) => send('Runtime.evaluate', { expression: '1', returnByValue: true }))
+		const afterFirst = fake.debugger.attachCount
+		fake.fireDetach(7, 'canceled_by_user')
+		await ctx.withCDP(7, (send) => send('Runtime.evaluate', { expression: '1', returnByValue: true }))
+		eq('C：detach 之后下一条命令重新附加', fake.debugger.attachCount, afterFirst + 1)
+	}
+
+	/* D. 不是"会话丢了"的错 ⇒ 不重连（重连也救不了，只会白试一次） */
+	{
+		const { ctx, fake } = await loadWorker(() => ({ result: { value: 'ok' } }))
+		await ctx.withCDP(7, (send) => send('Runtime.evaluate', { expression: 'warm', returnByValue: true }))
+		const before = fake.debugger.attachCount
+		fake.failOnMethod('Runtime.evaluate', 'Cannot access a chrome-extension:// URL of different extension', 2)
+		let err = null
+		try {
+			await ctx.withCDP(7, (send) => send('Runtime.evaluate', { expression: '1', returnByValue: true }))
+		} catch (e) { err = e }
+		ok('D：永久性错误原样抛出', err !== null && /chrome-extension/.test(err.message), err && err.message)
+		eq('D：没有白试一次重连', fake.debugger.attachCount, before)
+	}
+}
+
 async function testWokenTabReuse() {
 	/* B：唤醒建了窗口、紧接着 tabs.open 要去同一个地址 ⇒ 复用那张，不再 new 一张
 	 *    （2026-10-24 实测的重复标签页就是这个形状：一张未归组、一张归组、同地址） */
@@ -910,6 +1034,8 @@ async function testHeldByUserCode() {
 console.log('extension-hold: 接管浮层的三处真机契约')
 await testAxExclusion()
 await testFocusPolicy()
+await testHoldEvidenceAndInputGate()
+await testCdpSessionRecovery()
 await testWokenTabReuse()
 await testWindowNotShown()
 await testNavigationWaitModes()
