@@ -1827,7 +1827,20 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 - 第 3 条第一次变异**没被抓住**：台子里的旧连接收到 FIN 就自己关了，「旧连接还活着、只是被换掉」那一刻根本复现不出来。改法：客户端 socket 用 `new net.Socket({ allowHalfOpen: true })`，并把 data / error 拆成**两对独立链路**分别测。
 - 第一版"坏帧"写成了**掩码**帧（`0x83` 且少 3 字节载荷）⇒ 解析器只缓冲不报错，断言恒绿。改成真的未掩码帧（`0x81 0x03 'ABC'`）才有判别力。
 
-**生效前置**：插件/core 改的是 `link:` 目标 ⇒ 需要重启 `dsh web`；扩展需要在 `edge://extensions` 点一次重载（版本号应显示 1.0.53）。
+**部署口径（2026-11-01 核，推翻此前记的 `link:`）**：DSH 实际加载
+`D:\dsh-data\profiles\web\self-plugins\dsh-browser-unified`（插件）与 `…\browser-unified-core`（core）——
+两处都是**实体拷贝**（各带自己的 `.git`），`profiles\web\node_modules\` 下只是指向它们的 junction。
+所以在 `D:\work\dsh-browser-unified\src\packages\…` 里重建产物**不会**影响运行中的 DSH。同步清单（只动代码，不碰 `registry/` 活数据）：
+- 插件：`lib/index.js`、`lib/index.d.ts`、`lib/unified-tools.js`、`package.json`
+- core：`dist/bridge/server.js`、`package.json`
+
+同步后逐文件比哈希 → 重启 `dsh web`。本轮部署回滚点：插件 `7c24498`、core `3de9cd0`（都是 `sync(code): … @ b7d1861`）。
+扩展仍是本地加载 `D:\edge-extensions\dsh-browser-extension`，改完要在 `edge://extensions` 点重载。
+
+**线上验收（2026-11-01 00:1x 实测，profile web，端口 9777）**：`pluginVersion=0.11.51`、`hello.version=1.0.53`；
+`Host: evil.example → 403`、`Origin: https://evil.example → 403`、`Origin: http://127.0.0.1:3080 → 200`、`Origin: chrome-extension://… → 200`；
+`browser_navigate` + `browser_read` 走真桥读回 1403 字（链路与策略都正常）。
+**还剩一处真口子**：`insecureToken: true` —— 桥 token 仍是内置默认/过短，而它是 `/api/command` 的唯一边界（换 token 要连扩展配对一起重来，未动）。
 
 **教训**：`__` 前缀的临时脚本会被自动清掉（`src\__mutate.mjs`、`src\__dbg-link*.mjs` 跑完就没了）。临时脚本用普通名字、自己删；也别把要留的东西放进 `__` 开头的目录。
 
