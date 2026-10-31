@@ -562,6 +562,13 @@ function navBudget(waitUntil, timeoutMs) {
 function waitForNavigationComplete(tabId, timeoutMs, expectedUrl, waitUntil, previousUrl) {
 	const mode = navWaitMode(waitUntil);
 	if (mode === 'none') return Promise.resolve(true);
+	/**
+	 * 「导航前后地址相同」= 刷新/自跳转。这种情形下**不能再把"地址对得上"当到达信号**：
+	 * 旧文档的地址本来就和请求一致，一进循环就"命中"，于是返回得比新文档提交还早
+	 * （模型接下来读到的还是旧页面）。必须等 CDP 的 `Page.frameNavigated`（真的提交了新文档）。
+	 * 以前 `previousUrl` 收了却没用（2026-10-31 审计）。
+	 */
+	const sameUrlNav = typeof previousUrl === 'string' && previousUrl.length > 0 && previousUrl === expectedUrl;
 	const started = Date.now();
 	return new Promise((resolve) => {
 		let sawLoading = false;
@@ -579,7 +586,7 @@ function waitForNavigationComplete(tabId, timeoutMs, expectedUrl, waitUntil, pre
 			// 到达判据：CDP 的 frameNavigated（最准）或地址与请求一致。
 			// 不再用"地址变了"这种启发式 —— 同站重定向/刷新会回到同一个地址，那样会等满预算。
 			const landed = arrivedUrl !== null
-				|| (tab !== null && tab !== undefined && landsAt(tab.url, expectedUrl));
+				|| (!sameUrlNav && tab !== null && tab !== undefined && landsAt(tab.url, expectedUrl));
 			if (tab !== null && tab !== undefined) {
 				if (tab.status === 'loading') sawLoading = true;
 			}
@@ -839,7 +846,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 			const f = params.stackTrace.callFrames[0];
 			location = `${f.url || '<inline>'}:${f.lineNumber}`;
 		}
-		const entry = { tabId, level, text, t: params.timestamp ? Math.round(params.timestamp * 1000) : Date.now() };
+		const entry = { tabId, level, text, t: params.timestamp ? Math.round(params.timestamp) : Date.now() };
 		if (location) entry.location = location;
 		const buf = consoleLog.get(tabId) || [];
 		buf.push(entry);
@@ -942,12 +949,15 @@ if (chrome.windows && chrome.windows.onBoundsChanged) {
 	});
 }
 
-/* Clean up when a tab is closed (detaches automatically, but remove from set). */
+/* Clean up when a tab is closed: 每张按标签页存数据的表都要清一条，漏一张就是"标签页没了、内存里还挂着它"
+ * （2026-10-31 审计：以前只清了 console/network/代际，视口戳、正文签名、在途导航等待、自愈窗口戳都留着）。 */
 chrome.tabs.onRemoved.addListener((tabId) => {
-	if (attachedTabs.has(tabId)) attachedTabs.delete(tabId);
-	consoleLog.delete(tabId);
-	networkLog.delete(tabId);
-	tabBufferGenerations.delete(tabId);
+	clearAttachment(tabId);
+	lastViewport.delete(tabId);
+	lastReadSignature.delete(tabId);
+	// 在途的导航等待会自己按预算结束（它的 tick 发现标签页没了就返回 false），这里只把表项摘掉。
+	navArrivals.delete(tabId);
+	wokenTabs.delete(tabId);
 });
 
 /* 任何原因导致的 detach 都要让缓存失效：用户在这个标签页上开了 DevTools、页面变成 chrome-extension://、
@@ -1018,24 +1028,42 @@ async function cmdPing() {
  * for "give me the warnings that appeared after I clicked submit" without
  * earlier noise. `limit` defaults to 100, capped at 500.
  */
+/**
+ * console 的层级名归一化。
+ *
+ * CDP `Runtime.consoleAPICalled` 的 `type` 是 `warning`（不是 `warn`），而工具描述里
+ * 写给模型的是 `warn` —— 于是 `levels:['warn']` 一条都匹配不上，看起来像"页面没打警告"。
+ * 这里把两边都折到同一套名字（2026-10-31 审计）。
+ * @param {unknown} raw
+ * @returns {string} 归一后的层级名（认不出的原样小写返回）
+ */
+function normalizeConsoleLevel(raw) {
+	const value = String(raw ?? '').toLowerCase().trim();
+	if (value === 'warn' || value === 'warning') return 'warning';
+	if (value === 'err' || value === 'error') return 'error';
+	if (value === 'information') return 'info';
+	return value;
+}
+
 async function cmdConsoleLog(params) {
 	const tab = await resolveTab(params.tabId);
 	const limit = Math.min(500, Math.max(1, Number(params.limit) || 100));
 	const levels = Array.isArray(params.levels) && params.levels.length > 0
-		? new Set(params.levels.map((l) => String(l).toLowerCase()))
+		? new Set(params.levels.map((l) => normalizeConsoleLevel(l)))
 		: null;
 	const pattern = typeof params.pattern === 'string' && params.pattern.length > 0
 		? new RegExp(params.pattern, 'i')
 		: null;
 	const buf = consoleLog.get(tab.id) || [];
 	const filtered = buf.filter((e) => {
-		if (levels && !levels.has(e.level)) return false;
+		if (levels && !levels.has(normalizeConsoleLevel(e.level))) return false;
 		if (pattern && !pattern.test(e.text || '')) return false;
 		return true;
 	});
 	const tail = filtered.slice(-limit);
 	if (params.clear === true) consoleLog.set(tab.id, []);
-	return { tabId: tab.id, count: tail.length, total: filtered.length, entries: tail };
+	// `captured` = 过滤**之前**的条数：count=0 时靠它区分「还没采到」与「都被筛掉了」。
+	return { tabId: tab.id, count: tail.length, total: filtered.length, captured: buf.length, entries: tail };
 }
 
 /**
@@ -1103,7 +1131,8 @@ async function cmdNetworkLog(params) {
 		return rest;
 	});
 	if (params.clear === true) networkLog.set(tab.id, new Map());
-	return { tabId: tab.id, count: out.length, total: filtered.length, requests: out };
+	// `captured` = 过滤**之前**的条数：count=0 时靠它区分「还没采到」与「都被筛掉了」。
+	return { tabId: tab.id, count: out.length, total: filtered.length, captured: all.length, requests: out };
 }
 
 async function cmdNetworkClear(params) {
@@ -2447,6 +2476,28 @@ const AX_STAMP_FN = 'function(ref){'
  * 节点背后的真实 DOM 节点上 —— ref 契约因此保持不变（`browser_click` / `browser_type` 照样
  * 按 `[data-dsh-ref="e7"]` 解析），而模型拿到的是 `role` + 可访问名，不是猜出来的选择器。
  */
+/**
+ * 用这一轮快照的 items 重建 ref 指纹表（给 click/input 在"元素被重建"时留一条重定位的路）。
+ *
+ * DOM 与 AX 两条路径都**必须**调用它：以前只在 DOM 路径里重建，AX 快照拿到的 ref
+ * 在指纹表里查不到对应条目，元素一被框架重渲染就只能报"ref 失效"而无法按 name/role 重定位
+ * （2026-10-31 审计）。
+ * @param {Array<Record<string, unknown>>} items 快照里回报给模型的那批条目
+ */
+async function rememberRefFingerprints(items) {
+	refFingerprints.clear();
+	for (const item of Array.isArray(items) ? items : []) {
+		if (typeof item?.ref !== 'string') continue;
+		refFingerprints.set(item.ref, {
+			ref: item.ref,
+			tag: typeof item.tag === 'string' ? item.tag : undefined,
+			name: typeof item.name === 'string' ? item.name : undefined,
+			role: typeof item.role === 'string' ? item.role : undefined,
+		});
+	}
+	await persistRefState();
+}
+
 async function snapshotViaAx(send, tab, limit) {
 	await send('DOM.enable').catch(() => {});
 	await send('Accessibility.enable').catch(() => {});
@@ -2531,6 +2582,8 @@ async function cmdSnapshot(params) {
 		if (wantAx) {
 			try {
 				const ax = await snapshotViaAx(send, tab, limit);
+				// AX 路径同样要重建指纹表 —— 否则这条路上拿到的 ref 全是"无法重定位"的。
+				await rememberRefFingerprints(ax.items);
 				ax.limitedTo = limit;
 				return ax;
 			} catch (error) {
@@ -2605,17 +2658,7 @@ async function cmdSnapshot(params) {
 		});
 		payload.mode = 'dom';
 		// ref 指纹：给 click/input 在"元素被重建"时留一条重定位的路。
-		refFingerprints.clear();
-		for (const item of Array.isArray(payload.items) ? payload.items : []) {
-			if (typeof item?.ref !== 'string') continue;
-			refFingerprints.set(item.ref, {
-				ref: item.ref,
-				tag: typeof item.tag === 'string' ? item.tag : undefined,
-				name: typeof item.name === 'string' ? item.name : undefined,
-				role: typeof item.role === 'string' ? item.role : undefined,
-			});
-		}
-		await persistRefState();
+		await rememberRefFingerprints(payload.items);
 		if (axFallback !== undefined) payload.axFallback = axFallback;
 		payload.limitedTo = limit;
 		return payload;
@@ -2717,6 +2760,20 @@ function noteHoldSkip(reason) {
 	holdAutoStats.skips[reason] = (holdAutoStats.skips[reason] || 0) + 1;
 }
 
+/**
+ * 自动补层的串行闸（TOCTOU）。
+ *
+ * `maybeAutoHold` 是「先探测有没有浮层 → 再注入」两步，中间有 await。两条命令同时在飞时，
+ * 两边都会探测到"没有浮层"，然后后一条的注入把前一条刚挂上的浮层连同用户的点击计数一起删掉重挂
+ * （2026-10-31 审计）。注入本身很便宜，全局一把锁足够。
+ */
+let holdInjectLock = Promise.resolve();
+function withHoldInjectLock(task) {
+	const run = holdInjectLock.then(task, task);
+	holdInjectLock = run.then(() => undefined, () => undefined);
+	return run;
+}
+
 async function maybeAutoHold(params) {
 	if (holdMode !== 'black') { noteHoldSkip('mode-white'); return undefined; }
 	holdAutoStats.attempts += 1;
@@ -2724,33 +2781,37 @@ async function maybeAutoHold(params) {
 	try { tab = await resolveTab(params && params.tabId); } catch (error) { noteHoldSkip('no-tab:' + String((error && error.message) || error).slice(0, 80)); return undefined; }
 	if (!tab || typeof tab.id !== 'number') { noteHoldSkip('no-tab'); return undefined; }
 	if (holdAutoSuppressedTabs.has(tab.id)) { noteHoldSkip('suppressed'); return undefined; }
-	// 一次探测同时回答两件事：浮层在不在、以及**上一次是谁撤的**。
-	// 用户双击接管后浮层是自己消失的（不走任何命令），所以只能在下一枪之前读页面的 `window.__dshHold`；
-	// 若上一次是用户撤的（user/abort），这个标签页本会话就不再自动补 —— 否则接管等于没接管。
-	const state = await withCDP(tab.id, (send) => send('Runtime.evaluate', {
-		expression: '(() => { var s = window.__dshHold || null; return { active: !!document.getElementById("__dsh_hold_overlay__"), dismissedBy: s ? s.dismissedBy : null, aborted: s ? s.aborted === true : false, closedAt: s ? s.closedAt : null }; })()',
-		awaitPromise: false, returnByValue: true, userGesture: true,
-	})).then((res) => (res && res.result && res.result.value ? res.result.value : { active: true })).catch((error) => {
-		holdAutoStats.lastError = 'probe: ' + String((error && error.message) || error).slice(0, 120);
-		return { active: true };
+	return withHoldInjectLock(async () => {
+		// 锁内重新判一次抑制表：等锁期间可能已经有别的命令把它标成"用户已接管"。
+		if (holdMode !== 'black' || holdAutoSuppressedTabs.has(tab.id)) { noteHoldSkip('suppressed'); return undefined; }
+		// 一次探测同时回答两件事：浮层在不在、以及**上一次是谁撤的**。
+		// 用户双击接管后浮层是自己消失的（不走任何命令），所以只能在下一枪之前读页面的 `window.__dshHold`；
+		// 若上一次是用户撤的（user/abort），这个标签页本会话就不再自动补 —— 否则接管等于没接管。
+		const state = await withCDP(tab.id, (send) => send('Runtime.evaluate', {
+			expression: '(() => { var s = window.__dshHold || null; return { active: !!document.getElementById("__dsh_hold_overlay__"), dismissedBy: s ? s.dismissedBy : null, aborted: s ? s.aborted === true : false, closedAt: s ? s.closedAt : null }; })()',
+			awaitPromise: false, returnByValue: true, userGesture: true,
+		})).then((res) => (res && res.result && res.result.value ? res.result.value : { active: true })).catch((error) => {
+			holdAutoStats.lastError = 'probe: ' + String((error && error.message) || error).slice(0, 120);
+			return { active: true };
+		});
+		if (state.active) { noteHoldSkip('already-present'); return undefined; }
+		if (state.aborted === true) { noteHoldSkip('aborted'); return undefined; }
+		if (state.dismissedBy === 'user' || state.dismissedBy === 'abort') {
+			holdAutoSuppressedTabs.add(tab.id);
+			noteHoldSkip('user-took-over');
+			await persistHoldState();
+			return undefined;
+		}
+		try {
+			await cmdHoldOn({ tabId: tab.id, text: HOLD_AUTO_TEXT });
+			holdAutoStats.added += 1;
+			return tab.id;
+		} catch (error) {
+			holdAutoStats.lastError = 'inject: ' + String((error && error.message) || error).slice(0, 120);
+			noteHoldSkip('inject-failed');
+			return undefined;
+		}
 	});
-	if (state.active) { noteHoldSkip('already-present'); return undefined; }
-	if (state.aborted === true) { noteHoldSkip('aborted'); return undefined; }
-	if (state.dismissedBy === 'user' || state.dismissedBy === 'abort') {
-		holdAutoSuppressedTabs.add(tab.id);
-		noteHoldSkip('user-took-over');
-		await persistHoldState();
-		return undefined;
-	}
-	try {
-		await cmdHoldOn({ tabId: tab.id, text: HOLD_AUTO_TEXT });
-		holdAutoStats.added += 1;
-		return tab.id;
-	} catch (error) {
-		holdAutoStats.lastError = 'inject: ' + String((error && error.message) || error).slice(0, 120);
-		noteHoldSkip('inject-failed');
-		return undefined;
-	}
 }
 
 /** 命令跑完：浮层原本在、现在没了 ⇒ 用户双击/按 Esc 撤的 ⇒ 这个标签页别再自动加。 */
@@ -2883,9 +2944,16 @@ function pageShowHold(payload) {
 		abort.style.borderColor = 'rgba(255,255,255,0.28)';
 	}
 	function cleanup(by) {
+		// 幂等：Esc 长按定时器 / 双击 / 「中止操作」三条路都可能先后到达，第二条不许再改状态
+		// （否则一个晚到的 'user' 会把"agent 主动解除"改写成"用户接管"，进而永久抑制自动补层）。
+		if (state.active !== true) return;
 		try { window.removeEventListener('keydown', block, true); } catch (e) { /* 已移除 */ }
 		if (timer) clearTimeout(timer);
 		if (armTimer) clearTimeout(armTimer);
+		// Esc 长按的定时器以前漏清：鼠标撤掉浮层后它 600ms 再醒一次，把 dismissedBy 改成 'user'，
+		// 于是这个标签页被永久当成"用户已接管"（2026-10-31 审计）。
+		if (escLongPress) { clearTimeout(escLongPress); escLongPress = 0; }
+		escDown = false;
 		if (host.parentNode) host.parentNode.removeChild(host);
 		// 浮层没了就把全屏监听也摘掉，否则下一次页面进全屏会白跑一趟取 DOM
 		try {
@@ -2974,9 +3042,13 @@ function pageShowHold(payload) {
 	// 纯键盘可达：把焦点交给浮层里的按钮 ——
 	//  · Tab 进不来也没关系（焦点已在浮层内），Enter/Space 触发按钮，Esc 直接接管；
 	//  · 副作用是页面里原本聚焦的输入框失焦（这是"冻结输入"的意思，比全局拦键更干净）。
+	// `focused` 必须如实回填：以前无条件写 true，可 focus() 失败了也报"焦点已在浮层里"
+	// （2026-10-31 审计）—— 纯键盘用户会以为能按 Enter，实际按键落在页面上。
+	var focusOk = false
 	try {
 		const prevFocus = document.activeElement;
 		abort.focus({ preventScroll: true });
+		focusOk = (host.shadowRoot && host.shadowRoot.activeElement === abort) || document.activeElement === abort;
 		state.prevFocus = prevFocus && prevFocus !== document.body ? true : false;
 	} catch (err) { /* 页面不允许聚焦就算了，鼠标照旧可用 */ }
 	// Esc 也要"两下"或"长按"才算接管 —— 单次 Esc 在页面里太常见（关弹窗、取消输入、
@@ -3008,7 +3080,7 @@ function pageShowHold(payload) {
 	var cov = holdCoverage();
 	return {
 		active: true, id: ID, shadow: host.shadowRoot !== null && host.shadowRoot !== undefined,
-		blockKeys: payload.blockKeys === true, focused: true,
+		blockKeys: payload.blockKeys === true, focused: focusOk,
 		covered: cov.covered === true,
 		...(cov.reason === undefined ? {} : { reason: cov.reason }),
 	};
@@ -3276,8 +3348,19 @@ async function cmdWait(params) {
 	} else {
 		throw new Error('provide one of selector, text, fn, or stableMs');
 	}
+	// 预算从**进 CDP 之前**就开始算：附加调试器本身也可能慢，不能让它在预算之外。
+	const started = Date.now();
 	return withCDP(tab.id, async (send) => {
-		const started = Date.now();
+		/**
+		 * 单次探针最多能占多少时间。
+		 *
+		 * 为什么要有它（2026-10-31 审计）：超时判据原来只在**每次 evaluate 返回之后**查一次，
+		 * 而 CDP 在文档卡在 commit 之前时**根本不回** —— 一个没回音的 `Runtime.evaluate`
+		 * 就能把 `timeoutMs` 这条"上限"变成一个仅供参考的数字（`withBudget` 就是为这个写的）。
+		 * 现在每个 await 都带剩余预算，超了就按"这次条件没成立"处理，最迟在
+		 * 预算 + 余量 之内抛 `wait timeout`。
+		 */
+		const budgetLeft = () => Math.max(50, timeoutMs - (Date.now() - started) + 250);
 		// 「页面已经落到浏览器错误页」时条件**不可能**成立：再等下去只是白烧预算
 		// （2026-10-10 实测：navigate 到连不上的站点后，wait 把 30s 预算烧光，模型读到的
 		//  是"等待条件未成立"，跟"页面慢"完全分不开）。判据用真机实测过的结构：
@@ -3293,9 +3376,9 @@ async function cmdWait(params) {
 			}
 		};
 		const probeDocument = async () => {
-			const probe = await send('Runtime.evaluate', {
+			const probe = await withBudget(send('Runtime.evaluate', {
 				expression: errorProbeExpression, awaitPromise: false, returnByValue: true, userGesture: true,
-			}).catch(() => null);
+			}).catch(() => null), budgetLeft(), null);
 			if (probe === null || probe.exceptionDetails) return null;
 			try { return JSON.parse(String(probe.result?.value ?? '')); } catch { return null; }
 		};
@@ -3307,7 +3390,7 @@ async function cmdWait(params) {
 		 *  结果同时打印"页面仍在加载"和"等待条件成立"）。此时一律不采信命中，继续等新文档。
 		 */
 		const documentIsStale = async (docHref) => {
-			const live = await chrome.tabs.get(tab.id).catch(() => null);
+			const live = await withBudget(chrome.tabs.get(tab.id).catch(() => null), budgetLeft(), null);
 			if (live === null || live === undefined) return false;
 			if (live.status !== 'loading') return false;
 			const target = typeof live.url === 'string' ? live.url : '';
@@ -3342,13 +3425,17 @@ async function cmdWait(params) {
 				}
 			}
 			polls += 1;
-			const res = await send('Runtime.evaluate', {
+			const res = await withBudget(send('Runtime.evaluate', {
 				expression: condition,
 				awaitPromise: false, returnByValue: true, userGesture: true,
-			}).catch(() => ({ result: { value: false } }));
+			}).catch(() => ({ result: { value: false } })), budgetLeft(), { result: { value: false } });
 			if (res.exceptionDetails) throw new Error(`wait condition error: ${res.exceptionDetails.text}`);
 			if (res.result.value === true) return { tabId: tab.id, waited: Date.now() - started, ...(staleSkips > 0 ? { skippedStaleHits: staleSkips } : {}) };
-			if (Date.now() - started >= timeoutMs) throw new Error(`wait timeout after ${timeoutMs}ms`);
+			if (Date.now() - started >= timeoutMs) {
+				const overshoot = Date.now() - started - timeoutMs;
+				throw new Error(`wait timeout after ${timeoutMs}ms`
+					+ (overshoot > 500 ? `（实际 ${Date.now() - started}ms：有一次探针卡住了，超时是硬上限之外的余量）` : ''));
+			}
 			await new Promise((r) => setTimeout(r, 50));
 		}
 	});

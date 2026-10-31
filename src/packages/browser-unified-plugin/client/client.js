@@ -653,7 +653,7 @@ window.__ModuleLoader__.load({
 					},
 					style: {
 						font: 'inherit', fontSize: '12px', padding: '5px 12px', borderRadius: '8px',
-						border: '1px solid ' + T.border, background: 'transparent', color: T.label1, cursor: 'pointer',
+						border: '1px solid ' + T.line1, background: 'transparent', color: T.label1, cursor: 'pointer',
 						whiteSpace: 'nowrap',
 					},
 				}, actionable ? t('updateOpen') : st.phase === 'loading' ? t('updateCheckingBtn') : t('updateBtn')),
@@ -685,7 +685,7 @@ window.__ModuleLoader__.load({
 				style: {
 					display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
 					padding: '14px 16px', margin: '0 0 12px',
-					borderRadius: '12px', border: '1px solid ' + (enabled ? T.border : T.error),
+					borderRadius: '12px', border: '1px solid ' + (enabled ? T.line1 : T.error),
 					background: enabled ? T.bg1 : 'rgba(220,60,60,0.08)',
 				},
 			},
@@ -1158,6 +1158,14 @@ window.__ModuleLoader__.load({
 				setBusy('saving')
 				var before = readField(field)
 				var done = target.set(field, next)
+				// 设置面可能**同步拒绝**（返回 false）——以前那种情况落进 else 分支，
+				// 一边清 busy 一边去 confirmWrite 探"生效值"，等于把"没写进去"演成"已经保存"。
+				if (done === false) {
+					writeBusy.current = false
+					setBusy({ error: t('writeFailed') })
+					showCapsule('bad', t('writeFailed'))
+					return
+				}
 				if (done && typeof done.then === 'function') {
 					done.then(
 						function () {
@@ -1188,6 +1196,7 @@ window.__ModuleLoader__.load({
 					showCapsule('bad', t('writeFailed') + (err && err.message ? err.message : String(err)))
 				}
 				var done = scope.unset(field)
+				if (done === false) { fail(new Error(t('writeFailed'))); return }
 				if (done && typeof done.then === 'function') done.then(land, fail)
 				else land()
 			}

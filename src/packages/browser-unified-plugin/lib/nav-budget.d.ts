@@ -26,3 +26,11 @@ export declare function normalizeNavWaitMode(value: unknown): NavWaitMode;
 export declare function navWaitBudget(waitUntil: unknown, timeoutMs?: unknown): number;
 /** 交给桥的命令等待上限：预算 + 余量（`none` 也要留出探针与回报的时间）。 */
 export declare function navBridgeTimeout(waitUntil: unknown, timeoutMs?: unknown): number;
+/**
+ * 页内预算（`browser_wait` / `browser_evaluate` 的 `timeoutMs`）对应的桥等待上限。
+ *
+ * 和上面导航那笔是同一个道理：桥自己的命令超时是 60s，而这两个工具的页内预算上限是 120s。
+ * 预算比桥还长时**先到的是桥** —— 模型拿到 `command_timeout`（"扩展超时未回应"），
+ * 而真实原因只是"等得久、页面还没满足条件"。把这个预算交给桥，让页内自己先超时、自己解释。
+ */
+export declare function pageBridgeTimeout(budgetMs: number): number;

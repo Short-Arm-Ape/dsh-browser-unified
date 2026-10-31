@@ -253,6 +253,9 @@ export function applyUnifiedTools(ctx, config) {
                 const insecureRepos = [];
                 const skippedNonMerge = [];
                 let drift = 0;
+                // 查不到的来源单独数：它们的状态是**不知道**，不能并进"与基线一致"那句话里
+                // （以前只要 drift=0 就说"全部一致，无需更新" —— 哪怕有仓库 UNREACHABLE）。
+                const unreachableRepos = [];
                 for (const repo of repos) {
                     const id = String(repo.id);
                     if (wanted && !wanted.has(id))
@@ -278,6 +281,7 @@ export function applyUnifiedTools(ctx, config) {
                     if (insecureRetry)
                         insecureRepos.push(id);
                     if (unreachable) {
+                        unreachableRepos.push(id);
                         lines.push(`[${id}] UNREACHABLE —— ${unreachable}`);
                     }
                     else if (sha === pinned) {
@@ -296,7 +300,11 @@ export function applyUnifiedTools(ctx, config) {
                 }
                 const head = drift > 0
                     ? `上游有新提交：${drift} 个仓库需要吸收（re-vendor + 合并 + typecheck，需你确认后执行；完整提交清单见 scripts/check-upstream.ps1）`
-                    : '全部跟踪来源（role=merge）均与开发基线一致，无需更新。';
+                        + (unreachableRepos.length > 0 ? `；另有 ${unreachableRepos.length} 个来源查不到，状态未知：${unreachableRepos.join(', ')}` : '')
+                    : unreachableRepos.length > 0
+                        ? `没有发现漂移，但有 ${unreachableRepos.length} 个来源查不到（${unreachableRepos.join(', ')}）：这些来源的状态是**不知道**，`
+                            + '不能当作"与基线一致" —— 先解决可达性（网络/凭据/仓库改名）再重查。'
+                        : '全部跟踪来源（role=merge）均与开发基线一致，无需更新。';
                 let extra = '';
                 if (args.includeDesign === true) {
                     const entries = Array.isArray(reg.designEntries) ? reg.designEntries : [];

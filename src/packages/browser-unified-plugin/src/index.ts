@@ -32,7 +32,7 @@ import { applyUnifiedTools, currentPluginVersion, loadIssues } from './unified-t
 // 原 dsh-browser-buddy 的能力（de-036 合并）：工具面分层 / 状态注入 / 调用即唤醒 / 登记簿送达
 // + browser_tools / browser_frames / browser_frame_eval。
 import { applyBuddyFeatures } from './buddy.js'
-import { navBridgeTimeout } from './nav-budget.js'
+import { navBridgeTimeout, pageBridgeTimeout } from './nav-budget.js'
 import { CONTENT_SETTING, DEFAULT_PERMISSION_POLICY_ENTRIES, chromiumTime, readOriginPermissions, readPermissionStore, readPermissionStoreTolerant, type PermissionReading } from './permissions.js'
 import {
 	brandIdFromHelloName,
@@ -498,6 +498,55 @@ function extensionCanDiscoverPort(port: number): boolean {
 }
 
 /**
+ * 「自动拉起 / 握手即学习」这批配置的指纹。
+ *
+ * 它们**不动监听器**（不用重启桥），但必须让断线 watchdog 与学习定时器跟着换配置：
+ * 以前 `reconcileNow` 的早退只看 serverKey 与 policyKey，于是改完「自动拉起 / 断开容忍 /
+ * 拉起用哪个 profile」要等端口或策略也变了才生效，而设置页当时就把新值显示成"已保存"
+ * （2026-10-31 审计）。抽成纯函数是为了能直接钉住"哪些字段必须算进来"。
+ * @param config - 解析后的配置（只需要这批字段）。
+ * @returns 指纹串；禁用时为空串。
+ */
+export function autoLaunchFingerprint(config: {
+	enabled: boolean
+	autoLaunchEnabled?: boolean
+	autoLaunchIdleSeconds?: number
+	autoLaunchBrowserExe?: string
+	autoLaunchProfileDir?: string
+	autoLaunchProfileName?: string
+	autoLaunchTempProfile?: boolean
+	autoLaunchExtensionDir?: string
+	autoLaunchOnToolUse?: boolean
+	autoLaunchWaitMs?: number
+}): string {
+	if (!config.enabled) return ''
+	return [
+		config.autoLaunchEnabled ? '1' : '0',
+		config.autoLaunchIdleSeconds,
+		config.autoLaunchBrowserExe,
+		config.autoLaunchProfileDir,
+		config.autoLaunchProfileName,
+		config.autoLaunchTempProfile ? '1' : '0',
+		config.autoLaunchExtensionDir,
+		config.autoLaunchOnToolUse ? '1' : '0',
+		config.autoLaunchWaitMs,
+	].join('|')
+}
+
+/**
+ * 「握手即学习」失败后的退避时长（指数，封顶 10 分钟）。
+ *
+ * 学不成时 `learnedExtensionId` 不会被写入，于是 5 秒一次的定时器会**每轮全盘重扫**所有
+ * profile —— 一直连着一个学不到位置的扩展就是每 5 秒一次磁盘风暴（2026-10-31 审计）。
+ * @param attempts - 这个扩展 id 已经失败过几次（0 = 第一次失败）。
+ * @returns 下次允许重试前要等的毫秒数。
+ */
+export function learnRetryDelayMs(attempts: number): number {
+	const safe = Number.isFinite(attempts) ? Math.max(0, Math.trunc(attempts)) : 0
+	return Math.min(10 * 60_000, 15_000 * 2 ** Math.min(safe, 5))
+}
+
+/**
  * Owns zero or one live {@link BridgeServer} and restarts it whenever the
  * resolved settings change. Reconciles serialize through a promise chain so a
  * burst of settings commits cannot interleave stop/start pairs.
@@ -578,6 +627,15 @@ export class BridgeController {
 	/** 已经学过其位置的扩展 id（避免重复扫盘）。 */
 	private learnedExtensionId: string | undefined
 	/**
+	 * 「握手即学习」失败时的退避状态。
+	 *
+	 * 为什么需要：学习失败（按扩展 id 反查不到装了它的 profile）时 `learnedExtensionId` 不会被写入，
+	 * 于是 5 秒一次的定时器**每轮全盘重扫**一遍所有 profile —— 一直连着一个学习不了的扩展，
+	 * 就是每 5 秒一次磁盘风暴。改成指数退避：同一个扩展 id 失败后按 15s → 30s → … → 10min 退避，
+	 * 下次换 id 或配置变了（`refreshLearnTimer`）才立刻重试。
+	 */
+	private learnFailure: { extensionId: string; at: number; attempts: number } | undefined
+	/**
 	 * 「握手即学习」的定时器。
 	 *
 	 * 为什么必须在**连着的**时候学：`hello` 只在扩展连着时存在（断开即清空），
@@ -585,6 +643,9 @@ export class BridgeController {
 	 * 新 id 就立刻反查磁盘并落盘，之后的冷启动才有依据。
 	 */
 	private learnTimer: ReturnType<typeof setInterval> | undefined
+
+	/** 上一次重建 watchdog / 学习定时器用的 autoLaunch* 快照（见 reconcileNow 里那个早退）。 */
+	private autoLaunchKey = ''
 
 	constructor(private readonly log: (line: string) => void) {}
 
@@ -733,6 +794,8 @@ export class BridgeController {
 			this.learnTimer = undefined
 		}
 		if (!config.enabled) return
+		// 配置变了 = 失败原因可能已经消失（用户填了 profile 目录/扩展目录），别等退避到期。
+		this.learnFailure = undefined
 		this.learnTimer = setInterval(() => {
 			this.learnFromHello(config)
 		}, 5_000)
@@ -741,14 +804,31 @@ export class BridgeController {
 
 	/**
 	 * 看 `hello` 学一次位置（幂等）。学成了就不再重复扫盘，直到换了一个扩展 id。
+	 *
+	 * 扫盘本身很贵（每个 profile 都要读磁盘），所以**失败也要退避**：
+	 * 见 {@link learnFailure}。`loadPairing()` 只在真需要判断时读一次，不进 5 秒热路径。
 	 * @param config - 当前解析后的配置。
 	 */
 	private learnFromHello(config: ResolvedConfig): void {
 		const extensionId = this.server?.status.hello?.extensionId
 		if (extensionId === undefined || extensionId === '') return
 		if (extensionId === this.learnedExtensionId && this.loadPairing() !== undefined) return
+		const failed = this.learnFailure
+		if (failed !== undefined && failed.extensionId === extensionId) {
+			if (Date.now() - failed.at < learnRetryDelayMs(failed.attempts)) return
+		}
 		const target = this.resolveLaunchTarget(config)
-		if (target === undefined) return
+		if (target === undefined) {
+			const attempts = failed !== undefined && failed.extensionId === extensionId ? failed.attempts + 1 : 0
+			this.learnFailure = { extensionId, at: Date.now(), attempts }
+			// 只在前两次说一声：之后静默退避，别把日志刷成一堵墙。
+			if (attempts <= 1) {
+				this.log(`[browser-bridge] 从 hello 学习浏览器位置失败（ext=${extensionId}，${this.locateNote ?? '没有可用的定位依据'}）：`
+					+ `改成退避重试，不再每 5 秒扫一遍磁盘`)
+			}
+			return
+		}
+		this.learnFailure = undefined
 		this.learnedExtensionId = extensionId
 		this.log(`[browser-bridge] 已从 hello 学到浏览器位置（ext=${extensionId} → ${target.brandId ?? '?'} / ${target.profileDir}`
 			+ `${target.profileName !== undefined ? `（${target.profileName}）` : ''}）`)
@@ -1066,7 +1146,12 @@ export class BridgeController {
 				+ `${(config.metadataHostnames ?? []).join('\u0001')}|${(config.metadataIps ?? []).join('\u0001')}|`
 				+ `${(config.allowHosts ?? []).join('\u0001')}|${(config.denyHosts ?? []).join('\u0001')}`
 			: ''
-		if (serverKey === this.serverKey && policyKey === this.policyKey) return
+		// autoLaunch* 不动监听器，但**必须**让断线 watchdog 与「握手即学习」跟着换配置。
+		// 以前这个早退只看上面两个 key ⇒ 改完「自动拉起/断开容忍/拉起用哪个 profile」要等端口或策略
+		// 也变了（或者重启 dsh）才生效，而设置页当时就把新值显示成"已保存"（2026-10-31 审计）。
+		const autoLaunchKey = autoLaunchFingerprint(config)
+		if (serverKey === this.serverKey && policyKey === this.policyKey && autoLaunchKey === this.autoLaunchKey) return
+		this.autoLaunchKey = autoLaunchKey
 		if (serverKey !== this.serverKey) {
 			const previous = this.server
 			this.server = undefined
@@ -1246,6 +1331,24 @@ export class BridgeController {
 		return undefined
 	}
 
+	/**
+	 * 最近一条对话框记录所在的标签页 —— `dialog` 的 `answer` 默认就作用于它（扩展侧
+	 * `dialogLog[dialogLog.length - 1].tabId`）。授权必须判**那个**页面，不能拿当前激活页顶包。
+	 * 读不到（没有记录 / 桥没起 / 扩展没连）返回 undefined：调用方据此 fail-closed。
+	 */
+	async lastDialogTabId(): Promise<number | undefined> {
+		const server = this.server
+		if (server === undefined) return undefined
+		try {
+			const raw = await server.execute('dialog', {}) as { recent?: Array<{ tabId?: number }> }
+			const rows = Array.isArray(raw?.recent) ? raw.recent : []
+			const last = rows.length > 0 ? rows[rows.length - 1] : undefined
+			return typeof last?.tabId === 'number' ? last.tabId : undefined
+		} catch {
+			return undefined
+		}
+	}
+
 	async execute(command: string, params: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown> {
 		const denied = this.accessDenial(command)
 		if (denied !== undefined) throw classify(command, new Error(denied))
@@ -1328,6 +1431,21 @@ export class BridgeController {
 		if (HTTP_PAGE_COMMANDS.has(command)) {
 			if (this.server?.status.extensionConnected !== true) return undefined
 			const tabId = typeof params.tabId === 'number' ? params.tabId : undefined
+			try {
+				await authorizeExistingTab(this, tabId, new AbortController().signal)
+			} catch (error) {
+				return errorMessage(error)
+			}
+		}
+		// `dialog` 只有带 `answer` 才真动页面（读/改策略不碰任何页面，所以它不在上面那个集合里）。
+		// 它命中的标签页可以不给 tabId（默认=最近一条对话框记录），所以先定目标页再判红线 ——
+		// 不这样做的话，带 token 的 POST 能把任意标签页从对话框里放出来。
+		if (command === 'dialog' && params.answer !== undefined) {
+			if (this.server?.status.extensionConnected !== true) return undefined
+			const tabId = typeof params.tabId === 'number' ? params.tabId : await this.lastDialogTabId()
+			if (tabId === undefined) {
+				return 'HTTP 命令面回答对话框必须给出 tabId：记录里找不到可用的目标标签页，无法判断该页面是否允许操作'
+			}
 			try {
 				await authorizeExistingTab(this, tabId, new AbortController().signal)
 			} catch (error) {
@@ -2056,7 +2174,7 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 						...waitCondition.params,
 						timeoutMs: budget,
 						tabId: raw.tabId,
-					}, exec.signal) as { waited?: number }
+					}, exec.signal, pageBridgeTimeout(budget)) as { waited?: number }
 					out.waitedMs = typeof waited?.waited === 'number' ? waited.waited : Date.now() - waitStartedAt
 					out.waitConditionMet = true
 				} catch (error) {
@@ -2114,7 +2232,7 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					...condition.params,
 					timeoutMs: budget,
 					...(args.tabId === undefined ? {} : { tabId: args.tabId }),
-				}, exec.signal) as { tabId?: number; waited?: number }
+				}, exec.signal, pageBridgeTimeout(budget)) as { tabId?: number; waited?: number }
 				return {
 					tabId: typeof waited?.tabId === 'number' ? waited.tabId : (args.tabId ?? -1),
 					waitedMs: typeof waited?.waited === 'number' ? waited.waited : budget,
@@ -2327,6 +2445,18 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 			if (args.answer !== undefined) params.answer = args.answer
 			if (args.promptText !== undefined) params.promptText = args.promptText
 			if (args.tabId !== undefined) params.tabId = args.tabId
+			// `answer` 会真的动一个标签页（把它从对话框里放出来），而它默认作用于「最近一条对话框
+			// 记录」的标签页 —— 那个页面未必是当前激活页。判据必须落在**那个页面**上，
+			// 所以先读一条只读的 `dialog` 拿到 tabId 再授权；拿不到就拒（fail-closed），
+			// 别拿"当前激活页"顶包（2026-10-31 审计：browser_dialog 完全没过 authorizeExistingTab）。
+			// 纯读/改策略（没有 answer）不碰任何页面，不需要这一步。
+			if (args.answer !== undefined) {
+				const target = args.tabId ?? await controller.lastDialogTabId()
+				if (target === undefined) {
+					throw new Error('不知道这个对话框在哪个标签页上：记录里没有可用的 tabId。请显式传 tabId 再试（避免答到别的页面上去）。')
+				}
+				await authorizeExistingTab(controller, target, exec.signal)
+			}
 			const raw = await controller.execute('dialog', params, exec.signal) as {
 				policy?: string
 				answered?: { tabId?: number; as?: string }
@@ -2875,11 +3005,12 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 			const before = await authorizeExistingTab(controller, args.tabId, exec.signal)
 			const params: Record<string, unknown> = { expression: args.expression }
 			if (args.tabId !== undefined) params.tabId = args.tabId
+			const evalBudget = args.timeoutMs === undefined ? 15_000 : Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs)))
 			if (args.timeoutMs !== undefined) {
-				const budget = Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs)))
-				params.timeoutMs = budget
+				params.timeoutMs = evalBudget
 			}
-			const raw = await controller.execute('eval', params, exec.signal) as { tabId: number; value: unknown }
+			// 桥自己的超时是 60s：页内预算更大时必须让桥等更久，否则先报的是"扩展超时未回应"。
+			const raw = await controller.execute('eval', params, exec.signal, pageBridgeTimeout(evalBudget)) as { tabId: number; value: unknown }
 			// 越界导航检查（设置项，默认开）：分域只拦"导航命令"，脚本里 `location.href = …`
 			// 不经过任何策略。脚本本身拦不住（真发生也是页面自己发起的），这里做的只是
 			// **不让它静默通过**：地址变了且新地址在当前策略下不被允许，本次调用报错。
@@ -3013,7 +3144,7 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 		description: "Read the `console.log/info/warn/error` entries captured for a tab. `clear:true` empties the buffer too, so the next call shows only entries recorded after this one.",
 		parameters: {
 			tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
-			levels: { type: 'array', items: { type: 'string' }, description: 'Filter to one or more of: log, info, warn, error, debug.' },
+			levels: { type: 'array', items: { type: 'string' }, description: 'Filter to one or more of: log, info, warn, error, debug (`warn` and `warning` are the same level).' },
 			pattern: { type: 'string', description: 'Regex (case-insensitive) matched against the formatted text.' },
 			limit: { type: 'number', description: 'Maximum entries to return; default 100, capped at 500.' },
 			clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
@@ -3026,6 +3157,8 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					tabId: { type: 'number', required: true },
 					count: { type: 'number', required: true },
 					total: { type: 'number', required: true },
+					/** 过滤之前的条数：用来区分「还没采到」与「都被筛掉了」。 */
+					captured: { type: 'number' },
 					entries: { type: 'array', required: true, items: consoleEntrySchema },
 				},
 			},
@@ -3035,7 +3168,15 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					const location = typeof entry.location === 'string' && entry.location.length > 0 ? `  @ ${entry.location}` : ''
 					return `${time} [${entry.level ?? 'log'}] ${String(entry.text ?? '').slice(0, 500)}${location}`
 				})
-				return textBlock(`Tab ${value.tabId}: ${value.count} of ${value.total} console entries\n${lines.join('\n')}`)
+				const captured = typeof value.captured === 'number' ? value.captured : undefined
+				const head = value.count > 0
+					? `Tab ${value.tabId}: ${value.count} of ${value.total} console entries`
+					: captured === 0
+						? `Tab ${value.tabId}: 还没有任何 console 记录（这个标签页还没被采集，或页面确实没打过日志）`
+						: captured === undefined
+							? `Tab ${value.tabId}: 0 条命中`
+							: `Tab ${value.tabId}: 采到了 ${captured} 条，但全被过滤条件（levels / pattern）排除了`
+				return textBlock(`${head}\n${lines.join('\n')}`)
 			},
 		},
 		presentCall: () => ({ card: 'generic', title: 'Read browser console', kind: 'other' as const }),
@@ -3071,6 +3212,8 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					tabId: { type: 'number', required: true },
 					count: { type: 'number', required: true },
 					total: { type: 'number', required: true },
+					/** 过滤之前的条数：用来区分「还没采到」与「都被筛掉了」。 */
+					captured: { type: 'number' },
 					requests: { type: 'array', required: true, items: networkRequestSchema },
 				},
 			},
@@ -3082,7 +3225,15 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 					const type = typeof request.resourceType === 'string' && request.resourceType.length > 0 ? ` [${request.resourceType}]` : ''
 					return `${status}${size}${type}\t${request.method ?? 'GET'} ${String(request.url ?? '').slice(0, 300)}${error}`
 				})
-				return textBlock(`Tab ${value.tabId}: ${value.count} of ${value.total} network requests\n${lines.join('\n')}`)
+				const captured = typeof value.captured === 'number' ? value.captured : undefined
+				const head = value.count > 0
+					? `Tab ${value.tabId}: ${value.count} of ${value.total} network requests`
+					: captured === 0
+						? `Tab ${value.tabId}: 还没有任何网络请求记录（这个标签页还没被采集，或页面还没发过请求）`
+						: captured === undefined
+							? `Tab ${value.tabId}: 0 条命中`
+							: `Tab ${value.tabId}: 采到了 ${captured} 条，但全被过滤条件（includeStatic / methodPattern / urlPattern / status）排除了`
+				return textBlock(`${head}\n${lines.join('\n')}`)
 			},
 		},
 		presentCall: () => ({ card: 'generic', title: 'Read browser network log', kind: 'other' as const }),

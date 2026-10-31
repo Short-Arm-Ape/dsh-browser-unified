@@ -21,7 +21,8 @@
 export type BridgeErrorCode =
 	| 'bridge_disabled'      // 桥接没在监听（配置里关掉了，或启动失败）
 	| 'extension_offline'    // 桥在跑，但浏览器扩展没连上
-	| 'command_timeout'      // 扩展在时限内没回结果
+	/** 预算用尽：桥等到扩展回话的时限，或扩展执行页内命令（`eval` / `wait`）的时限。 */
+	| 'command_timeout'
 	| 'link_lost'            // 命令在途时扩展掉线/链路被换掉
 	| 'cancelled'            // 调用方主动取消（命令还没发出去）
 	/** 命令**已经发出**、取消发生在路上：写操作的副作用可能已经落地（不能当"重试安全"）。 */
@@ -80,7 +81,7 @@ export function isWriteCommand(command: string): boolean {
 const HINTS: Record<BridgeErrorCode, string> = {
 	bridge_disabled: '桥接未启用或没起来：到 dsh 设置 →「浏览器」分区把开关打开（或 profile 的 cordis.patch.yml 里给 browser-bridge 配 enabled: true）后重启 dsh；不要重试本命令。若状态里带 listen EADDR，是端口被占 —— 换个 port 即可。',
 	extension_offline: '浏览器扩展没连上：让用户打开装了 DSH Browser Control 的那个浏览器（扩展图标应为绿色），确认端口与令牌两边一致后再试。',
-	command_timeout: '扩展超时未回应：先别重试。用 browser_find / browser_snapshot 看页面当前状态，判断动作是否其实已经生效。',
+	command_timeout: '预算用尽没拿到结果：先别重试。用 browser_find / browser_snapshot 看页面当前状态，判断动作是否其实已经生效。若原始文案是页内的 `eval timeout after` / `wait timeout after`（预算用尽，不是链路问题），加大 timeoutMs 再试即可。',
 	link_lost: '命令在途时链路断了：动作可能已经落到页面上。先用只读工具确认页面状态，再决定是否重做。',
 	cancelled_in_flight: '这次调用在命令发出之后被取消（用户停止/会话中断），页面可能已经动过了。不要直接重发：先用只读工具确认当前状态，再决定是否重做。',
 	cancelled: '调用被取消：按需重新发起，不必当作错误处理。',
@@ -165,7 +166,11 @@ export function classify(command: string, error: unknown): BridgeError {
 	else if (notShown) code = 'window_not_shown'
 	else if (/no browser extension connected/.test(message)) code = 'extension_offline'
 	else if (/disconnected mid-command|browser-bridge stopped/.test(message)) code = 'link_lost'
-	else if (/timed out after/.test(message)) code = 'command_timeout'
+	// 桥自己的文案是 `browser command timed out after Nms`，扩展页内的文案是
+	// `eval timeout after Nms` / `wait timeout after Nms` —— 两种都算预算用尽。
+	// 以前只认前者 ⇒ 扩展侧超时被归成 command_failed（"扩展明确回了失败"），
+	// 模型据此以为命令没成功而重试，写操作就可能点两次。
+	else if (/time[do]?[ -]?out after/i.test(message)) code = 'command_timeout'
 	else if (/cancelled while in flight|in flight/i.test(message)) code = 'cancelled_in_flight'
 	else if (/cancelled/.test(message)) code = 'cancelled'
 	else if (/尚未加载配置|not configured yet/.test(message)) code = 'not_configured'

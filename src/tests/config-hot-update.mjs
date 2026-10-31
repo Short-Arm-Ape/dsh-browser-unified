@@ -119,10 +119,45 @@ state.layeredTools = true
 fire(['layeredTools'])
 check('再改回来也跟随', /分层：开/.test(await buddyStatus()))
 
+console.log('\n[5] 自动拉起这批旋钮必须算进「要重算」的指纹（否则改完不生效）')
+{
+	const { autoLaunchFingerprint, learnRetryDelayMs } = index
+	const base = {
+		enabled: true, autoLaunchEnabled: false, autoLaunchIdleSeconds: 15, autoLaunchBrowserExe: '',
+		autoLaunchProfileDir: '', autoLaunchProfileName: '', autoLaunchTempProfile: false,
+		autoLaunchExtensionDir: '', autoLaunchOnToolUse: false, autoLaunchWaitMs: 8000,
+	}
+	const fp = (patch) => autoLaunchFingerprint({ ...base, ...patch })
+	const baseline = fp({})
+	check('基线指纹非空', baseline.length > 0, baseline)
+	const changes = {
+		autoLaunchEnabled: true,
+		autoLaunchIdleSeconds: 30,
+		autoLaunchBrowserExe: '/usr/bin/edge',
+		autoLaunchProfileDir: 'C:\\Users\\x\\Profile 3',
+		autoLaunchProfileName: 'Profile 3',
+		autoLaunchTempProfile: true,
+		autoLaunchExtensionDir: 'D:\\ext',
+		autoLaunchOnToolUse: true,
+		autoLaunchWaitMs: 3000,
+	}
+	for (const [field, value] of Object.entries(changes)) {
+		check(`改 ${field} ⇒ 指纹变了`, fp({ [field]: value }) !== baseline, field)
+	}
+	check('跟这批无关的字段不进来（readOnly 变了指纹不变）', fp({ readOnly: true }) === baseline)
+	check('禁用时指纹为空串（禁用期间不用重算定时器）', autoLaunchFingerprint({ ...base, enabled: false }) === '', autoLaunchFingerprint({ ...base, enabled: false }))
+
+	// 「握手即学习」失败后的退避：指数增长 + 封顶，别每 5 秒扫一次盘
+	check('第一次失败等 15s', learnRetryDelayMs(0) === 15_000, learnRetryDelayMs(0))
+	check('第二次 30s', learnRetryDelayMs(1) === 30_000, learnRetryDelayMs(1))
+	const last = learnRetryDelayMs(10)
+	check('失败再多也封顶在 10 分钟', last === 600_000 || last === 480_000, String(last))
+	check('退避是单调不减的', learnRetryDelayMs(2) >= learnRetryDelayMs(1) && learnRetryDelayMs(4) >= learnRetryDelayMs(3))
+}
+
 // 收起桥（测试里真的监听了 9799），否则事件循环不退出
 for (const dispose of disposers) { try { dispose() } catch { /* 已停 */ } }
 await new Promise(r => setTimeout(r, 200))
-
 const failed = results.filter(r => !r.ok)
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {

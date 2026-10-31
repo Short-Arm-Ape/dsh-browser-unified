@@ -37,6 +37,16 @@ check('显式预算同样带余量', navBridgeTimeout('load', 30_000) === 32_000
 check('余量为正（等于 0 就退化成桥先超时）', NAV_BRIDGE_MARGIN_MS > 0, NAV_BRIDGE_MARGIN_MS);
 check('扩展与插件共用四个口径', Object.keys(NAV_DEFAULT_BUDGET_MS).sort().join(',') === 'commit,domcontentloaded,load,none');
 
+// 页内预算（browser_wait / browser_evaluate 的 timeoutMs）也走同一笔账：
+// 桥默认 60s，而这两个工具的预算上限是 120s —— 预算比桥长时先报的会是"扩展超时未回应"。
+check('页内预算 120s ⇒ 交给桥 122s（比桥默认 60s 长，先到的是页内自己）',
+	mod.pageBridgeTimeout(120_000) === 120_000 + NAV_BRIDGE_MARGIN_MS, mod.pageBridgeTimeout(120_000));
+check('页内预算 15s ⇒ 17s', mod.pageBridgeTimeout(15_000) === 15_000 + NAV_BRIDGE_MARGIN_MS, mod.pageBridgeTimeout(15_000));
+check('页内预算超上限被截到 120s（不许把桥超时抬到任意大）',
+	mod.pageBridgeTimeout(999_999) === 120_000 + NAV_BRIDGE_MARGIN_MS, mod.pageBridgeTimeout(999_999));
+check('页内预算非法值回落默认 15s', mod.pageBridgeTimeout(Number.NaN) === 15_000 + NAV_BRIDGE_MARGIN_MS, mod.pageBridgeTimeout(Number.NaN));
+check('页内预算下限 100ms 也留余量', mod.pageBridgeTimeout(1) === 100 + NAV_BRIDGE_MARGIN_MS, mod.pageBridgeTimeout(1));
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`);
 if (failed.length > 0) {

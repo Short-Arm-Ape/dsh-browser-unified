@@ -161,15 +161,25 @@ export function applyBuddyFeatures(options) {
         };
     };
     let cfg = buildCfg(config);
+    /**
+     * 分组名是否真的在表里。
+     *
+     * 不能用 `cfg.groups[group] !== undefined` 这种查法：`groups` 是普通对象，
+     * `group='constructor'`/`'toString'` 会从原型上取到函数，`?? []` 也不兜（不是 null），
+     * 后面 `for (… of <function>)` 直接抛"is not iterable"（2026-10-31 审计）。
+     */
+    const knowGroup = (name) => typeof name === 'string' && Object.hasOwn(cfg.groups, name);
+    /** 只保留认得出的分组名：存档里的旧名字/被篡改的值不该把工具面装配搞崩。 */
+    const onlyKnownGroups = (list) => (Array.isArray(list) ? list.map(String).filter(knowGroup) : []);
     /** 热更新入口：宿主提交了新值之后由 index.ts 调用。`state.enabledGroups` 也跟着重置。 */
     const refreshConfig = (raw) => {
         const next = unwrapVolatile((raw ?? {}));
         cfg = buildCfg(raw);
-        state.enabledGroups = Array.isArray(next.enabledGroups) ? next.enabledGroups.map(String) : [];
+        state.enabledGroups = onlyKnownGroups(next.enabledGroups);
         resident = new Set(cfg.residentTools);
     };
     const state = {
-        enabledGroups: Array.isArray(config.enabledGroups) ? config.enabledGroups.map(String) : [],
+        enabledGroups: onlyKnownGroups(config.enabledGroups),
         probe: null,
         probeAt: 0,
         probeError: null,
@@ -289,6 +299,8 @@ export function applyBuddyFeatures(options) {
     function allowedTools() {
         const allow = new Set(resident);
         for (const group of state.enabledGroups) {
+            if (!knowGroup(group))
+                continue;
             for (const toolName of cfg.groups[group] ?? [])
                 allow.add(toolName);
         }
@@ -937,7 +949,7 @@ export function applyBuddyFeatures(options) {
                 return { ok: true, text: `${statusText()}\n分组：\n${rows.join('\n')}${extra}` };
             }
             if (action === 'enable' || action === 'disable') {
-                if (!Object.prototype.hasOwnProperty.call(cfg.groups, group)) {
+                if (!knowGroup(group)) {
                     return { ok: false, text: `未知分组：${group}（可用：${Object.keys(cfg.groups).join(' | ')}）` };
                 }
                 const has = state.enabledGroups.includes(group);

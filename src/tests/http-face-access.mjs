@@ -85,6 +85,60 @@ console.log('\n3) 两档都开：闸门不该误伤')
 	check('全放开时 eval 也放行（剩下的拦截交给 URL/页面策略）', evalAllowed === undefined, String(evalAllowed))
 }
 
+/**
+ * 摆一个"扩展连着、tabs.list 有内容、URL 策略由测试决定"的控制器。
+ * @param {{decision: 'allow'|'block'|'ask', code?: string, reason?: string}} verdict 策略判定
+ * @param {{recent?: Array<{tabId?: number}>, tabs?: Array<{id: number, url: string, active?: boolean}>}} shape 假扩展回的东西
+ */
+function controllerWithFakeExtension(verdict, shape = {}) {
+	const controller = controllerWith({ readOnly: false, allowScript: true })
+	controller.server = {
+		status: { extensionConnected: true },
+		execute: async (command) => (command === 'dialog'
+			? { policy: 'manual', recent: shape.recent ?? [] }
+			: { tabs: shape.tabs ?? [] }),
+	}
+	// 拦住真发命令：这条套件只验"拦不拦"，不该真的连桥。
+	controller.execute = async (command) => {
+		if (command === 'tabs.list') return { tabs: shape.tabs ?? [] }
+		throw new Error(`不该真的发命令：${command}`)
+	}
+	controller.authorizeUrl = async (url) => ({ ...verdict, host: url, reason: verdict.reason ?? '' })
+	return controller
+}
+
+console.log('\n4) `dialog` 的 answer：授权要判**那个对话框所在的标签页**，不是当前激活页')
+{
+	const metadataTab = { id: 5, url: 'http://169.254.169.254/latest/meta-data/', active: false }
+	const controller = controllerWithFakeExtension(
+		{ decision: 'block', code: 'WEB_BLOCKED_URL', reason: '云元数据端点不允许' },
+		{ recent: [{ tabId: 5 }], tabs: [{ id: 9, url: 'https://example.com/', active: true }, metadataTab] },
+	)
+	const viaAnswer = await controller.guardHttpCommand('dialog', { answer: 'accept' })
+	check('不带 tabId 也按"最近一条对话框记录"的标签页判红线',
+		typeof viaAnswer === 'string' && viaAnswer.includes('WEB_BLOCKED_URL'), String(viaAnswer).slice(0, 90))
+	const viaAnswerTab = await controller.guardHttpCommand('dialog', { answer: 'dismiss', tabId: 5 })
+	check('显式给 tabId 时同样被拒', typeof viaAnswerTab === 'string' && viaAnswerTab.includes('WEB_BLOCKED_URL'), String(viaAnswerTab).slice(0, 90))
+	const readOnlyPolicy = await controller.guardHttpCommand('dialog', {})
+	check('只读/改策略（没有 answer）不碰页面 ⇒ 放行（阳性对照，别把读策略也拦了）',
+		readOnlyPolicy === undefined, String(readOnlyPolicy))
+
+	const allowed = controllerWithFakeExtension(
+		{ decision: 'allow' },
+		{ recent: [{ tabId: 5 }], tabs: [metadataTab] },
+	)
+	const okAnswer = await allowed.guardHttpCommand('dialog', { answer: 'accept' })
+	check('策略放行时 answer 也放行（闸门没坏）', okAnswer === undefined, String(okAnswer))
+
+	const noRecord = controllerWithFakeExtension(
+		{ decision: 'allow' },
+		{ recent: [], tabs: [metadataTab] },
+	)
+	const noTarget = await noRecord.guardHttpCommand('dialog', { answer: 'accept' })
+	check('找不到目标标签页 ⇒ 拒，不拿当前激活页顶包（fail-closed）',
+		typeof noTarget === 'string' && noTarget.includes('必须给出 tabId'), String(noTarget).slice(0, 90))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {

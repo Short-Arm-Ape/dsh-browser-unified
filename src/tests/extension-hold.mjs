@@ -85,7 +85,13 @@ function makeChrome(onSend) {
 	let windowState = 'normal';
 	const eventListeners = [];
 	const detachListeners = []
+	/** chrome.tabs.onRemoved 的监听器：用来验"标签页关掉之后每张表都清干净"。 */
+	const removedListeners = []
 	let pendingSendFailures = []   // [{ method, occurrence, message }]，按方法名 + 第几次命中消费
+	/** 让某些 sendCommand 永远不回（`method#第几次`）：验"预算是不是硬上限"。 */
+	const pendingHangs = new Set()
+	/** 让某个方法的**每一次** sendCommand 都不回（验"探针卡住时预算还守不守"）。 */
+	const permanentHangs = new Set()
 	const debuggerApi = {
 		attachCount: 0,
 		sendCount: 0,
@@ -116,6 +122,14 @@ function makeChrome(onSend) {
 				return undefined
 			}
 			const handled = onSend(method, params, tabId)
+			// 模拟"CDP 根本不回"：真的不回调用方（不调 cb、也不 resolve），
+			// 用来验"预算必须是硬上限"（2026-10-31：cmdWait 的 timeoutMs 以前不是硬上限）。
+			const hangKey = `${method}#${bumped}`
+			if (pendingHangs.has(hangKey) || permanentHangs.has(method)) {
+				pendingHangs.delete(hangKey)
+				if (typeof cb === 'function') return undefined
+				return new Promise(() => {})
+			}
 			let out = handled
 			if (out === null || out === undefined) {
 				if (method === 'Runtime.enable' || method === 'Page.enable' || method === 'DOM.enable'
@@ -152,7 +166,7 @@ function makeChrome(onSend) {
 			update: async (id, props) => { calls.tabsUpdate.push(props); return { id, ...props } },
 			create: async (props) => { calls.tabsCreate.push(props ?? {}); return { id: 1 } },
 			remove: async () => {},
-			onRemoved: { addListener: noop },
+			onRemoved: { addListener: (fn) => { removedListeners.push(fn) } },
 			onUpdated: { addListener: noop },
 			onActivated: { addListener: noop },
 			group: async (props) => { calls.tabsGroup.push(props ?? {}); return 1 },
@@ -181,9 +195,15 @@ function makeChrome(onSend) {
 		setWindowState: (next) => { windowState = next },
 		/** 让指定方法的第 occurrence 次 sendCommand 失败；只消费一次。 */
 		failOnMethod: (method, message, occurrence = 1) => { pendingSendFailures.push({ method, occurrence: Math.max(1, occurrence), message }) },
+		/** 让指定方法的第 occurrence 次 sendCommand **永远不回**；只消费一次。 */
+		hangOnMethod: (method, occurrence = 1) => { pendingHangs.add(`${method}#${Math.max(1, occurrence)}`) },
+		/** 让某个方法的每一次 sendCommand 都不回（"CDP 卡在 commit 之前"那种）。 */
+		hangAllMethod: (method) => { permanentHangs.add(method) },
 		/** 模拟 Chrome 主动 detach（用户开了 DevTools、页面变成 chrome-extension://、导航竞态）。 */
 		fireDetach: (tabId, reason = 'canceled_by_user') => { for (const fn of detachListeners) fn({ tabId }, reason) },
 		fireCdp: (tabId, method, params) => { for (const fn of eventListeners) fn({ tabId }, method, params) },
+		/** 模拟用户关掉一个标签页（chrome.tabs.onRemoved）。 */
+		fireTabRemoved: (tabId) => { for (const fn of removedListeners) fn(tabId, { windowId: 1, isWindowClosing: false }) },
 		/** 喂一条 popup 消息进来，收回 sendResponse 的载荷（模拟 chrome.runtime 的消息往返）。 */
 		fireMessage: (msg) => new Promise((resolve) => {
 			let pending = false
@@ -894,7 +914,41 @@ async function testNavigationWaitModes() {
 		eq('同站重定向：口径 commit', res.waitUntil, 'commit')
 	}
 
-	// ⑤ 默认预算：非 load 口径 4s、load 仍 15s；显式 timeoutMs 优先（黑洞目标不再干等 15 秒）
+	// ④c **导航前后地址完全相同**（刷新当前页）：旧文档的地址本来就"对得上"，
+	//     所以地址匹配不能当到达信号 —— 否则模型拿到的是"已到达"，读到的还是旧页面。
+	//     （2026-10-31 审计：previousUrl 收了却没用。）
+	{
+		// 没有 frameNavigated：必须**等满预算**（不能秒回"到达"）
+		{
+			const worker = await makeNavWorker()
+			worker.fake.setReadyState('complete')
+			worker.fake.setNavState({ url: 'https://same.example/', status: 'complete' })
+			const res = await worker.ctx.cmdNav({ url: 'https://same.example/', tabId: 7, waitUntil: 'commit', timeoutMs: 400 })
+			ok('同 URL 刷新 + 没有新文档提交信号 ⇒ 不算到达（吃满预算）',
+				typeof res.waitedMs === 'number' && res.waitedMs >= 350, String(res.waitedMs))
+		}
+		// 有 frameNavigated：一到就回，不用等满预算
+		const worker = await makeNavWorker()
+		worker.fake.setReadyState('loading')
+		worker.fake.setNavState({ url: 'https://same.example/', status: 'loading' })
+		const pending = worker.ctx.cmdNav({ url: 'https://same.example/', tabId: 7, waitUntil: 'commit', timeoutMs: 5000 })
+		await new Promise((r) => setTimeout(r, 80))
+		worker.fake.fireCdp(7, 'Page.frameNavigated', { frame: { url: 'https://same.example/', parentId: undefined } })
+		const res = await pending
+		ok('同 URL 刷新：真提交了新文档就立刻算到达（<1000ms）',
+			typeof res.waitedMs === 'number' && res.waitedMs < 1000, String(res.waitedMs))
+	}
+	// ④d 地址真的换了：地址匹配仍然照常当到达信号（别为了修④c 把普通导航也拖满预算）
+	{
+		const worker = await makeNavWorker()
+		worker.fake.setReadyState('loading')
+		// 起点是 old.example（makeNavWorker 的初始地址），tabs.update 会把地址带到 target ⇒ 地址不相等
+		const res = await worker.ctx.cmdNav({ url: 'https://target.example/', tabId: 7, waitUntil: 'commit', timeoutMs: 400 })
+		ok('不同 URL：地址对上就算到达（<300ms）',
+			typeof res.waitedMs === 'number' && res.waitedMs < 300, String(res.waitedMs))
+	}
+
+
 	{
 		const { ctx } = await loadWorker(() => ({ result: { value: '' } }))
 		eq('domcontentloaded 预算 = 4000ms（显式时才用它）', ctx.navBudget('domcontentloaded', undefined), 4000)
@@ -1143,6 +1197,92 @@ async function testPopupRescanUsesFormValues() {
 	eq('不带 tryConfig 时退回已保存的配置', cfgOf().token, 'saved-token')
 }
 
+/* ──────────── 断言：console 采集口径 + 标签页关掉后每张表都清干净 ──────────── */
+
+/**
+ * 2026-10-31 审计里三条 low 落在一起验：
+ *   ① `levels:['warn']` 必须能命中 CDP 的 `warning`（以前一条都匹配不上，看起来像"页面没警告"）；
+ *   ② console 记录的 `t` 是**毫秒**时间戳（以前乘了 1000，渲染出来是几十年后的时间）；
+ *   ③ `count=0` 要能区分"还没采到"与"都被过滤掉了"（`captured` = 过滤前的条数）；
+ *   ④ 标签页关掉时，视口戳 / 正文签名 / 在途导航等待 / 自愈窗口戳这几张表都要清。
+ */
+async function testConsoleCaptureAndTabCleanup() {
+	const { ctx, fake } = await loadWorker(() => ({ result: { value: '' } }))
+	const tabId = 7
+	const stamp = 1_793_465_326_468
+	fake.fireCdp(tabId, 'Runtime.consoleAPICalled', { type: 'warning', args: [{ value: 'boom' }], timestamp: stamp })
+	fake.fireCdp(tabId, 'Runtime.consoleAPICalled', { type: 'log', args: [{ value: 'hi' }], timestamp: stamp + 5 })
+
+	const all = await ctx.cmdConsoleLog({ tabId })
+	eq('两条 console 都采到了', all.count, 2)
+	eq('captured = 过滤前条数', all.captured, 2)
+	eq('t 是毫秒时间戳（没被乘 1000）', all.entries[0].t, stamp)
+	ok('t 的位数是 13 位（乘过 1000 会变成 16 位）', String(all.entries[0].t).length === 13, String(all.entries[0].t))
+
+	const warns = await ctx.cmdConsoleLog({ tabId, levels: ['warn'] })
+	eq("levels:['warn'] 命中 CDP 的 warning", warns.count, 1)
+	eq("levels:['warn'] 回的就是那条 warning", warns.entries[0].level, 'warning')
+	const warnsAlias = await ctx.cmdConsoleLog({ tabId, levels: ['warning'] })
+	eq("levels:['warning'] 同样命中（两边都归一）", warnsAlias.count, 1)
+
+	const none = await ctx.cmdConsoleLog({ tabId, levels: ['error'] })
+	eq('没有 error 时 count = 0', none.count, 0)
+	eq('但 captured 仍然是 2（说明"都被筛掉了"，不是"没在采集"）', none.captured, 2)
+
+	fake.fireCdp(tabId, 'Network.requestWillBeSent', {
+		requestId: 'r1', request: { method: 'GET', url: 'https://x.test/a', headers: {} }, type: 'Document', wallTime: 1,
+	})
+	const net = await ctx.cmdNetworkLog({ tabId })
+	eq('network 也带回过滤前的 captured', net.captured, 1)
+	const netMiss = await ctx.cmdNetworkLog({ tabId, status: 'boom' })
+	eq('拼错的 status ⇒ 0 条命中', netMiss.count, 0)
+	eq('但 captured 仍是 1（能区分"筛掉了"与"没采集"）', netMiss.captured, 1)
+
+	// ④ 关标签页：每张按 tab 存数据的表都要清
+	vm.runInContext(`
+		lastViewport.set(${tabId}, Date.now());
+		lastReadSignature.set(${tabId}, 'sig');
+		wokenTabs.set(${tabId}, Date.now());
+		navArrivals.set(${tabId}, { arrive: () => {} });
+	`, ctx)
+	const seeded = vm.runInContext(
+		`[lastViewport.has(${tabId}), lastReadSignature.has(${tabId}), wokenTabs.has(${tabId}), navArrivals.has(${tabId})].join(',')`,
+		ctx,
+	)
+	eq('先确认四张表都塞进去了（否则下面等于没验）', seeded, 'true,true,true,true')
+	fake.fireTabRemoved(tabId)
+	const after = vm.runInContext(
+		`[lastViewport.has(${tabId}), lastReadSignature.has(${tabId}), wokenTabs.has(${tabId}), navArrivals.has(${tabId}), consoleLog.has(${tabId}), networkLog.has(${tabId})].join(',')`,
+		ctx,
+	)
+	eq('标签页关掉 ⇒ 六张表全部清空', after, 'false,false,false,false,false,false')
+}
+
+/**
+ * `cmdWait` 的 `timeoutMs` 必须是**硬上限**。
+ *
+ * 2026-10-31 审计：超时判据只在每次 `Runtime.evaluate` **返回之后**查一次，
+ * 而 CDP 在文档卡在 commit 之前时根本不回 —— 一个没回音的探针就能把"上限"变成参考数字
+ * （`withBudget` 就是为这个写的，但 wait 这条路径上没接）。这里让 evaluate **永远不回**：
+ * 修好之后仍在预算附近报 `wait timeout`；没修就会一直挂着（所以下面用 race 兜住，
+ * 让"挂住"表现为一条失败断言，而不是把整个套件拖死）。
+ */
+async function testWaitBudgetIsHardCap() {
+	const { ctx, fake } = await loadWorker(() => null)
+	fake.hangAllMethod('Runtime.evaluate')
+	const started = Date.now()
+	const timeout = new Promise((resolve) => setTimeout(() => resolve('__HUNG__'), 3000))
+	let err
+	const outcome = await Promise.race([
+		ctx.cmdWait({ selector: '#never', tabId: 7, timeoutMs: 300 }).catch((e) => { err = e; return '__THREW__' }),
+		timeout,
+	])
+	const elapsed = Date.now() - started
+	ok('探针永远不回时也**没有**无限等（<2000ms 就有结论）', outcome !== '__HUNG__' && elapsed < 2000, `${elapsed}ms outcome=${outcome}`)
+	ok('报的是 wait timeout（据此加大预算 / 换判据）',
+		err !== undefined && /wait timeout after/.test(String(err.message)), String(err && err.message).slice(0, 90))
+}
+
 /* ────────────────────────── 跑 ────────────────────────── */
 
 console.log('extension-hold: 接管浮层的三处真机契约')
@@ -1161,6 +1301,8 @@ await testClickBypass()
 await testHeldByUserCode()
 await testNetworkStatusFilter()
 await testPopupRescanUsesFormValues()
+await testConsoleCaptureAndTabCleanup()
+await testWaitBudgetIsHardCap()
 
 const failed = results.filter((r) => !r.pass)
 console.log(`  ${results.length - failed.length}/${results.length} 通过`)

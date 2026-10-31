@@ -209,12 +209,17 @@ try {
 	console.log('\n4) /api/cleanup：真写操作，无 token 不动文件')
 	const sentinel = path.join(shotsStatus, 'sentinel.png')
 	writeFileSync(sentinel, 'x')
+	// 阳性对照的另一半：非产物文件必须留下（以前是"清空目录里的一切"，
+	// shotsDir 被指到真实目录就等于把用户的东西删了）。
+	const stranger = path.join(shotsStatus, 'notes.txt')
+	writeFileSync(stranger, 'keep me')
 	const cleanupDenied = await request(P_STATUS, { method: 'POST', target: '/api/cleanup' })
 	check('无 token → 401', cleanupDenied.status === 401, `status=${cleanupDenied.status}`)
 	check('被拒后哨兵文件仍在（写操作没执行）', existsSync(sentinel))
 	const cleanupAllowed = await request(P_STATUS, { method: 'POST', target: '/api/cleanup', headers: { Authorization: `Bearer ${STRONG}` } })
 	const cleanupBody = JSON.parse(cleanupAllowed.body)
 	check('带 token → 200 且真的删掉了哨兵文件', cleanupAllowed.status === 200 && !existsSync(sentinel), `status=${cleanupAllowed.status} removed=${cleanupBody.shotsRemoved}`)
+	check('不是产物的文件没被删（只清 png/jpeg/webp/pdf/svg）', existsSync(stranger), `exists=${existsSync(stranger)}`)
 
 	console.log('\n5) 状态页 / 不内嵌 token')
 	const page = await request(P_STATUS, { target: '/' })

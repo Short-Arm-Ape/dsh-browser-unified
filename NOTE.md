@@ -1871,3 +1871,48 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 
 部署：扩展 **1.0.54** 已拷到 `D:\edge-extensions\dsh-browser-extension`（4 个文件哈希逐一相等），需要 `edge://extensions` 重载；插件/core 这轮没动，不用重启 `dsh web`。
 
+
+### 审计清单剩下的 medium 7 + low 15 全部清掉（2026-11-01 01:0x）
+
+来源：2026-10-31 那份 39 条审计里**还没动**的部分（坐标见上一节）。发布位：扩展 **1.0.55**、插件 **0.11.52**、core **0.1.15**。
+
+**medium**
+
+1. **`previousUrl` 收了不用**（扩展 `waitForNavigationComplete`）：导航前后地址相同（刷新 / 自跳转）时，"地址对得上"本来就是**旧文档**，于是 `commit` / `domcontentloaded` 立刻返回"已到达"，模型接着读到旧页面。现在这种情形只认 CDP `Page.frameNavigated`；地址真的变了仍按地址判（否则普通导航会被拖满预算 —— 这是修这条时最容易顺手引入的回归，专门留了阳性对照）。
+2. **`cmdWait` 的 `timeoutMs` 不是硬上限**：超时判据只在每次 `Runtime.evaluate` **返回之后**查一次，而 CDP 卡在 commit 之前时根本不回 ⇒ 一条探针就能把"上限"变成参考数字。现在每个 await 都带 `withBudget(剩余预算 + 250ms)`，`started` 也从进 CDP 之前算起；超时文案会说明"有一次探针卡住了"。
+3. **`browser_dialog` 没过红线判据**：`answer` 会真的操作一个标签页，而它默认作用于「最近一条对话框记录」的页面 —— 那未必是当前激活页。现在工具面与 HTTP 面都在**那个页面**上跑 `authorizeExistingTab`；找不到目标页就 fail-closed（HTTP 面直接拒，不拿活跃页顶包）。
+   **有意偏离审计建议**：没把 `'dialog'` 塞进 `HTTP_PAGE_COMMANDS`。那个集合是"读也要碰页面"的命令，而 `dialog` 读/改策略不碰页面，塞进去会让红线页面上的"读策略"被误拒。改成"只有带 `answer` 才判目标页"，覆盖面一样，误伤更少。
+4. **`wait`/`eval` 的桥超时没按预算放大**：桥默认 60s，页内预算上限 120s ⇒ 先报"扩展超时未回应"。新增 `pageBridgeTimeout(budget)=budget+2s`（封顶 122s），`browser_wait`、`browser_evaluate`、以及 `nav` 里的内层 wait 都改用它。
+5. **core `classify` 不认扩展的 `timeout after`**：`eval timeout after Nms` / `wait timeout after Nms` 被归成 `command_failed`（"扩展明确回了失败"），写操作据此当成"没成功、可以重试" ⇒ 可能点两次。现在 `/time[do]?[ -]?out after/i` 一并归 `command_timeout`（写=unknown、读=not_started），hint 补了"页内预算用尽就加大 timeoutMs"。
+6. **autoLaunch* 热更新不生效**：`reconcileNow` 的早退只看 serverKey / policyKey，改完「自动拉起 / 断开容忍 / 拉起用哪个 profile」要等端口或策略也变了（或者重启）才生效，而设置页当场就显示"已保存"。现在多一个 `autoLaunchFingerprint()`（9 个字段）参与早退判断，变了就重算 watchdog 与学习定时器；`refreshLearnTimer` 还会清掉学习退避状态（配置变了 = 失败原因可能已经消失）。
+7. **`learnFromHello` 失败时每 5s 全盘扫**：学不成就不写 `learnedExtensionId` ⇒ 5 秒一次、每次把所有 profile 扫一遍。现在指数退避（15s→30s→…→封顶 10min，`learnRetryDelayMs()`），换扩展 id 或配置变更立刻重试；日志只在前两次说话。
+
+**low**
+
+- console `levels:['warn']` 与 CDP 的 `warning` 对不上 ⇒ 一条都匹配不上，看起来像"页面没警告"。新增 `normalizeConsoleLevel()` 两边归一（warn/warning、err/error）。
+- console 的 `t` 乘了 1000 —— **真机取证过**：临时脚本直接读原始记录，`t/now = 1000.000000`（渲染成 20:54:28，实际 00:49:08）。CDP `Runtime.consoleAPICalled.timestamp` 本来就是毫秒，改成 `Math.round(params.timestamp)`。
+- console/network 分不开"没在采集"与"0 条"：返回里加 `captured`（过滤前条数），插件渲染据此说"还没有任何记录"或"采到了 N 条但全被过滤排除"。
+- onRemoved 少清四张表：`lastViewport` / `lastReadSignature` / `navArrivals` / `wokenTabs`（以前只清 console / network / 代际）。
+- hold `focused` 恒 true：`abort.focus()` 在 try/catch 里，失败也照样报"焦点已在浮层里"。现在如实回填（`shadowRoot.activeElement === abort || document.activeElement === abort`）。
+- Esc 长按定时器漏清：鼠标撤掉浮层后它 600ms 再醒一次，把 `dismissedBy` 改成 `'user'` ⇒ 这个标签页被永久当成"用户已接管"、再也不自动补层。`cleanup()` 现在清它，并且**幂等**（第二条到达直接返回）。
+- `maybeAutoHold` 的 TOCTOU：探测→注入之间有 await，两条命令同时在飞时都会判定"没有浮层"，后一条把前一条（连同用户的点击计数）删掉重挂。加了一把 `withHoldInjectLock`，锁内再判一次抑制表。
+- AX 快照不重建指纹表：AX 路径拿到的 ref 在 `refFingerprints` 里查不到，元素被重渲染后无法按 name/role 重定位。两条路径统一走 `rememberRefFingerprints()`。
+- 状态页 `innerHTML` 未转义：`扩展类型` / `浏览器` 两行来自扩展的 `hello`，而状态页上正存着桥 token（输入框 + sessionStorage）。所有动态值过 `esc()`；顺手把清理提示改成"只删产物"。
+- `cleanupArtifacts` 无扩展名过滤：`shotsDir` 一旦被指到真实目录就等于把它清空。现在只删 png/jpeg/webp/pdf/svg，其余文件不动（状态页提示同步改口）。
+- self-update `unknown` 被当无漂移：有仓库 UNREACHABLE 时仍说"全部与基线一致"。现在单列 `unreachableRepos` 并明说"状态未知，不能当作一致"，有漂移时也会带一句。
+- client `set()` 返回 false 被当成功：同步拒绝会落进 else 分支，一边清 busy 一边去探"生效值"，把"没写进去"演成"已保存"。现在显式处理 `=== false`（`unset` 同理）。
+- client `T.border` 不存在：拼出来是 `border: 1px solid undefined`，无效 CSS ⇒ 那两处边框从来没画出来过。改用主题里真有的 `T.line1`（4 处）。
+- `Object.hasOwn` 查表：`cfg.groups[group]` 是普通对象，`group='constructor'` 会从原型取到函数、`?? []` 不兜 ⇒ `for…of` 抛"is not iterable"。改用 `Object.hasOwn` 判存在，并把存档里的 `enabledGroups` 过滤成认得出的分组（状态工具的 enable/disable 也共用这个判据）。
+
+**台子**：新增 `tests/status-page-escape.mjs`（11 项）。其余：`error-contract` 36→**42**、`bridge-http-auth` 42→**43**、`http-face-access` 17→**22**、`nav-budget` 14→**19**、`config-hot-update` 11→**27**、`extension-hold` 137→**156**。`run-all` **18/18**。
+
+**这一轮新写的两个手法**（值得留）：
+- 假件加 `hangAllMethod()`：模拟"CDP 根本不回"，用来验"预算是不是硬上限"。修好后仍在预算附近报错；没修就会一直挂着 —— 所以断言外面套了 race，让"挂住"变成一条失败断言，而不是把整个套件拖死。
+- 状态页转义不能靠"GET 一下 HTML 看看"：rows 是**浏览器里 fetch 之后才填的**。必须把返回的 `<script>` 取出来，在 `node:vm` 里配假 document 跑一遍真 `refresh()`，拿它写进 `innerHTML` 那串去断言。
+
+**变异验证**：**12/12** 被抓住（每条都先断言"原文找得到"，否则"没变红"就成了假结论）。本轮**没有**判别力兜底的几处，如实记下来：
+- M4 的调用点：`pageBridgeTimeout` 只有纯函数测试，没人钉住"三个调用点都真的用了它"（删掉某个调用点的 timeoutMs 参数，套件不会红）。
+- L12 的 UNREACHABLE 文案、L13 的 `set()` 返回 false、L14 的 `T.border`、L2 的 `Object.hasOwn`：都是没写测试的改动。
+- L4 / L5 / L6（hold 的 `focused` 如实回填、Esc 长按定时器、补层串行锁）：要真机 DOM 才验得动，本轮只改了代码。
+
+部署：插件/core 是 self-plugins 里的**实体拷贝** ⇒ 拷完要重启 `dsh web` 才生效；扩展在 `D:\edge-extensions\dsh-browser-extension`，改完要在 `edge://extensions` 重载（版本应变 1.0.55）。

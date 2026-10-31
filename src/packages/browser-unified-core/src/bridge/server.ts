@@ -175,10 +175,21 @@ export function normalizeHello(msg: Record<string, unknown>): BridgeHello {
 const SCRATCH_FILE_PATTERN = /^__[^/\\]+\.(mjs|cjs|js|png|jpg|jpeg)$/i
 
 /**
- * Clear the screenshots directory and delete agent scratch files. Only the
- * top level of each location is touched; nested trees stay untouched.
- * @param options - `shotsDir` is cleared of direct file children; `scratchDir`
- *   defaults to the process working directory and loses only scratch-named files.
+ * 截图目录里算「本插件产物」的扩展名。
+ *
+ * 以前这里**清空目录里的一切文件**：`shotsDir` 一旦被指到一个真实目录（用户手填、
+ * 或配成工作目录），`/api/cleanup` 就把里面的东西全删了。产物只有这几种，
+ * 其余一律不动（2026-10-31 审计：无扩展名过滤）。
+ */
+const ARTIFACT_FILE_PATTERN = /\.(png|jpe?g|webp|pdf|svg)$/i
+
+/**
+ * Clear generated artifacts. Only the top level of each location is touched;
+ * nested trees stay untouched.
+ * @param options - `shotsDir` loses direct file children that look like our
+ *   artifacts (png/jpeg/webp/pdf/svg); anything else there is left alone.
+ *   `scratchDir` defaults to the process working directory and loses only
+ *   scratch-named files.
  * @returns counts and names of what was removed.
  */
 export async function cleanupArtifacts(options: { shotsDir: string; scratchDir?: string }): Promise<CleanupResult> {
@@ -186,7 +197,7 @@ export async function cleanupArtifacts(options: { shotsDir: string; scratchDir?:
 	const shotsEntries = await readdir(options.shotsDir, { withFileTypes: true })
 	let shotsRemoved = 0
 	for (const entry of shotsEntries) {
-		if (!entry.isFile()) continue
+		if (!entry.isFile() || !ARTIFACT_FILE_PATTERN.test(entry.name)) continue
 		await rm(path.join(options.shotsDir, entry.name))
 		shotsRemoved += 1
 	}
@@ -889,13 +900,17 @@ function statusPageHtml(port: number): string {
     <input id="token" type="password" autocomplete="off" placeholder="桥接 Token（仅本页会话内存，不写盘）">
   </div>
   <div class="hint">
-    清理会删除截图目录下的全部文件，以及工作目录顶层的 __ 开头草稿脚本；<b>需要 Token</b>。
+    清理只删截图目录里 png/jpeg/webp/pdf/svg 这些产物，以及工作目录顶层的 __ 开头草稿脚本（其它文件不动）；<b>需要 Token</b>。
     Token 不在本页内嵌，关闭页面清空。
   </div>
   <div class="pre"><code id="raw"> </code></div>
   <div class="foot">DSH Browser Bridge · 127.0.0.1:${port}</div>
 </div>
 <script>
+// 这些值里有一半是**扩展通过桥报上来的**（client / browser.name / version）——
+// 直接拼进 innerHTML 就是让被控端能在状态页上执行脚本，而这页上正存着桥 token
+// （输入框 + sessionStorage）。一律先转义再拼。
+const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function refresh(){
   try{
     const r=await fetch('/api/status');const j=await r.json();
@@ -905,13 +920,13 @@ async function refresh(){
       ?(j.hello?j.hello.client+' '+j.hello.browser.name+' '+j.hello.browser.version:'已连接')
       :'等待浏览器扩展连接…';
     const rows=[
-      ['监听端口','<span class="badge on">'+j.port+'</span>'],
+      ['监听端口','<span class="badge on">'+esc(j.port)+'</span>'],
       ['扩展状态',connected?'<span class="badge on">已连接</span>':'<span class="badge off">未连接</span>'],
-      ['扩展类型',j.hello?(j.hello.client+' v'+j.hello.version):'—'],
-      ['浏览器',j.hello?(j.hello.browser.name+' '+j.hello.browser.version):'—'],
-      ['等待命令',String(j.pendingCommands??0)],
-      ['连接时间',j.connectedAt?new Date(j.connectedAt).toLocaleString():'—'],
-      ['截图目录',j.shotsDir||'—'],
+      ['扩展类型',j.hello?esc(j.hello.client+' v'+j.hello.version):'—'],
+      ['浏览器',j.hello?esc(j.hello.browser.name+' '+j.hello.browser.version):'—'],
+      ['等待命令',esc(j.pendingCommands??0)],
+      ['连接时间',j.connectedAt?esc(new Date(j.connectedAt).toLocaleString()):'—'],
+      ['截图目录',esc(j.shotsDir||'—')],
       ['令牌强度',j.insecureToken?'<span class="badge off">默认/过短，建议改了</span>':'<span class="badge on">已自定义</span>'],
     ];
     document.getElementById('rows').innerHTML=rows.map(([k,v])=>'<div class="row"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>').join('');

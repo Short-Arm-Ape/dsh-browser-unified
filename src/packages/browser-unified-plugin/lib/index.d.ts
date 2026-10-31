@@ -193,6 +193,37 @@ interface ResolvedConfig {
     enabledGroups: string[];
 }
 /**
+ * 「自动拉起 / 握手即学习」这批配置的指纹。
+ *
+ * 它们**不动监听器**（不用重启桥），但必须让断线 watchdog 与学习定时器跟着换配置：
+ * 以前 `reconcileNow` 的早退只看 serverKey 与 policyKey，于是改完「自动拉起 / 断开容忍 /
+ * 拉起用哪个 profile」要等端口或策略也变了才生效，而设置页当时就把新值显示成"已保存"
+ * （2026-10-31 审计）。抽成纯函数是为了能直接钉住"哪些字段必须算进来"。
+ * @param config - 解析后的配置（只需要这批字段）。
+ * @returns 指纹串；禁用时为空串。
+ */
+export declare function autoLaunchFingerprint(config: {
+    enabled: boolean;
+    autoLaunchEnabled?: boolean;
+    autoLaunchIdleSeconds?: number;
+    autoLaunchBrowserExe?: string;
+    autoLaunchProfileDir?: string;
+    autoLaunchProfileName?: string;
+    autoLaunchTempProfile?: boolean;
+    autoLaunchExtensionDir?: string;
+    autoLaunchOnToolUse?: boolean;
+    autoLaunchWaitMs?: number;
+}): string;
+/**
+ * 「握手即学习」失败后的退避时长（指数，封顶 10 分钟）。
+ *
+ * 学不成时 `learnedExtensionId` 不会被写入，于是 5 秒一次的定时器会**每轮全盘重扫**所有
+ * profile —— 一直连着一个学不到位置的扩展就是每 5 秒一次磁盘风暴（2026-10-31 审计）。
+ * @param attempts - 这个扩展 id 已经失败过几次（0 = 第一次失败）。
+ * @returns 下次允许重试前要等的毫秒数。
+ */
+export declare function learnRetryDelayMs(attempts: number): number;
+/**
  * 桥的控制器：配置 → 监听器 / 策略 / 命令收口的唯一持有者。
  *
  * 导出只为一件事：**访问控制的判据能在离线台子上被钉住**（`src/tests/http-face-access.mjs`
@@ -227,6 +258,15 @@ export declare class BridgeController {
     /** 已经学过其位置的扩展 id（避免重复扫盘）。 */
     private learnedExtensionId;
     /**
+     * 「握手即学习」失败时的退避状态。
+     *
+     * 为什么需要：学习失败（按扩展 id 反查不到装了它的 profile）时 `learnedExtensionId` 不会被写入，
+     * 于是 5 秒一次的定时器**每轮全盘重扫**一遍所有 profile —— 一直连着一个学习不了的扩展，
+     * 就是每 5 秒一次磁盘风暴。改成指数退避：同一个扩展 id 失败后按 15s → 30s → … → 10min 退避，
+     * 下次换 id 或配置变了（`refreshLearnTimer`）才立刻重试。
+     */
+    private learnFailure;
+    /**
      * 「握手即学习」的定时器。
      *
      * 为什么必须在**连着的**时候学：`hello` 只在扩展连着时存在（断开即清空），
@@ -234,6 +274,8 @@ export declare class BridgeController {
      * 新 id 就立刻反查磁盘并落盘，之后的冷启动才有依据。
      */
     private learnTimer;
+    /** 上一次重建 watchdog / 学习定时器用的 autoLaunch* 快照（见 reconcileNow 里那个早退）。 */
+    private autoLaunchKey;
     constructor(log: (line: string) => void);
     /** Resolved directory screenshots land in; defined once any config arrived. */
     get shotsDir(): string | undefined;
@@ -258,6 +300,9 @@ export declare class BridgeController {
     private refreshLearnTimer;
     /**
      * 看 `hello` 学一次位置（幂等）。学成了就不再重复扫盘，直到换了一个扩展 id。
+     *
+     * 扫盘本身很贵（每个 profile 都要读磁盘），所以**失败也要退避**：
+     * 见 {@link learnFailure}。`loadPairing()` 只在真需要判断时读一次，不进 5 秒热路径。
      * @param config - 当前解析后的配置。
      */
     private learnFromHello;
@@ -415,6 +460,12 @@ export declare class BridgeController {
      * @returns 拒绝原因（给模型/调用方看）；undefined = 放行。
      */
     private accessDenial;
+    /**
+     * 最近一条对话框记录所在的标签页 —— `dialog` 的 `answer` 默认就作用于它（扩展侧
+     * `dialogLog[dialogLog.length - 1].tabId`）。授权必须判**那个**页面，不能拿当前激活页顶包。
+     * 读不到（没有记录 / 桥没起 / 扩展没连）返回 undefined：调用方据此 fail-closed。
+     */
+    lastDialogTabId(): Promise<number | undefined>;
     execute(command: string, params: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown>;
     /**
      * 把「浮层出现方式」推给扩展（只在变更/重连后推一次）。

@@ -55,6 +55,14 @@ console.log('\n[2] 写操作超时 = 结果未知；读操作超时 = 重试安�
 	const read = classify('snapshot', new Error('browser command timed out after 800ms: snapshot'))
 	check('读命令同文案 ⇒ not_started', read.effectState === 'not_started', read.effectState)
 	check('读命令的文案说"重试安全"', read.message.includes('重试安全'))
+
+	// 扩展页内的预算用尽（write 侧才是要紧的：点一下超时了，事件可能已经发出去了）。
+	const pageWrite = classify('click', new Error('eval timeout after 15000ms'))
+	check('页内超时也归 command_timeout', pageWrite.code === 'command_timeout', pageWrite.code)
+	check('页内超时的写命令 ⇒ unknown（不能当没发生）', pageWrite.effectState === 'unknown', pageWrite.effectState)
+	check('hint 指向加大 timeoutMs', pageWrite.hint.includes('timeoutMs'), pageWrite.hint.slice(0, 40))
+	const pageRead = classify('wait', new Error('wait timeout after 10000ms'))
+	check('页内超时的读命令 ⇒ not_started', pageRead.effectState === 'not_started', pageRead.effectState)
 }
 
 console.log('\n[3] 策略拦截：命令没发出去，"没动到页面"是确定的')
@@ -78,6 +86,9 @@ console.log('\n[4] 底层文案 → code 的映射')
 		['listen EADDRINUSE: address already in use 127.0.0.1:9777', 'bridge_disabled'],
 		['尚未加载配置', 'not_configured'],
 		['扩展报回：selector not found', 'command_failed'],
+		// 扩展页内的两种预算用尽：都不含 "timed out after"，以前一律掉进 command_failed。
+		['eval timeout after 15000ms', 'command_timeout'],
+		['wait timeout after 10000ms —— 页面**仍在加载/导航还没落到新文档**（期间跳过了 3 次"旧文档上的命中"）', 'command_timeout'],
 	]
 	for (const [message, code] of cases) {
 		const got = classify('click', new Error(message))
