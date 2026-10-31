@@ -396,6 +396,28 @@ async function windowCount() {
  * @param reason 日志用（谁要求的）
  * @param landingUrl 可选：新建窗口时直接落的网址（不传则 about:blank）
  */
+/**
+ * 唤醒时新建的标签页：tabId -> 创建时间。
+ * `browser_tabs open` 紧跟一次自动唤醒时，要复用它而不是再开一张（否则同一地址两张标签页）。
+ * 只记 60 秒内的，过期的顺手清掉。
+ */
+const wokenTabs = new Map();
+
+/** 取出一个仍然可用（还在、且是 about:blank 或就是目标地址）的唤醒标签页。 */
+async function takeWokenTab(url) {
+	const now = Date.now();
+	for (const [id, at] of [...wokenTabs]) {
+		if (now - at > 60_000) { wokenTabs.delete(id); continue }
+		const tab = await chrome.tabs.get(id).catch(() => null);
+		if (tab === null) { wokenTabs.delete(id); continue }
+		if (tab.url === 'about:blank' || landsAt(tab.url, url)) {
+			wokenTabs.delete(id);
+			return tab;
+		}
+	}
+	return null;
+}
+
 async function ensureWindow(reason, landingUrl) {
 	try {
 		const existing = await chrome.tabs.query({});
@@ -408,6 +430,13 @@ async function ensureWindow(reason, landingUrl) {
 	if (tab === undefined && win.id !== undefined) {
 		const inWin = await chrome.tabs.query({ windowId: win.id });
 		tab = inWin[0];
+	}
+	if (tab && typeof tab.id === 'number') {
+		// 记下来：紧接着的 tabs.open 若要去同一个地址，应该**复用**这张，而不是再开一张
+		// （2026-10-24 实测过的重复标签页：唤醒落地一张、tabs.open 又开一张）。
+		wokenTabs.set(tab.id, Date.now());
+		// 归组失败不该让"建窗口"失败（与上游 v1.0.10 的归组口径一致）。
+		await addToAgentGroup(tab.id).catch(() => {});
 	}
 	console.log(`[dsh-bridge] ensureWindow(${reason}): 之前没有任何窗口，已新建 windowId=${win.id} tabId=${tab && tab.id} url=${landingUrl ?? 'about:blank'}`);
 	return { created: true, tab };
@@ -1283,14 +1312,24 @@ async function cmdTabsOpen(params) {
 	// （那样会留下一张 about:blank 垃圾页 —— bi-022 的另一半）。
 	const existing = await chrome.tabs.query({}).catch(() => []);
 	let created;
-	if (existing.length === 0) {
+	let reused = false;
+	if (params.reuseWokenTab !== false) {
+		const woken = await takeWokenTab(params.url);
+		if (woken !== null) {
+			// 复用：把这张（可能还是 about:blank）直接导航过去，不再新建
+			reused = true;
+			created = woken;
+			await chrome.tabs.update(woken.id, { url: params.url, active });
+		}
+	}
+	if (created === undefined && existing.length === 0) {
 		const win = await chrome.windows.create({ url: params.url, focused: active });
 		const inWin = Array.isArray(win.tabs) && win.tabs[0] !== undefined
 			? win.tabs
 			: await chrome.tabs.query({ windowId: win.id });
 		created = inWin[0];
 		if (created === undefined) throw new Error('新建窗口成功但没有标签页（浏览器行为异常）');
-	} else {
+	} else if (created === undefined) {
 		created = await chrome.tabs.create({ url: params.url, active });
 	}
 	const waitUntil = params.wait === false ? 'none' : navWaitMode(params.waitUntil);
@@ -1310,6 +1349,7 @@ async function cmdTabsOpen(params) {
 		...(pendingUrl === undefined ? {} : { pendingUrl }),
 		waitUntil,
 		waitedMs,
+		...(reused ? { reused: true } : {}),
 		...(settled === true ? {} : { loadPending: true }),
 		...group,
 	};

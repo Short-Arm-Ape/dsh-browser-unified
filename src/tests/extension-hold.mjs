@@ -73,7 +73,7 @@ function makeChrome(onSend) {
 	 * 只返回 Promise 的假件会让 `await` 永远挂住 —— 这里两种形态都支持。
 	 */
 	/** 记录会抢焦点的两类调用，外加最近一次 windows.get 报的窗口状态。 */
-	const calls = { tabsUpdate: [], windowsUpdate: [], focusThrows: 0 };
+	const calls = { tabsUpdate: [], tabsCreate: [], tabsGroup: [], windowsUpdate: [], focusThrows: 0 };
 	let windowState = 'normal';
 	const eventListeners = [];
 	const debuggerApi = {
@@ -123,12 +123,12 @@ function makeChrome(onSend) {
 			query: async () => [],
 			get: async (id) => ({ id, url: 'https://example.com/', windowId: 1, active: true, title: 'example' }),
 			update: async (id, props) => { calls.tabsUpdate.push(props); return { id, ...props } },
-			create: async () => ({ id: 1 }),
+			create: async (props) => { calls.tabsCreate.push(props ?? {}); return { id: 1 } },
 			remove: async () => {},
 			onRemoved: { addListener: noop },
 			onUpdated: { addListener: noop },
 			onActivated: { addListener: noop },
-			group: async () => 1,
+			group: async (props) => { calls.tabsGroup.push(props ?? {}); return 1 },
 			ungroup: async () => {},
 			sendMessage: async () => ({}),
 		},
@@ -562,6 +562,41 @@ async function testWindowStateAndViewport() {
 	}
 }
 
+async function testWokenTabReuse() {
+	/* B：唤醒建了窗口、紧接着 tabs.open 要去同一个地址 ⇒ 复用那张，不再 new 一张
+	 *    （2026-10-24 实测的重复标签页就是这个形状：一张未归组、一张归组、同地址） */
+	{
+		const { ctx, fake } = await loadWorker(() => ({ result: { value: '' } }))
+		const calls = fake.calls
+		fake.chrome.tabs.query = async () => []
+		fake.chrome.tabs.get = async (id) => ({ id, url: 'about:blank', windowId: 9, active: true, title: '' })
+		fake.chrome.windows.create = async () => ({ id: 9, tabs: [{ id: 501, url: 'about:blank', windowId: 9 }] })
+		fake.chrome.tabGroups.query = async () => []
+		fake.chrome.tabGroups.update = async () => ({})
+		const info = await ctx.ensureWindow('test')
+		ok('唤醒确实新建了窗口', info.created === true, JSON.stringify(info))
+		eq('C：唤醒建的标签页也被归组', calls.tabsGroup.length, 1)
+		const out = await ctx.cmdTabsOpen({ url: 'https://x.test/', active: true, group: false, wait: false })
+		eq('B：复用唤醒那张，不再新建', calls.tabsCreate.length, 0)
+		eq('回执给出复用的 tabId', out.tabId, 501)
+		eq('回执标出 reused', out.reused, true)
+		ok('复用时把地址更新到目标', calls.tabsUpdate.some((p) => p.url === 'https://x.test/'), JSON.stringify(calls.tabsUpdate))
+	}
+
+	/* 没有唤醒标签页时仍然按老语义新建（别把"复用"做成所有 tabs.open 都去凑已有的页） */
+	{
+		const { ctx, fake } = await loadWorker(() => ({ result: { value: '' } }))
+		const calls = fake.calls
+		fake.chrome.tabs.query = async () => [{ id: 601, url: 'https://a.test/', windowId: 1, active: true }]
+		fake.chrome.tabs.get = async (id) => ({ id, url: 'https://a.test/', windowId: 1, active: true, title: 'a' })
+		fake.chrome.tabs.create = async (props) => { calls.tabsCreate.push(props ?? {}); return { id: 602 } }
+		const out = await ctx.cmdTabsOpen({ url: 'https://b.test/', group: false, wait: false })
+		eq('没有可复用的唤醒标签页 ⇒ 照常新建', calls.tabsCreate.length, 1)
+		eq('新建的 tabId 带回', out.tabId, 602)
+		ok('不标 reused', out.reused === undefined, JSON.stringify(out))
+	}
+}
+
 async function testWindowNotShown() {
 	/** 假页面按脚本返回几何：第一次 0×0，落位后变成真几何。 */
 	const makeGeomWorker = (sequence) => {
@@ -875,6 +910,7 @@ async function testHeldByUserCode() {
 console.log('extension-hold: 接管浮层的三处真机契约')
 await testAxExclusion()
 await testFocusPolicy()
+await testWokenTabReuse()
 await testWindowNotShown()
 await testNavigationWaitModes()
 await testWindowStateAndViewport()
