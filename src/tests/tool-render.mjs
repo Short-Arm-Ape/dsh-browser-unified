@@ -622,7 +622,16 @@ console.log('\n[14] 2026-10-23：导航的等待口径要如实回执（模型�
 	const dcl = renderText('browser_navigate', { url: 'https://x.example/' }, {
 		tabId: 3, title: 'X', url: 'https://x.example/', waitUntil: 'domcontentloaded', readyState: 'interactive', waitedMs: 120,
 	})
-	check('回执写出等待口径/readyState/耗时', dcl.includes('等待口径 domcontentloaded') && dcl.includes('readyState=interactive') && dcl.includes('120ms'), dcl)
+	
+// 口径 none：不能写成"now shows X"（那一刻页面可能还是旧页）
+{
+	const none = { tabId: 3, title: 'Old Page', url: 'https://old.example/', waitUntil: 'none', waitedMs: 11 }
+	const text = renderText('browser_navigate', { url: 'https://new.example/' }, none)
+	check('none 口径：不写「now shows」', !/now shows/.test(text), text)
+	check('none 口径：说清「未等待、可能还没切过去」', text.includes('已发出导航') && text.includes('未等待'), text)
+	check('none 口径：当前仍显示哪一页', text.includes('Old Page'), text)
+}
+check('回执写出等待口径/readyState/耗时', dcl.includes('等待口径 domcontentloaded') && dcl.includes('readyState=interactive') && dcl.includes('120ms'), dcl)
 	check('没用到条件等待时不说"等待条件成立"', !dcl.includes('等待条件成立'), dcl)
 	const cond = renderText('browser_navigate', { url: 'https://x.example/', waitSelector: '.sku' }, {
 		tabId: 3, title: 'X', url: 'https://x.example/', waitUntil: 'domcontentloaded', readyState: 'complete', waitedMs: 640, waitConditionMet: true,

@@ -1966,7 +1966,12 @@ function applyBrowserTools(ctx: Context, controller: BridgeController, getConfig
 						: value.waitConditionMet === true
 							? ` — 等待条件成立（${String(value.waitedMs ?? '')}ms）`
 							: ''
-				return [{ type: 'text', text: `Tab ${value.tabId} now shows ${label.length > 0 ? label : '(untitled)'}${tail}${pending}${wait}${modeNote}` }]
+				// 口径 none 表示**没有等待**：那一刻页面很可能还是旧页，说"now shows X"会被读成"已经切过去了"
+				// （2026-10-31 真机踩到：请求 zhihu、回执写"now shows 哔哩哔哩"）。
+				const headline = value.waitUntil === 'none'
+					? `Tab ${value.tabId} 已发出导航（口径 none，未等待；页面可能还没切过去）：当前仍显示 ${label.length > 0 ? label : '(untitled)'}`
+					: `Tab ${value.tabId} now shows ${label.length > 0 ? label : '(untitled)'}`
+				return [{ type: 'text', text: `${headline}${tail}${pending}${wait}${modeNote}` }]
 			},
 		},
 		isConcurrencySafe: () => false,

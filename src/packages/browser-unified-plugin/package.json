@@ -1,71 +1,71 @@
 {
-  "name": "dsh-browser-unified",
-  "description": "Unified browser bridge plugin for DeepSeek Harness (AGPL-3.0): caob23 bridge wiring merged with the unified URL policy (public|intranet via GuardedBridge) plus self-update / design-registry tools and a GUI Settings section. Same extension (DSH Browser Control) and instance id as the upstream plugin it replaces.",
-  "version": "0.11.47",
-  "private": false,
-  "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./lib/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./client": {
-      "default": "./lib/client.js"
-    },
-    "./invariant": {
-      "types": "./lib/invariant.d.ts",
-      "default": "./lib/invariant.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "cordis.patch.yml",
-    "client",
-    "lib",
-    "registry",
-    "scripts",
-    "README.md",
-    "NOTICE.md",
-    "LICENSE"
-  ],
-  "license": "AGPL-3.0-only",
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-ui-settings"
-      ]
-    }
-  },
-  "engines": {
-    "node": "^22.19.0 || >=24.0.0"
-  },
-  "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.4"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-invariants": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-settings": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1"
-  },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-invariants": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-settings": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1",
-    "@types/node": "^22.20.4",
-    "typescript": "^5.7.2"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build-pack": "node scripts/build-pack.mjs"
-  }
+	"name": "dsh-browser-unified",
+	"description": "Unified browser bridge plugin for DeepSeek Harness (AGPL-3.0): caob23 bridge wiring merged with the unified URL policy (public|intranet via GuardedBridge) plus self-update / design-registry tools and a GUI Settings section. Same extension (DSH Browser Control) and instance id as the upstream plugin it replaces.",
+	"version": "0.11.48",
+	"private": false,
+	"type": "module",
+	"main": "lib/index.js",
+	"types": "lib/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./lib/index.d.ts",
+			"default": "./lib/index.js"
+		},
+		"./client": {
+			"default": "./lib/client.js"
+		},
+		"./invariant": {
+			"types": "./lib/invariant.d.ts",
+			"default": "./lib/invariant.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"cordis.patch.yml",
+		"client",
+		"lib",
+		"registry",
+		"scripts",
+		"README.md",
+		"NOTICE.md",
+		"LICENSE"
+	],
+	"license": "AGPL-3.0-only",
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		},
+		"client": {
+			"platform": "web",
+			"inject": [
+				"@deepseek-ai/dsh-client-ui-slots",
+				"@deepseek-ai/dsh-client-ui-settings"
+			]
+		}
+	},
+	"engines": {
+		"node": "^22.19.0 || >=24.0.0"
+	},
+	"dependencies": {
+		"@deepseek-ai/schemastery": "^3.18.4"
+	},
+	"peerDependencies": {
+		"@deepseek-ai/cordis": "^4.0.1",
+		"@deepseek-ai/dsh-invariants": "^0.2.0-rc.1",
+		"@deepseek-ai/dsh-settings": "^0.2.0-rc.1",
+		"@deepseek-ai/dsh-tools": "^0.2.0-rc.1"
+	},
+	"devDependencies": {
+		"@deepseek-ai/cordis": "^4.0.1",
+		"@deepseek-ai/dsh-invariants": "^0.2.0-rc.1",
+		"@deepseek-ai/dsh-settings": "^0.2.0-rc.1",
+		"@deepseek-ai/dsh-tools": "^0.2.0-rc.1",
+		"@types/node": "^22.20.4",
+		"typescript": "^5.7.2"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"build-pack": "node scripts/build-pack.mjs"
+	}
 }
