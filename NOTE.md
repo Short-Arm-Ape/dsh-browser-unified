@@ -1840,7 +1840,19 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 **线上验收（2026-11-01 00:1x 实测，profile web，端口 9777）**：`pluginVersion=0.11.51`、`hello.version=1.0.53`；
 `Host: evil.example → 403`、`Origin: https://evil.example → 403`、`Origin: http://127.0.0.1:3080 → 200`、`Origin: chrome-extension://… → 200`；
 `browser_navigate` + `browser_read` 走真桥读回 1403 字（链路与策略都正常）。
-**还剩一处真口子**：`insecureToken: true` —— 桥 token 仍是内置默认/过短，而它是 `/api/command` 的唯一边界（换 token 要连扩展配对一起重来，未动）。
+**还剩一处真口子**：`insecureToken: true` —— 桥 token 仍是内置默认/过短，而它是 `/api/command` 的唯一边界。
+
+### token 已换（2026-11-01 00:2x，主人同意后执行）
+
+- **改哪里**：不是设置页 —— 插件里 `token` 是 `volatile()` 字段（设置存不进），真正生效的是 profile 的
+  `D:\dsh-data\profiles\web\cordis.patch.yml` 里 `- id: browser-bridge` 段的 `token:` 那一行。
+- **值**：换成 32 位 hex 的自定义值（**本文不抄**，只在上面那个文件里；好的配置快照备份为同目录 `cordis.patch.yml.bak-token-20261101`）。
+- **扩展侧**：点图标 → 高级 ▾ → Token 框 → **保存**（保存会立刻发 `reconnect`，不必重载扩展）。恢复旧 token 也一样操作。
+- **验收**：`insecureToken: false`、`extensionConnected: true`、`hello.version 1.0.53`、状态页「令牌强度 已自定义」；
+  `Host: evil.example → 403` / `Origin: https://evil.example → 403` / 回环来源 `→ 200` 均未受影响。
+- **踩到的坑（值得记）**：popup 的 Token 框每 1.5s 从 `chrome.storage` 自动回填（`popup.js:31`）——
+  粘完不点「保存」或先点别处，输入框会静默刷回旧值，看起来像粘上了其实没存。判据：桥那边 `extensionConnected=false`
+  但用新 token 手工打 WS 握手是 `101`（说明桥对、扩展手里的 token 还是旧的）。
 
 **教训**：`__` 前缀的临时脚本会被自动清掉（`src\__mutate.mjs`、`src\__dbg-link*.mjs` 跑完就没了）。临时脚本用普通名字、自己删；也别把要留的东西放进 `__` 开头的目录。
 
