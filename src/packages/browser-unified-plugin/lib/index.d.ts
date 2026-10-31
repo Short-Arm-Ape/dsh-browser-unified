@@ -17,6 +17,7 @@
  */
 import { type Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type UrlPolicyMode } from 'browser-unified-core';
 import { readPermissionStore, type PermissionReading } from './permissions.js';
 /** Cordis plugin name used by loader diagnostics. */
 export declare const name = "browser-bridge";
@@ -140,6 +141,325 @@ export interface Config {
     enabledGroups?: string[];
 }
 export declare const Config: z<Config>;
+interface ResolvedConfig {
+    enabled: boolean;
+    /** 只读档：模型只能读页面，不能操作。 */
+    readOnly: boolean;
+    /** 允许模型执行任意脚本（devtools 级能力）。 */
+    allowScript: boolean;
+    /** 允许 `browser_hold` 加防误触浮层。 */
+    holdEnabled: boolean;
+    /** 脚本执行后检查是否被带到未授权地址。 */
+    evalNavGuard: boolean;
+    /** 浮层出现方式：black = 操作时自动补；white = 只在调用时出现。 */
+    holdMode: string;
+    /** 焦点策略：auto（不抢窗口焦点，默认）/ always / never。 */
+    focusMode?: string;
+    /** 最小化时是否自动恢复窗口。 */
+    restoreWhenMinimized?: boolean;
+    /** de-034：谁来决定浏览器权限气泡（ask|policy|model）。 */
+    permissionDecider?: string;
+    /** de-034：每类策略条目（`pref=allow|deny|inherit`）。 */
+    permissionPolicy?: string[];
+    port: number;
+    token: string;
+    shotsDir: string;
+    urlMode: UrlPolicyMode;
+    blockMetadata: boolean;
+    metadataHostnames: string[];
+    metadataIps: string[];
+    internetAccess: string | undefined;
+    lanAccess: string | undefined;
+    localAccess: string | undefined;
+    internetTemp: boolean;
+    lanTemp: boolean;
+    localTemp: boolean;
+    askMode: string;
+    dshAccessEnabled: boolean;
+    dshOrigins: string[];
+    allowHosts: string[];
+    denyHosts: string[];
+    registryDir: string;
+    autoLaunchEnabled: boolean;
+    autoLaunchIdleSeconds: number;
+    autoLaunchBrowserExe: string;
+    autoLaunchProfileDir: string;
+    autoLaunchProfileName: string;
+    autoLaunchTempProfile: boolean;
+    autoLaunchExtensionDir: string;
+    layeredTools: boolean;
+    autoLaunchOnToolUse: boolean;
+    autoLaunchWaitMs: number;
+    enabledGroups: string[];
+}
+/**
+ * 桥的控制器：配置 → 监听器 / 策略 / 命令收口的唯一持有者。
+ *
+ * 导出只为一件事：**访问控制的判据能在离线台子上被钉住**（`src/tests/http-face-access.mjs`
+ * 直接拿一个实例改状态、调两个入口，比较它们是否给出同一个拒绝）。不给别的模块用。
+ */
+export declare class BridgeController {
+    private readonly log;
+    private server;
+    /** 实际绑定到的端口；端口被占时可能回退到 port+1..port+9。未启动时为 undefined。 */
+    private boundPort;
+    /** 端口回退说明，供 browser_policy_status 展示。 */
+    private portNote;
+    private guarded;
+    private policy;
+    private serverKey;
+    private policyKey;
+    /** 宿主推导的「本 DSH 控制页」地址（来自 webServer 服务）；用户登记列表之外的补充。 */
+    private controlOrigins;
+    private lastError;
+    private chain;
+    private current;
+    /** Per-session grants: hosts the user approved once in ask mode. Cleared when
+     *  policy inputs change or the plugin stops. */
+    private readonly tempAllow;
+    private watchdogTimer;
+    private lastSpawnAt;
+    private droppedSince;
+    /** 上次成功配对（学到的浏览器位置），懒加载自 {@link pairingFile}。 */
+    private pairing;
+    /** 定位失败时到底扫了什么、为什么没命中 —— 状态工具要把这句话说出来。 */
+    private locateNote;
+    /** 已经学过其位置的扩展 id（避免重复扫盘）。 */
+    private learnedExtensionId;
+    /**
+     * 「握手即学习」的定时器。
+     *
+     * 为什么必须在**连着的**时候学：`hello` 只在扩展连着时存在（断开即清空），
+     * 而"需要拉起"恰恰发生在**断开**时 —— 等到那时再去读 id，读不到。所以一看到
+     * 新 id 就立刻反查磁盘并落盘，之后的冷启动才有依据。
+     */
+    private learnTimer;
+    constructor(log: (line: string) => void);
+    /** Resolved directory screenshots land in; defined once any config arrived. */
+    get shotsDir(): string | undefined;
+    /** 把一个目标系统形态的路径换成当前进程能访问的形态（WSL 下 `C:\…` → `/mnt/c/…`）。 */
+    private localForm;
+    /** 配对记录的落盘位置：`$DSH_HOME/browser-unified-pairing.json`（两个实例各自的 DSH_HOME 天然隔离）。 */
+    private pairingFile;
+    private loadPairing;
+    private savePairing;
+    /**
+     * 决定"这次拉起要落在哪个 profile"。
+     *
+     * 优先级（从可信到兜底）：用户显式配置 → 活着的 `hello`（扩展自报 id，最真实）→
+     * 配置里的扩展目录（路径比对）→ 上次配对的落盘记录。
+     *
+     * 全都不成立时**返回 undefined，并把"扫过什么"记进 {@link locateNote}** —— 不猜。
+     * 猜错的表现是"窗口起来了、扩展就是连不上"，比明确报错难查得多。
+     * @param config - 当前解析后的配置。
+     */
+    private resolveLaunchTarget;
+    /** 在 `refreshWatchdog` 的每个出口旁调用：只在桥启用时做"握手即学习"。 */
+    private refreshLearnTimer;
+    /**
+     * 看 `hello` 学一次位置（幂等）。学成了就不再重复扫盘，直到换了一个扩展 id。
+     * @param config - 当前解析后的配置。
+     */
+    private learnFromHello;
+    /**
+     * 找浏览器可执行文件。
+     *
+     * **只返回真实存在的路径**（posix 上允许裸名交给 PATH 解析）。绝不返回"可能的名字"：
+     * WSL 下 `spawn('msedge')` 会 ENOENT，而那个错误是**异步**的、会被 `child.on('error')`
+     * 吞掉，函数照旧返回"已拉起" —— 实测就是这个假成功让自动拉起一直静默失效。
+     * @param configured - 用户显式填的 exe（非空则以它为准）。
+     * @param brandId - 限定品牌（来自 `hello`）；省略=按登记表找全部。
+     */
+    private resolveBrowserCandidates;
+    /** Snapshot for the read-only policy-status tool. */
+    describePolicy(): {
+        enabled: boolean;
+        holdMode?: string;
+        holdEnabled?: boolean;
+        evalNavGuard?: boolean;
+        focusMode?: string;
+        restoreWhenMinimized?: boolean;
+        permissionDecider?: string;
+        holdSyncNote?: string;
+        urlMode?: string;
+        internetAccess?: string;
+        lanAccess?: string;
+        localAccess?: string;
+        internetTemp?: boolean;
+        lanTemp?: boolean;
+        localTemp?: boolean;
+        askMode?: string;
+        autoLaunchEnabled?: boolean;
+        autoLaunchIdleSeconds?: number;
+        autoLaunchProfileDir?: string;
+        autoLaunchProfileName?: string;
+        dshAccessEnabled?: boolean;
+        dshOrigins?: string[];
+        allowHosts?: string[];
+        denyHosts?: string[];
+        denyHostsIgnored?: boolean;
+        blockMetadata?: boolean;
+        metadataHostnames?: string[];
+        metadataIps?: string[];
+        tempGrants: readonly string[];
+        ready: boolean;
+        boundPort?: number;
+        requestedPort?: number;
+        portNote?: string;
+        extensionId?: string;
+        browserName?: string;
+        bridgeProtocol?: number;
+        extensionProtocol?: number;
+        protocolCompatible?: boolean;
+        protocolNote?: string | null;
+        pairing?: {
+            brandId: string;
+            profileDir: string;
+            profileName?: string;
+            userDataDir: string;
+            matchedBy: string;
+            resolvedAt: string;
+        };
+        launchNote?: string;
+    };
+    /** (Re)arm the watchdog from the resolved config; clears it when disabled. */
+    private refreshWatchdog;
+    private watchdogTick;
+    /**
+     * de-013 model-invoked launch: bring the extension's browser back up on
+     * demand. Unlike the disconnect watchdog this does not require
+     * `autoLaunchEnabled` — the model asks, the browser starts. Spawn
+     * parameters come from the same autoLaunch* settings the watchdog uses.
+     * A short cooldown prevents the model from spawning a window per call.
+     * @returns a human-readable outcome for the tool layer.
+     */
+    launchBrowser(landingUrl?: string): string;
+    /**
+     * 唤起可用的浏览器。
+     *
+     * **"进程活着但没有窗口"与"扩展没连上"是两件不同的事**，混在一起会形成死局：
+     * Edge 关掉所有窗口后仍在后台驻留（启动增强/后台扩展），扩展照样连着桥，于是
+     * `launchBrowser()` 回答"扩展已连接，无需拉起"，但 `tabs.list` 回 0 个标签页、
+     * 所有"当前标签页"类命令全部失败（实测 Windows 侧就是这么卡住的）。
+     *
+     * - 扩展已连接但没有窗口 → 让扩展自己新建窗口（`window.ensure`），**不再起进程**；
+     * - 扩展未连接 → 沿用原来的 spawn 逻辑。
+     * @returns 给人/模型看的结果说明。
+     */
+    wakeBrowser(options?: {
+        url?: string;
+        reason?: string;
+    }): Promise<string>;
+    /**
+     * 校验候选项能否当"唤醒落地页"：必须 http(s)，且当前策略**直接放行**（allow）——
+     * `ask`/`block`/`unavailable` 一律不用（唤醒不该成为绕过审批的通道）。
+     * @returns 可用则返回归一化后的 URL，否则 undefined（调用方退回 about:blank）。
+     */
+    private wakeLandingUrl;
+    private spawnBrowser;
+    /**
+     * Converge the live server onto `config`. With `throwOnError`, an initial
+     * start failure rejects (fail-loud activation); later changes record the
+     * failure instead, so a bad port cannot tear down an otherwise running session.
+     * @param config - the freshly resolved settings snapshot.
+     * @param options - set `throwOnError` only for the activation-time call.
+     * @returns a promise settling once the convergence attempt finished.
+     */
+    /**
+     * 记录由宿主推导的「本 DSH 控制页」地址（`webServer.port`），并在变化时重建策略：
+     * DSH 页面红线要跟着**真实的控制页**走，而不是跟着用户登记的旧地址走。
+     * @param origins - 归一化的 origin 列表（如 `http://127.0.0.1:3080`）。
+     */
+    setControlOrigins(origins: readonly string[]): void;
+    reconcile(config: ResolvedConfig, options?: {
+        throwOnError?: boolean;
+    }): Promise<void>;
+    private reconcileNow;
+    /**
+     * Run one extension command over the live, policy-guarded link.
+     * @param command - extension command name (`nav`, `click`, …).
+     * @param params - wire params passed through to the extension.
+     * @param signal - tool-execution cancellation propagated to the pending command.
+     * @returns the extension's result payload verbatim.
+     */
+    /**
+     * **只读档**下仍然放行的命令（其余一律拒绝）。判定放在 `execute` 这个单一收口上 ——
+     * 工具面隐藏（buddy）只是"模型不知道有它"，真边界在这里：即使注入猜中名字也会被拒。
+     */
+    /**
+     * 哪些命令属于"执行任意脚本"这一类（等价于 devtools 控制台）。
+     * 主人 2026-10-17：「模型权限我觉得可以细化，比如让不让调用类似 devtools 这类」——
+     * 先把最危险的一类单独拎出来做成开关；其余按 read-only 那档兜。
+     */
+    private static readonly SCRIPT_COMMANDS;
+    /** 会让扩展"自动补浮层"的命令 + 浮层自身的命令：执行前把当前模式推下去。 */
+    private static readonly HOLD_MODE_COMMANDS;
+    private static readonly READ_ONLY_ALLOWED;
+    /**
+     * 已经推给扩展的浮层模式（`mode|扩展id|连接状态`）。扩展重连或配置变更后戳记不同 ⇒ 重推一次。
+     * 旧扩展不认识 `hold.config`：推送失败就保持在白名单行为，不影响任何调用。
+     */
+    private holdModeStamp;
+    /** 上一次把浮层模式推给扩展的结果（诊断用；undefined = 还没推过）。 */
+    private holdSyncNote;
+    /** 当前是否只读档（`accessLevel: 'read-only'`）。 */
+    private isReadOnly;
+    /**
+     * 访问控制的两道闸（只读档 / 关掉「允许执行任意脚本」）。
+     *
+     * **工具面与 HTTP 命令面共用这一份判据**：以前只有 `execute` 里写了这两道，
+     * 而 `POST /api/command` 走的是 core 的 `guardCommand` 钩子、根本不过 `execute`
+     * ⇒ 同一个只读档，模型调不动 `browser_click`，同伴件带 token 一次 POST 就能点
+     * （2026-11-01 审计第 2 条）。判据抽出来以后，两个入口谁都不能单方面漏掉。
+     * @param command - 扩展命令名。
+     * @returns 拒绝原因（给模型/调用方看）；undefined = 放行。
+     */
+    private accessDenial;
+    execute(command: string, params: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown>;
+    /**
+     * 把「浮层出现方式」推给扩展（只在变更/重连后推一次）。
+     * 推不动（旧扩展不认识这条命令、或桥刚断）就保持白名单行为 —— 浮层是附加保护，不该让调用失败。
+     */
+    private syncHoldMode;
+    /**
+     * Authorize one navigation target against the live policy, honoring
+     * per-session grants. Returns `unavailable` while the bridge is stopped.
+     */
+    /**
+     * X18：HTTP 命令面（`POST /api/command`）的策略守卫，由 core 的 `guardCommand` 钩子调用。
+     *
+     * 覆盖两类：
+     *  1. **带 URL 的命令**（`nav` / `tabs.open`）：与工具路径同源，但这里没有审批通道 ⇒
+     *     只有 `allow` 才放行，`ask` 一律拒（并指路「用 browser_navigate 工具」或加 allowHosts）。
+     *  2. **页面内容命令**（`eval` / `frames` / `click` …）：判**目标标签页当前 URL**是否踩红线 ——
+     *     这正是以前缺的那一层（同伴件走 HTTP 面，绕过了工具层的 `authorizeExistingTab`）。
+     *
+     * 扩展未连接时不在这里拦（交给 `execute` 报 503「no browser extension」，别把连接问题说成策略拒绝）。
+     * @returns 拒绝原因（非空即 403）；undefined = 放行。
+     */
+    guardHttpCommand(command: string, params: Record<string, unknown>): Promise<string | undefined>;
+    authorizeUrl(raw: string): Promise<{
+        decision: 'allow' | 'ask' | 'block';
+        code?: string;
+        reason: string;
+        host: string;
+    } | {
+        decision: 'unavailable';
+    }>;
+    /** Remember one host for the rest of this session (ask-mode grant). */
+    grantTemporary(host: string): void;
+    /**
+     * Delete generated artifacts using the currently resolved directories;
+     * works while the bridge is stopped because it never touches the socket.
+     * @returns counts and names of what was removed.
+     */
+    cleanup(): Promise<{
+        shotsRemoved: number;
+        scratchRemoved: readonly string[];
+    }>;
+    /** Stop the listener; safe to call repeatedly and during teardown. */
+    stop(): Promise<void>;
+}
 /** Register every `browser_*` tool; each is a thin adapter over one extension command. */
 /**
  * 权限现状 → 给模型看的文本（`browser_permissions` 的全部载荷都拼在这里）。
@@ -218,3 +538,4 @@ export declare function permissionReport(input: {
 export declare function sessionTitleOf(sessionId: string, now?: number): string | undefined;
 /** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */
 export declare function apply(ctx: Context, config: Config): void;
+export {};

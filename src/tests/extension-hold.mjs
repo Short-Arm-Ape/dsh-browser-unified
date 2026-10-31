@@ -1029,6 +1029,64 @@ async function testHeldByUserCode() {
 	eq('老文案（无前缀）也归 held_by_user', plain.code, 'held_by_user')
 }
 
+/* ────────────────── 断言：network.log 的 status 过滤 ────────────────── */
+
+/**
+ * 2026-11-01 审计第 5 条：`status:'failed'` / `'pending'` 以前只写了"命中自己才排除"，
+ * 带数字状态码的行落到兜底的 `return true` ⇒ 过滤值等于没写，模型会以为"确实有失败请求"。
+ * 这里用真 background.js（vm 里跑）灌 5 条请求，逐档核对条数，并钉住"拼错的值 = 0 条"。
+ */
+async function testNetworkStatusFilter() {
+	const { ctx, fake } = await loadWorker(() => ({ result: { value: '' } }))
+	eq('normalizeStatusFilter 是顶层的可测函数（vm 里取得到）', typeof ctx.normalizeStatusFilter, 'function')
+	eq("'failed' 归一化", ctx.normalizeStatusFilter('failed'), 'failed')
+	eq("'F' 归一化（大小写不敏感）", ctx.normalizeStatusFilter('F'), 'failed')
+	eq("'pending' 归一化", ctx.normalizeStatusFilter('pending'), 'pending')
+	eq("'P' 归一化", ctx.normalizeStatusFilter('p'), 'pending')
+	eq("'4xx' 归一化", ctx.normalizeStatusFilter('4XX'), '4xx')
+	eq('空值 = 不过滤', ctx.normalizeStatusFilter(''), null)
+	eq('未提供 = 不过滤', ctx.normalizeStatusFilter(undefined), null)
+	eq("拼错的值 → 'invalid'（不是 null）", ctx.normalizeStatusFilter('4xx '), '4xx')
+	eq("无意义的值 → 'invalid'", ctx.normalizeStatusFilter('boom'), 'invalid')
+
+	const seed = (requestId, url, status) => {
+		fake.fireCdp(7, 'Network.requestWillBeSent', {
+			requestId,
+			request: { method: 'GET', url, headers: {} },
+			type: 'XHR',
+			wallTime: Date.now() / 1000,
+		})
+		if (status === 'failed') {
+			fake.fireCdp(7, 'Network.loadingFailed', { requestId, errorText: 'net::ERR_FAILED' })
+		} else if (status !== undefined) {
+			fake.fireCdp(7, 'Network.responseReceived', {
+				requestId,
+				response: { status, statusText: '', mimeType: 'application/json', headers: {} },
+			})
+		}
+	}
+	seed('r1', 'https://x.test/ok', 200)
+	seed('r2', 'https://x.test/missing', 404)
+	seed('r3', 'https://x.test/boom', 500)
+	seed('r4', 'https://x.test/dead', 'failed')
+	seed('r5', 'https://x.test/slow', undefined)
+
+	const grab = async (status) => {
+		const res = await ctx.cmdNetworkLog(status === undefined ? { tabId: 7 } : { tabId: 7, status })
+		return { total: res.total, urls: res.requests.map((r) => r.url) }
+	}
+	eq('不带 status：5 条全回（基线）', (await grab()).total, 5)
+	eq("status:'failed' 只回失败的那 1 条", (await grab('failed')).total, 1)
+	eq("status:'failed' 回的是 dead 那条", (await grab('failed')).urls.join(','), 'https://x.test/dead')
+	eq("status:'pending' 只回还没响应的那 1 条", (await grab('pending')).total, 1)
+	eq("status:'2xx' 只回 200", (await grab('2xx')).total, 1)
+	eq("status:'4xx' 只回 404", (await grab('4xx')).total, 1)
+	eq("status:'5xx' 只回 500", (await grab('5xx')).total, 1)
+	eq("status:'3xx' 一条都没有（没有 3xx 请求）", (await grab('3xx')).total, 0)
+	eq('拼错的值（boom）→ 0 条，不再静默返回全部', (await grab('boom')).total, 0)
+	eq("大写 '2XX' 也认", (await grab('2XX')).total, 1)
+}
+
 /* ────────────────────────── 跑 ────────────────────────── */
 
 console.log('extension-hold: 接管浮层的三处真机契约')
@@ -1045,6 +1103,7 @@ await testFullscreenCoverage()
 await testHoldOnRefusedWhileAborted()
 await testClickBypass()
 await testHeldByUserCode()
+await testNetworkStatusFilter()
 
 const failed = results.filter((r) => !r.pass)
 console.log(`  ${results.length - failed.length}/${results.length} 通过`)

@@ -543,7 +543,13 @@ interface LaunchTarget {
 	readonly source: 'config' | 'hello' | 'hint' | 'record'
 }
 
-class BridgeController {
+/**
+ * 桥的控制器：配置 → 监听器 / 策略 / 命令收口的唯一持有者。
+ *
+ * 导出只为一件事：**访问控制的判据能在离线台子上被钉住**（`src/tests/http-face-access.mjs`
+ * 直接拿一个实例改状态、调两个入口，比较它们是否给出同一个拒绝）。不给别的模块用。
+ */
+export class BridgeController {
 	private server: BridgeServer | undefined
 	/** 实际绑定到的端口；端口被占时可能回退到 port+1..port+9。未启动时为 undefined。 */
 	private boundPort: number | undefined
@@ -1218,19 +1224,31 @@ class BridgeController {
 		return this.current?.readOnly === true
 	}
 
-	async execute(command: string, params: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown> {
+	/**
+	 * 访问控制的两道闸（只读档 / 关掉「允许执行任意脚本」）。
+	 *
+	 * **工具面与 HTTP 命令面共用这一份判据**：以前只有 `execute` 里写了这两道，
+	 * 而 `POST /api/command` 走的是 core 的 `guardCommand` 钩子、根本不过 `execute`
+	 * ⇒ 同一个只读档，模型调不动 `browser_click`，同伴件带 token 一次 POST 就能点
+	 * （2026-11-01 审计第 2 条）。判据抽出来以后，两个入口谁都不能单方面漏掉。
+	 * @param command - 扩展命令名。
+	 * @returns 拒绝原因（给模型/调用方看）；undefined = 放行。
+	 */
+	private accessDenial(command: string): string | undefined {
 		if (BridgeController.SCRIPT_COMMANDS.has(command) && this.current?.allowScript === false) {
-			throw classify(command, new Error(
-				`脚本执行已关闭：命令 ${command} 被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型执行任意脚本 关着）。`
-				+ '读取、点击、输入、导航都不受影响；要放开请让主人打开那一项。',
-			))
+			return `脚本执行已关闭：命令 ${command} 被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型执行任意脚本 关着）。`
+				+ '读取、点击、输入、导航都不受影响；要放开请让主人打开那一项。'
 		}
 		if (this.isReadOnly() && !BridgeController.READ_ONLY_ALLOWED.has(command)) {
-			throw classify(command, new Error(
-				`只读模式：命令 ${command} 已被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型操作页面 关着）。`
-				+ '要放开请让主人在设置里打开那一项；读取类工具（read/snapshot/screenshot/find 等）照常可用。',
-			))
+			return `只读模式：命令 ${command} 已被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型操作页面 关着）。`
+				+ '要放开请让主人在设置里打开那一项；读取类工具（read/snapshot/screenshot/find 等）照常可用。'
 		}
+		return undefined
+	}
+
+	async execute(command: string, params: Record<string, unknown>, signal: AbortSignal, timeoutMs?: number): Promise<unknown> {
+		const denied = this.accessDenial(command)
+		if (denied !== undefined) throw classify(command, new Error(denied))
 		const guarded = this.guarded
 		if (guarded === undefined) {
 			throw classify(command, new Error(
@@ -1294,6 +1312,10 @@ class BridgeController {
 	 * @returns 拒绝原因（非空即 403）；undefined = 放行。
 	 */
 	async guardHttpCommand(command: string, params: Record<string, unknown>): Promise<string | undefined> {
+		// 访问控制（只读档 / 关掉脚本执行）先过 —— 与工具面同一份判据，见 `accessDenial`。
+		// 漏了这一行 = 只读档下带 token 的 `POST /api/command` 仍能点击/输入/求值。
+		const denied = this.accessDenial(command)
+		if (denied !== undefined) return denied
 		const url = params.url
 		if (typeof url === 'string' && url.length > 0 && HTTP_URL_COMMANDS.has(command)) {
 			const verdict = await this.authorizeUrl(url)

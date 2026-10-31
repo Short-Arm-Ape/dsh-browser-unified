@@ -1023,6 +1023,26 @@ async function cmdConsoleLog(params) {
  * are filtered by default (they dominate the buffer in a typical page load).
  * `methodPattern` / `urlPattern` / `status` filter client-side.
  */
+/**
+ * `status` 过滤值的唯一归一化点：`failed` / `pending` / `2xx`..`5xx`，其余一律 `'invalid'`。
+ *
+ * 2026-11-01 审计第 5 条：以前过滤是「命中自己的分支才排除」——`failed` / `pending` 只有
+ * 前两个分支认，带数字状态码的行落到最后一个 `return true`，于是 `status:'failed'` 把
+ * **所有**请求都返回（模型以为「有失败请求」）。拼错的值（`status:'4xx '` 之外的花样）
+ * 同样静默放行全部。现在不认识的值 = 一条都不匹配。
+ * @param {string|undefined} raw
+ * @returns {'failed'|'pending'|'2xx'|'3xx'|'4xx'|'5xx'|'invalid'|null} null = 不过滤
+ */
+function normalizeStatusFilter(raw) {
+	if (typeof raw !== 'string') return null;
+	const value = raw.trim().toLowerCase();
+	if (value.length === 0) return null;
+	if (value === 'failed' || value === 'f') return 'failed';
+	if (value === 'pending' || value === 'p') return 'pending';
+	if (/^[2-5]xx$/.test(value)) return value;
+	return 'invalid';
+}
+
 async function cmdNetworkLog(params) {
 	const tab = await resolveTab(params.tabId);
 	const tabMap = networkLog.get(tab.id);
@@ -1034,21 +1054,24 @@ async function cmdNetworkLog(params) {
 	const urlPattern = typeof params.urlPattern === 'string' && params.urlPattern.length > 0
 		? new RegExp(params.urlPattern, 'i')
 		: null;
-	const statusFilter = typeof params.status === 'string' && params.status.length > 0 ? params.status : null;
+	const statusWant = normalizeStatusFilter(params.status);
 	const staticTypes = new Set(['Image', 'Font', 'Stylesheet', 'Script', 'Favicon', 'Manifest']);
 	const filtered = all.filter((e) => {
 		if (!includeStatic && staticTypes.has(e.resourceType)) return false;
 		if (methodPattern && !methodPattern.test(e.method || '')) return false;
 		if (urlPattern && !urlPattern.test(e.url || '')) return false;
-		if (statusFilter) {
-			if (e.failed) {
-				if (!/^f/i.test(statusFilter)) return false;
-			} else if (e.status === undefined) {
-				if (!/^p/i.test(statusFilter)) return false; // pending
-			} else if (statusFilter === '2xx' && (e.status < 200 || e.status >= 300)) return false;
-			else if (statusFilter === '3xx' && (e.status < 300 || e.status >= 400)) return false;
-			else if (statusFilter === '4xx' && (e.status < 400 || e.status >= 500)) return false;
-			else if (statusFilter === '5xx' && (e.status < 500 || e.status >= 600)) return false;
+		if (statusWant !== null) {
+			if (statusWant === 'invalid') return false;
+			if (statusWant === 'failed') {
+				if (e.failed !== true) return false;
+			} else if (statusWant === 'pending') {
+				if (e.failed === true || e.status !== undefined) return false;
+			} else {
+				// 2xx..5xx：必须有数字状态码才算（failed 与 pending 都不属于任何一档）。
+				if (e.failed === true || typeof e.status !== 'number') return false;
+				const base = Number(statusWant[0]) * 100;
+				if (e.status < base || e.status >= base + 100) return false;
+			}
 		}
 		return true;
 	});

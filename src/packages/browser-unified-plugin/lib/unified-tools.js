@@ -14,7 +14,7 @@
  * browser-unified-plugin, AGPL-3.0 (see NOTICE.md).
  */
 import { execFile } from 'node:child_process';
-import { copyFile, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools';
@@ -91,6 +91,19 @@ export async function currentPluginVersion(configuredRegistryDir) {
     }
     catch {
         return '未标注';
+    }
+}
+/**
+ * 文件本身在不在（不看内容）。写入路径用它区分「还没有登记簿」与「登记簿坏了」——
+ * 这两种情况的正确动作相反：前者可以新建，后者必须拒写。
+ */
+async function fileExists(file) {
+    try {
+        await stat(file);
+        return true;
+    }
+    catch {
+        return false;
     }
 }
 async function readJson(file) {
@@ -547,12 +560,38 @@ export function applyUnifiedTools(ctx, config) {
                 const notAllowed = await writeAllowlistRefusal(dir, path.join('issues', 'issues.json'));
                 if (notAllowed !== undefined)
                     return { ok: false, text: `browser_issues: ${notAllowed}` };
-                const reg = await readJson(file).catch(() => ({ schemaVersion: 1, issues: [] }));
+                // fail-closed（2026-11-01 审计第 4 条）：登记簿**存在但读不出**时拒绝写入。
+                // 以前这里 `.catch(() => ({schemaVersion:1, issues:[]}))` 用空簿顶上 —— 一次
+                // 解析失败之后的第一次 `add`/`resolve` 就会把整本问题登记簿覆盖成一条，
+                // 而 `.bak` 只有上一版（下一次写入又覆盖它）。删掉文件才走「新建」分支。
+                let reg;
+                // 先取一次"在不在"，后面两处都用它：解析失败时决定拒写，写入前决定要不要备份。
+                const existed = await fileExists(file);
+                try {
+                    reg = await readJson(file);
+                }
+                catch (error) {
+                    if (existed) {
+                        const detail = error instanceof Error ? error.message : String(error);
+                        return {
+                            ok: false,
+                            text: `browser_issues: 拒绝写入（fail-closed）：${file} 存在但解析失败（${detail}）。`
+                                + '继续写会把整本登记簿覆盖成一条 —— 先人工修复它（或把它改名挪走）再来。',
+                        };
+                    }
+                    reg = { schemaVersion: 1, issues: [] };
+                }
                 reg.issues = issues;
                 reg.lastUpdated = now;
-                await copyFile(file, file + '.bak');
+                // 顺带修的（这条是跑新台子时撞出来的，不在审计清单里）：以前这里**无条件**备份，
+                // 而"文件不存在"时 `copyFile` 直接 ENOENT ⇒ 首次 `add` 永远失败，还报一句
+                // 莫名其妙的 copyfile 错误。新建的时候本来就没有东西要备份。
+                if (existed)
+                    await copyFile(file, file + '.bak');
                 await writeFile(file, JSON.stringify(reg, null, 2) + '\n', 'utf8');
-                return textResult(`已写入 ${file}（原文件备份为 ${file}.bak）。${preview}`);
+                return textResult(existed
+                    ? `已写入 ${file}（原文件备份为 ${file}.bak）。${preview}`
+                    : `已新建 ${file}（原文件不存在，没有备份）。${preview}`);
             }, 'browser_issues');
         },
     }));

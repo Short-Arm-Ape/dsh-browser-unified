@@ -1809,3 +1809,25 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 
 **上游**：PR #20（timeoutMs）仍 open、无评审；② `feat/nav-wait-until`（远端 `7c77c9b`，基于 #20 的 `1c692f4`）已就绪，等 #20 合并后 rebase 开 PR（正文草稿 `D:\work\DSHWS\scratch\upstream-pr-waituntil-20261031\PR.md`）。git push 到 github.com 当时不通，用 Git Data API 建分支。
 
+### 上面那 5 条待办已修 + 自查又挖出 2 条（2026-11-01）
+
+**发布位**：扩展 **1.0.53**（`D:\edge-extensions\dsh-browser-extension`，background.js 哈希与源一致）/ 插件 **0.11.51** / core **0.1.14**（后两者走 `link:`，lib/dist 已重建）。
+
+1. **HTTP 面 Host/Origin**（core `bridge/server.ts` `handleHttp`）：与 WS 握手共用同一份 `isTrustedRequestOrigin`（原名 `isTrustedUpgradeOrigin`）。Host 非回环、Origin 是公网网页 ⇒ 一律 403，`/api/status` 也不例外（它免 token，正是 DNS-rebinding 读策略快照的入口）。循环来源（DSH 控制页）与不带 Origin 的本机客户端照旧。
+2. **HTTP 命令面也过访问控制**（插件 `index.ts`）：判据抽成 `accessDenial(command)`，`execute()` 与 `guardHttpCommand()` **共用**。以前只读档下模型调不动 `browser_click`，但带 token 的 `POST /api/command` 能点、能输入、能 eval。
+3. **socket 身份守卫**（core）：`data` / `error` 加 `this.clientSocket !== socket` 早退。以前换链路后旧 socket 的坏帧/报错会拆掉**新**链路，并把在途命令判成 `link_lost`。
+4. **登记簿 fail-closed**（插件 `unified-tools.ts`）：文件存在但解析失败 ⇒ 拒写并说明，原文件逐字节不动；文件真的不存在才新建。
+5. **network.log 的 status 过滤**（扩展 `background.js`）：新增单点归一化 `normalizeStatusFilter`；`failed` / `pending` / `2xx..5xx` 各只回自己那一档，**拼错的值 ⇒ 0 条**（以前静默返回全部）。
+
+**顺带发现并修（不在原审计清单里，两条都是真故障）**
+6. **掉线永远不会被发现**（core）：`http.Server` 的升级 socket 是 `allowHalfOpen: true`，对端走掉只发 `end`、不发 `close`（`close` 要等我们也关写端，我们没关）。后果：`extensionConnected` 永远 true、状态面报「已连接」，之后的命令全熬到 60 秒超时。现在 `socket.on('end')` 也算掉线。
+7. **首次 `browser_issues add` 必然失败**（插件）：写前无条件 `copyFile(file, file + '.bak')`，文件不存在时 ENOENT ⇒ 新建登记簿这条路从来没通过。现在只在文件已存在时备份。
+
+**台子**：`run-all` **16/16**（新增 `http-face-access` 17 项、`issues-fail-closed` 14 项；`bridge-http-auth` 32→**42** 项；`extension-hold` 108→**128** 项）。**变异验证 8/8**（删掉任一条守卫 ⇒ 对应套件变红）。变异这轮交了两笔学费，记下来别重犯：
+- 第 3 条第一次变异**没被抓住**：台子里的旧连接收到 FIN 就自己关了，「旧连接还活着、只是被换掉」那一刻根本复现不出来。改法：客户端 socket 用 `new net.Socket({ allowHalfOpen: true })`，并把 data / error 拆成**两对独立链路**分别测。
+- 第一版"坏帧"写成了**掩码**帧（`0x83` 且少 3 字节载荷）⇒ 解析器只缓冲不报错，断言恒绿。改成真的未掩码帧（`0x81 0x03 'ABC'`）才有判别力。
+
+**生效前置**：插件/core 改的是 `link:` 目标 ⇒ 需要重启 `dsh web`；扩展需要在 `edge://extensions` 点一次重载（版本号应显示 1.0.53）。
+
+**教训**：`__` 前缀的临时脚本会被自动清掉（`src\__mutate.mjs`、`src\__dbg-link*.mjs` 跑完就没了）。临时脚本用普通名字、自己删；也别把要留的东西放进 `__` 开头的目录。
+

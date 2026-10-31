@@ -391,6 +391,23 @@ export class BridgeServer {
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const origin = String(req.headers.origin ?? '')
+    // 安全（2026-11-01 审计第 1 条）：HTTP 面以前只靠 CORS 挡「网页读响应」，
+    // 但 CORS 挡不住 **DNS-rebinding** —— 攻击者域名解析回 127.0.0.1 时，浏览器认为
+    // 目标与自己同源（用的是攻击者的域名做同源判定），请求照发、响应照给，唯一破绽是
+    // `Host` 头写着那个域名。而 `/api/status` 免 token ⇒ 一次重绑定就能读到完整策略快照
+    // （允许/拒绝名单、配对目录、扩展版本、token 是否弱）。WS 握手早就有这两道，这里补上同一口径：
+    // `Host` 必须回环，`Origin` 必须不是网页来源。token 只回答「谁发的」，不回答「页面凭什么发」。
+    const host = String(req.headers.host ?? '')
+    if (!isLoopbackHost(host)) {
+      this.log(`http rejected: host ${host}`)
+      this.respondJson(res, 403, { ok: false, error: 'forbidden: Host must be a loopback name (127.0.0.1 / localhost / [::1])' })
+      return
+    }
+    if (!isTrustedRequestOrigin(origin)) {
+      this.log(`http rejected: origin ${origin}`)
+      this.respondJson(res, 403, { ok: false, error: 'forbidden: Origin must be loopback or an extension scheme' })
+      return
+    }
     if (req.method === 'OPTIONS') {
       // 2026-10-10（上游 v1.0.8 口径）：预检不再回任何 CORS 头。网页想发 JSON POST 必先
       // 过预检，预检不给 ACAO ⇒ 真请求根本不会发出。只读的 `/api/status` 是简单 GET，
@@ -599,7 +616,7 @@ export class BridgeServer {
       return
     }
     const upgradeOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
-    if (!isTrustedUpgradeOrigin(upgradeOrigin)) {
+    if (!isTrustedRequestOrigin(upgradeOrigin)) {
       this.log(`websocket rejected: origin ${upgradeOrigin}`)
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
       socket.destroy()
@@ -627,7 +644,16 @@ export class BridgeServer {
     this.continuationOpen = false
     this.log(`extension connected from ${socket.remoteAddress}:${socket.remotePort}`)
     const reader = new FrameReader()
+    // 2026-11-01 审计第 3 条：**每条链路只处理自己的事件**。新连接会把旧连接换掉（见上方的
+    // `closeClientSocket('replaced…')`），但旧 socket 的 `error`/`data` 在换掉之后仍会来
+    // （EPIPE、内核缓冲里剩下的半帧）。以前这两个回调不认身份，一律走 `closeClientSocket` ——
+    // 于是旧连接的报错会拆掉**新**连接，并把新连接上在途的命令全判成 `link_lost`。
+    // `close` 早就有这道守卫，这里补齐另外两个。
     socket.on('data', (chunk: Buffer) => {
+      if (this.clientSocket !== socket) {
+        socket.destroy()
+        return
+      }
       reader.push(chunk)
       try {
         reader.drain((frame) => this.handleFrame(frame))
@@ -639,11 +665,24 @@ export class BridgeServer {
     })
     socket.on('error', (error) => {
       this.logVerbose(`socket error: ${errorMessage(error)}`)
+      if (this.clientSocket !== socket) {
+        socket.destroy()
+        return
+      }
       this.closeClientSocket(1011, 'server error')
     })
     socket.on('close', () => {
       if (this.clientSocket !== socket) return
       this.closeClientSocket(1000, '')
+    })
+    // 2026-11-01 自查（顺带发现，不在审计清单里）：**对端走掉只会先发 `end`，不会发 `close`**。
+    // `http.Server` 的升级 socket 是 `allowHalfOpen: true`（Node 为了让 keep-alive 请求收完），
+    // 所以扩展的 SW 被回收 / 浏览器关闭时，这台机器只收到 FIN ⇒ `end`，而 `close` 要等我们自己
+    // 也把写端关掉 —— 我们没关。结果：`extensionConnected` 永远 true、状态面报「已连接」，
+    // 之后的命令全部熬到 60 秒超时，而不是当场说「扩展掉了」。这里把 `end` 也当成掉线。
+    socket.on('end', () => {
+      if (this.clientSocket !== socket) return
+      this.closeClientSocket(1000, 'extension closed the connection')
     })
   }
 
@@ -767,13 +806,16 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /**
- * WebSocket 握手不受 CORS 约束，所以"来源是不是网页"必须在这里判：网页 scheme 一律拒
- * （`http(s)://` 只放行回环，供本机自研客户端），扩展 scheme 与**不带 Origin** 的
- * 本机客户端（扩展在部分版本不发送 Origin、curl/测试台也不发）放行。
+ * 「这个来源能不能驱动桥」的唯一判据。**握手与 HTTP 面共用一份** —— 两处各写一份就会出现
+ * 「网页直接拨号被挡、但同一个页面改走 fetch 就放行」这种半边收紧（2026-11-01 审计第 1 条）。
+ *
+ * WebSocket 握手不受 CORS 约束、HTTP 面又挡不住 DNS-rebinding，所以两处都得自己判：网页 scheme
+ * 一律拒（`http(s)://` 只放行回环，供本机自研客户端与 DSH 控制页），扩展 scheme 与**不带 Origin**
+ * 的本机客户端（扩展在部分版本不发送 Origin、curl/测试台也不发）放行。
  * @param origin - 请求的 `Origin` 头，缺失时为空串。
  * @returns 是否可信。
  */
-function isTrustedUpgradeOrigin(origin: string): boolean {
+function isTrustedRequestOrigin(origin: string): boolean {
   if (origin === '') return true
   if (/^(?:chrome|moz|ms|safari)-extension:\/\//.test(origin)) return true
   return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(origin)

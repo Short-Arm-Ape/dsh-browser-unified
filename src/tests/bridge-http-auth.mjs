@@ -7,6 +7,7 @@
  * 其实 token 没验、或 `Host`/`Origin` 没查，而没人会去看响应头。所以这里逐条钉住：
  *
  *   1. `/api/status` 只读、且**只对回环来源**回显 ACAO（GUI 设置页探测靠它，公网来源不给）；
+ *      HTTP 面本身也查 `Host`/`Origin`（DNS-rebinding 读不到策略快照）—— 2026-11-01 审计第 1 条；
  *   2. 预检（OPTIONS）不再回任何 CORS 头 —— 网页的 JSON POST 卡在预检，真请求发不出；
  *   3. `/api/command`、`/api/cleanup` 无 token/错 token → 401；带 token（三种形式都认）才放行；
  *   4. **阳性对照**：带 token 时确实走到 `execute`（503 = 没有扩展），证明不是"全都 401"的假绿；
@@ -15,7 +16,9 @@
  *   7. WS 升级：`Host` 非回环（DNS-rebinding）→ 403，网页 `Origin` → 403，
  *      扩展 scheme / 不带 Origin → 101，token 错 → 401；
  *   8. `guardCommand`（X18）在 HTTP 命令面上仍然生效 → 403 blocked；
- *   9. 弱 token（内置默认/短于 16 字符）在状态面自报 `insecureToken`，并在启动日志里告警。
+ *   9. 弱 token（内置默认/短于 16 字符）在状态面自报 `insecureToken`，并在启动日志里告警；
+ *  10. 换链路之后，旧 socket 自己迟到的 `data` / `error` 不许拆掉**新**链路
+ *      （2026-11-01 审计第 3 条：以前旧连接报错会把新连接判成 link_lost）。
  *
  * 复现：cd packages/browser-unified-core && npm run build && cd ../.. && node tests/bridge-http-auth.mjs
  * （本脚本自带 3 个独立端口的桥实例，连不上真实桥；也不需要 DSH 与浏览器。）
@@ -90,6 +93,45 @@ function wsUpgrade(port, { token, host, origin } = {}) {
 	})
 }
 
+/**
+ * 发一次原始 WS 握手并**保持这条连接**：回 {socket, line}（line 是第一行状态行）。
+ *
+ * `allowHalfOpen: true` 是刻意的 —— 桥在换链路时会给旧连接发 close 帧并 `end()`，
+ * 普通 socket 收到 FIN 就自己关了，于是"旧连接还活着、只是被换掉"这一刻根本复现不出来，
+ * 后面的守卫断言会变成永远绿的假象（2026-11-01 变异验证第一次没抓住第 3 条，就是这个坑）。
+ */
+function wsOpen(port, { token } = {}) {
+	const target = `/ws?token=${encodeURIComponent(token ?? '')}`
+	return new Promise((resolve) => {
+		const socket = new net.Socket({ allowHalfOpen: true })
+		let buffer = ''
+		const timer = setTimeout(() => resolve({ socket, line: 'NO-RESPONSE' }), 3000)
+		socket.on('connect', () => {
+			socket.write([
+				`GET ${target} HTTP/1.1`,
+				`Host: 127.0.0.1:${port}`,
+				'Upgrade: websocket',
+				'Connection: Upgrade',
+				'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+				'Sec-WebSocket-Version: 13',
+			].join('\r\n') + '\r\n\r\n')
+		})
+		socket.on('data', (chunk) => {
+			buffer += chunk.toString('latin1')
+			if (!buffer.includes('\r\n')) return
+			clearTimeout(timer)
+			// 握手之后不再读：留着连接即可，迟到的 close 帧与 RST 都别把测试进程带崩。
+			socket.removeAllListeners('data')
+			socket.on('error', () => {})
+			resolve({ socket, line: buffer.split('\r\n')[0] })
+		})
+		socket.on('error', () => { clearTimeout(timer); resolve({ socket, line: 'SOCKET-ERROR' }) })
+		socket.connect(port, '127.0.0.1')
+	})
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 const shotsStatus = mkdtempSync(path.join(tmpdir(), 'dsh-bridge-auth-status-'))
 const shotsGuard = mkdtempSync(path.join(tmpdir(), 'dsh-bridge-auth-guard-'))
 const logs = []
@@ -122,7 +164,17 @@ try {
 	check('回显时带 Vary: Origin', String(gui.headers.vary ?? '').includes('Origin'), String(gui.headers.vary))
 
 	const evilRead = await request(P_STATUS, { target: '/api/status', headers: { Origin: 'https://evil.example' } })
-	check('公网来源读 /api/status 不回 ACAO（浏览器侧读不到）', evilRead.headers['access-control-allow-origin'] === undefined && evilRead.status === 200, `acaO=${String(evilRead.headers['access-control-allow-origin'])} status=${evilRead.status}`)
+	check('公网来源读 /api/status → 403（不再靠"回了 200 但没 ACAO"兜）', evilRead.status === 403, `status=${evilRead.status}`)
+	const rebindRead = await request(P_STATUS, { target: '/api/status', headers: { Host: 'evil.example' } })
+	check('Host 非回环（DNS-rebinding）读 /api/status → 403', rebindRead.status === 403, `status=${rebindRead.status}`)
+	const rebindWrite = await request(P_STATUS, {
+		method: 'POST',
+		target: '/api/command',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${STRONG}`, Host: 'evil.example' },
+		body: JSON.stringify({ command: 'ping', params: {} }),
+	})
+	check('Host 非回环 + 正确 token 的 POST /api/command → 403（token 不解决"页面凭什么发"）', rebindWrite.status === 403, `status=${rebindWrite.status}`)
+	check('被 Host 校验拦下时日志点名了那个 Host', logs.some((line) => line.includes('http rejected: host evil.example')), 'logs')
 
 	console.log('\n2) 预检（OPTIONS）不再放行任何跨域写')
 	const preflight = await request(P_STATUS, {
@@ -134,7 +186,7 @@ try {
 			'Access-Control-Request-Headers': 'content-type',
 		},
 	})
-	check('OPTIONS 返回 204', preflight.status === 204, `status=${preflight.status}`)
+	check('OPTIONS 返回 403（来源既不是回环也不是扩展，就连预检都不应答）', preflight.status === 403, `status=${preflight.status}`)
 	check('OPTIONS 不回 ACAO', preflight.headers['access-control-allow-origin'] === undefined, String(preflight.headers['access-control-allow-origin']))
 	check('OPTIONS 不回 Allow-Methods', preflight.headers['access-control-allow-methods'] === undefined, String(preflight.headers['access-control-allow-methods']))
 
@@ -176,6 +228,52 @@ try {
 	check('网页来源 https://evil.example → 403', (await wsUpgrade(P_STATUS, { token: STRONG, origin: 'https://evil.example' })).includes('403'))
 	check('Host 非回环（DNS-rebinding）→ 403', (await wsUpgrade(P_STATUS, { token: STRONG, host: 'evil.example' })).includes('403'))
 	check('token 错 → 401', (await wsUpgrade(P_STATUS, { token: 'nope' })).includes('401'))
+
+	console.log('\n6b) 换链路之后，旧 socket 自己的 data / error 不许拆掉新链路（审计第 3 条）')
+	// 两段各自开一对链路：一段只测 data，一段只测 error —— 别让前一段的副作用替后一段作证。
+	{
+		const old = await wsOpen(P_STATUS, { token: STRONG })
+		const fresh = await wsOpen(P_STATUS, { token: STRONG })
+		check('两条链路都握手成功（第二条替换第一条）', old.line.includes('101') && fresh.line.includes('101'), `${old.line} / ${fresh.line}`)
+		const up = JSON.parse((await request(P_STATUS, { target: '/api/status' })).body)
+		check('状态面确认扩展已连上（阳性对照）', up.extensionConnected === true, `extensionConnected=${String(up.extensionConnected)}`)
+		// 未掩码的数据帧（FIN+text、len=3、无 mask、载荷 ABC）＝协议错误。
+		// 以前旧 socket 的 data 不认身份，这一帧会让桥 closeClientSocket(1002)，把**新**链路拆掉。
+		try { old.socket.write(Buffer.from([0x81, 0x03, 0x41, 0x42, 0x43])) } catch {}
+		await delay(200)
+		const after = JSON.parse((await request(P_STATUS, { target: '/api/status' })).body)
+		check('旧链路发来坏帧后，新链路仍连着', after.extensionConnected === true, `extensionConnected=${String(after.extensionConnected)}`)
+		fresh.socket.destroy()
+		await delay(150)
+	}
+	{
+		const old = await wsOpen(P_STATUS, { token: STRONG })
+		const fresh = await wsOpen(P_STATUS, { token: STRONG })
+		check('（第二对）两条链路都握手成功', old.line.includes('101') && fresh.line.includes('101'), `${old.line} / ${fresh.line}`)
+		// 旧链路上制造一次 socket error（RST）：以前它走 closeClientSocket(1011)，同样拆掉新链路。
+		try { old.socket.resetAndDestroy() } catch {}
+		await delay(250)
+		const up = JSON.parse((await request(P_STATUS, { target: '/api/status' })).body)
+		check('旧链路报错（ECONNRESET）后，新链路仍连着', up.extensionConnected === true, `extensionConnected=${String(up.extensionConnected)}`)
+		// 阳性对照：新链路自己断开时，状态面必须如实变 false（证明上面不是"永远 true"的假绿）。
+		fresh.socket.destroy()
+		await delay(200)
+		const after = JSON.parse((await request(P_STATUS, { target: '/api/status' })).body)
+		check('新链路自己断开 → extensionConnected:false（阳性对照）', after.extensionConnected === false, `extensionConnected=${String(after.extensionConnected)}`)
+	}
+
+	console.log('\n6c) 链路掉了要在途命令当场失败，而不是熬到超时（同一处自查发现）')
+	const thirdLink = await wsOpen(P_STATUS, { token: STRONG })
+	const pendingRead = request(P_STATUS, {
+		method: 'POST',
+		target: '/api/command',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${STRONG}` },
+		body: JSON.stringify({ command: 'ping', params: {} }),
+	})
+	await delay(120) // 让在途命令真的发出去（否则可能先断线再发命令，测的就不是这条路径）
+	thirdLink.socket.destroy()
+	const pendingRes = await pendingRead
+	check('在途命令立即 502 且点名「断开」，不是 504 超时', pendingRes.status === 502 && /disconnect/i.test(pendingRes.body), `status=${pendingRes.status} body=${pendingRes.body.slice(0, 90)}`)
 
 	console.log('\n7) guardCommand（X18）在 HTTP 命令面上仍生效')
 	const blocked = await request(P_GUARD, { method: 'POST', target: '/api/command', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${STRONG}` }, body: JSON.stringify({ command: 'eval', params: { expression: '1' } }) })
