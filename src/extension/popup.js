@@ -14,6 +14,39 @@ const STATE_SUB = {
 	idle: () => '在 dsh 设置 → 插件 里开启浏览器控制',
 };
 
+/** 表单里那一份「待保存」的值（端口非法时退回 9777，和其它两处保持同一个口径）。 */
+function readForm() {
+	return {
+		port: Number($('port').value) || 9777,
+		token: $('token').value.trim(),
+		autoConnect: $('auto').checked,
+		dialogPolicy: $('dlg').value,
+	};
+}
+
+/** 两份配置在「这几个表单字段」上是否一致。 */
+function sameConfig(a, b) {
+	if (!a || !b) return false;
+	return Number(a.port) === Number(b.port)
+		&& String(a.token ?? '') === String(b.token ?? '')
+		&& Boolean(a.autoConnect) === Boolean(b.autoConnect)
+		&& String(a.dialogPolicy ?? '') === String(b.dialogPolicy ?? '');
+}
+
+/** 把一份配置写进表单（**只在下面两个时机调用**，见 render 里的注释）。 */
+function applyForm(value) {
+	if (!value) return;
+	$('port').value = value.port ?? 9777;
+	$('token').value = value.token ?? '';
+	$('auto').checked = Boolean(value.autoConnect);
+	$('dlg').value = value.dialogPolicy ?? 'accept';
+}
+
+const panelOpen = () => $('advanced').classList.contains('open');
+
+/** 上一次「重新扫描本地桥」是否用了表单里尚未保存的值（用于在扫描结论后加一句说明）。 */
+let lastTestUsedForm = false;
+
 function render(status) {
 	const ring = $('ring');
 	ring.className = `ring ${status.state}`;
@@ -26,11 +59,28 @@ function render(status) {
 	if (status.discoveredPort) connBits.push(`实际端口 ${status.discoveredPort}`);
 	else if (status.state !== 'open') connBits.push('未命中本地桥');
 	$('conn').textContent = connBits.join(' · ');
-	$('scan').textContent = status.lastProbeNote ?? '（尚未扫描）';
-	if (document.activeElement !== $('port')) $('port').value = status.cfg.port ?? 9777;
-	if (document.activeElement !== $('token')) $('token').value = status.cfg.token;
-	$('auto').checked = Boolean(status.cfg.autoConnect);
-	if (document.activeElement !== $('dlg')) $('dlg').value = status.cfg.dialogPolicy ?? 'accept';
+	const probeNote = status.lastProbeNote ?? '（尚未扫描）';
+	$('scan').textContent = lastTestUsedForm ? `${probeNote}（这次用的是表单里填的值，尚未保存）` : probeNote;
+
+	// ── 表单回填规则（2026-11-01 主人指出后改）───────────────────────────────
+	// 以前：每 1.5s 刷新一次，把除「当前聚焦那个」以外的字段全部按生效值回填 ⇒
+	//   「先改 token、再改端口、最后一起保存」时，先改的那个被静默刷回旧值；
+	//   「重新扫描本地桥」被当测试项用时更是如此 —— 测完看着值还在，其实早被回填过。
+	// 现在：**只在面板收起时回填**（收起 = 以已保存的值为准，未保存的填写被丢弃）；
+	//   面板开着时，只有「表单内容与已保存值一致」才跟随刷新（那时没什么可丢的）。
+	//   注意这里比的是**持久化的值**（cfgPersisted，重启后还在的那份），不是运行中的
+	//   cfg —— 用表单值做过测试后，两者会短暂不同。
+	const persisted = status.cfgPersisted ?? status.cfg ?? null;
+	const effective = status.cfg ?? persisted;
+	const pending = !panelOpen() ? false : !sameConfig(readForm(), persisted);
+	if (!panelOpen()) {
+		applyForm(persisted);
+		lastTestUsedForm = false;
+	} else if (!pending) {
+		applyForm(effective);
+	}
+	$('save').textContent = pending ? '保存并重连 · 有改动' : '保存并重连';
+
 	const connected = status.state === 'open';
 	const btn = $('reconnect');
 	btn.textContent = connected ? '断开连接' : (status.state === 'connecting' ? '连接中…' : '立即连接');
@@ -62,8 +112,8 @@ async function refresh() {
 // 再要一次"点击确认"只是给误触加了一层，并不增加真实的安全性；解锁同样一次点击（救人优先）。
 $('lockbtn').addEventListener('click', async () => {
 	const locked = $('lockbtn').classList.contains('locked')
-	await chrome.runtime.sendMessage({ type: 'lockSet', locked: !locked })
-	setTimeout(refresh, 200)
+	await chrome.runtime.sendMessage({ type: 'lockSet', locked: !locked });
+	setTimeout(refresh, 200);
 });
 
 $('reconnect').addEventListener('click', async () => {
@@ -78,25 +128,28 @@ $('openStatus').addEventListener('click', async () => {
 	window.close();
 });
 
-$('gear').addEventListener('click', () => {
+// 展开/收起：两个方向都回到「已保存的值」——
+//   展开 = 从已保存值开始改；收起 = 丢弃没保存的填写（想留下就点保存）。
+$('gear').addEventListener('click', async () => {
 	const panel = $('advanced');
 	const opening = !panel.classList.contains('open');
 	panel.classList.toggle('open', opening);
 	$('gear').textContent = opening ? '高级 ▴' : '高级 ▾';
+	lastTestUsedForm = false;
+	await refresh();
 });
 
+// 「重新扫描本地桥」是**测试项**：用表单里当前填的值去试连，不落盘。
+// 测通了再点「保存并重连」才是持久化 —— 这两个动作分开，谁也不会替谁做决定。
 $('rescan').addEventListener('click', async () => {
-	await chrome.runtime.sendMessage({ type: 'rescan' });
+	lastTestUsedForm = true;
+	await chrome.runtime.sendMessage({ type: 'rescan', tryConfig: readForm() });
 	setTimeout(refresh, 1200);
 });
 
 $('save').addEventListener('click', async () => {
-	await chrome.storage.local.set({
-		port: Number($('port').value) || 9777,
-		token: $('token').value.trim(),
-		autoConnect: $('auto').checked,
-		dialogPolicy: $('dlg').value,
-	});
+	await chrome.storage.local.set(readForm());
+	lastTestUsedForm = false;
 	await chrome.runtime.sendMessage({ type: 'reconnect' });
 	setTimeout(refresh, 1200);
 });

@@ -1856,3 +1856,18 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 
 **教训**：`__` 前缀的临时脚本会被自动清掉（`src\__mutate.mjs`、`src\__dbg-link*.mjs` 跑完就没了）。临时脚本用普通名字、自己删；也别把要留的东西放进 `__` 开头的目录。
 
+### popup 表单：只在「高级」收起时回填（2026-11-01 主人口径，扩展 1.0.54）
+
+主人原话：「把『高级』收起后才自动回填，因为有些时候可能填完改其他设置最后全部改完再点保存；『重新扫描本地桥』也通常被当作『测试项』，测试后再保存。」
+
+改了三处（`extension/popup.js` + `extension/background.js`）：
+1. **回填规则**：面板收起 → 回填**已保存**的值（`cfgPersisted`，重启后还在的那份）；面板展开 → 只有「表单内容与已保存值一致」才跟随刷新。以前是每 1.5s 把除当前聚焦以外的字段全部刷回生效值 ⇒「改 token → 改端口 → 一起保存」时先改的被静默刷回。
+2. **「重新扫描本地桥」= 测试项**：带上表单里当前的值（`{type:'rescan', tryConfig}`），后台只改**内存里的 cfg**、不写 storage；测通了再点「保存并重连」才落盘。以前它读的是已保存配置 —— 测的是旧 token，于是「测试通过、保存后连不上」（本轮真踩过）。
+3. **`bridgeStatus` 多返回 `cfgPersisted`**（已落盘那份）：popup 靠它算「有没有未保存改动」，按钮在有改动时显示「保存并重连 · 有改动」；扫描结论旁会注明「这次用的是表单里填的值，尚未保存」。收起面板 = 以已保存值为准（丢弃未保存的填写）。
+
+台子：新增 `tests/popup-no-clobber.mjs`（19 项，node:vm + 假 DOM 直接驱动真 `popup.js`）；`extension-hold` 增 4 项（`fireMessage` 把消息喂进真 `background.js`，断言 tryConfig 生效且不落盘、`cfgPersisted` 与 `cfg` 分开给）。`run-all` **17/17**，**变异 5/5**（回填改成无条件 / 拿掉 tryConfig / 保存写成固定值 / 后台忽略 tryConfig / 去掉 cfgPersisted —— 每条都变红）。
+
+顺带补了台子的一个假件缺口：`makeArea().get()` 原来只认字符串键，而后台用 `get(Object.keys(DEFAULT_CONFIG))` 读数组键 ⇒ 假件静默返回 `{}`，断言会在错误基线上通过。现在 string / array / null 三种都认。
+
+部署：扩展 **1.0.54** 已拷到 `D:\edge-extensions\dsh-browser-extension`（4 个文件哈希逐一相等），需要 `edge://extensions` 重载；插件/core 这轮没动，不用重启 `dsh web`。
+

@@ -34,6 +34,27 @@ const PORT_SCAN_COUNT = 10;
 /** 单个候选端口的探测超时；10 个候选最坏 ~4s，之后交给退避重连。 */
 const PROBE_TIMEOUT_MS = 400;
 
+/**
+ * 把 popup 表单里的一份「待测试」配置收成可用值；不合法就返回 null（退回已保存的配置）。
+ *
+ * 2026-11-01 主人指出：「重新扫描本地桥」他当**测试项**用 —— 填完 token 先点它试，再点保存。
+ * 那就必须用**输入框里的值**去试，否则测的是旧值：测试通过、保存后反而连不上（本轮真踩过）。
+ * 这个函数只在内存里生效，**不写 chrome.storage** —— 落盘是「保存并重连」那一步的事。
+ * @returns {{port?:number, token?:string, autoConnect?:boolean, dialogPolicy?:string}|null}
+ */
+function sanitizeTryConfig(raw) {
+	if (raw === null || typeof raw !== 'object') return null;
+	const out = {};
+	const port = Number(raw.port);
+	if (Number.isInteger(port) && port >= 1024 && port <= 65535) out.port = port;
+	if (typeof raw.token === 'string') out.token = raw.token.trim();
+	if (typeof raw.autoConnect === 'boolean') out.autoConnect = raw.autoConnect;
+	if (raw.dialogPolicy === 'accept' || raw.dialogPolicy === 'dismiss' || raw.dialogPolicy === 'manual') {
+		out.dialogPolicy = raw.dialogPolicy;
+	}
+	return Object.keys(out).length > 0 ? out : null;
+}
+
 /** Stored config shape (version 4): {port, token, autoConnect, lastKnownPort, dialogPolicy}. */
 const DEFAULT_CONFIG = Object.freeze({
 	port: DEFAULT_PORT,
@@ -3381,16 +3402,28 @@ async function cmdDialogPolicy(params) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 	if (msg?.type === 'bridgeStatus') {
-		void ensureHardLock().then(() => sendResponse({
-			state: wsState,
-			cfg,
-			helloInfo,
-			lastError,
-			locked: hardLocked === true,
-			discoveredPort,
-			lastProbeNote,
-			scanRange: `${PORT_SCAN_BASE}–${PORT_SCAN_BASE + PORT_SCAN_COUNT - 1}`,
-		}));
+		void ensureHardLock().then(async () => {
+			// `cfgPersisted` = 已落盘的那份（重启后还在的）。popup 靠它两件事：
+			//   ① 面板收起时回填它（而不是运行中的 cfg —— 用表单值做过测试后两者会不同）；
+			//   ② 拿表单和它比，判断「有没有未保存的改动」。
+			// 读失败就退回运行中的 cfg，状态窗不能因为读存储失败而空白。
+			let persisted = cfg;
+			try {
+				const stored = await chrome.storage.local.get(Object.keys(DEFAULT_CONFIG));
+				persisted = { ...DEFAULT_CONFIG, ...stored };
+			} catch { /* 读不出来就用运行中的值 */ }
+			sendResponse({
+				state: wsState,
+				cfg,
+				cfgPersisted: persisted,
+				helloInfo,
+				lastError,
+				locked: hardLocked === true,
+				discoveredPort,
+				lastProbeNote,
+				scanRange: `${PORT_SCAN_BASE}–${PORT_SCAN_BASE + PORT_SCAN_COUNT - 1}`,
+			});
+		});
 		return true;
 	}
 	if (msg?.type === 'lockSet') {
@@ -3406,12 +3439,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 	}
 	if (msg?.type === 'rescan') {
 		// 用户改了端口 / 换了桥之后的“立刻重新扫描”：清掉本次命中结果再走一遍探测。
+		// 测试项（2026-11-01 主人口径）：带 tryConfig 时用**表单里填的值**试连，只改内存里的
+		// cfg、**不落盘** —— 落盘是「保存并重连」那一步。不带就退回已保存的配置。
 		manualDisconnect = false;
 		backoffAttempt = 0;
 		discoveredPort = null;
 		lastProbeNote = null;
+		const tried = sanitizeTryConfig(msg.tryConfig);
+		if (tried !== null) {
+			cfg = { ...cfg, ...tried };
+			if (tried.dialogPolicy !== undefined) applyDialogPolicy(tried.dialogPolicy);
+		}
 		disconnectNow();
-		loadConfig().then(() => { connect(); sendResponse({ started: true }); });
+		const start = () => { connect(); sendResponse({ started: true, usedFormValues: tried !== null }); };
+		if (tried !== null) start();
+		else loadConfig().then(start);
 		return true;
 	}
 	if (msg?.type === 'disconnect') {

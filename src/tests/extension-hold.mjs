@@ -40,9 +40,15 @@ const eq = (name, actual, expected) => ok(name, actual === expected, `期望 ${J
 function makeArea() {
 	const m = new Map()
 	return {
-		get: async (key) => (key === undefined || key === null
-			? Object.fromEntries(m)
-			: (typeof key === 'string' ? (m.has(key) ? { [key]: m.get(key) } : {}) : {})),
+		// 真 chrome 支持 get(string | string[] | null)。这里三种都认 —— 后台用
+		// `get(Object.keys(DEFAULT_CONFIG))` 读「已落盘的那份配置」，只支持字符串的假件
+		// 会静默返回 {}，让断言在错误的基线上通过。
+		get: async (key) => {
+			if (key === undefined || key === null) return Object.fromEntries(m)
+			if (Array.isArray(key)) return Object.fromEntries(key.filter((k) => m.has(k)).map((k) => [k, m.get(k)]))
+			if (typeof key === 'string') return m.has(key) ? { [key]: m.get(key) } : {}
+			return Object.fromEntries(Object.keys(key).filter((k) => m.has(k)).map((k) => [k, m.get(k)]))
+		},
 		set: async (obj) => { for (const [k, v] of Object.entries(obj || {})) m.set(k, v) },
 		remove: async (key) => { (Array.isArray(key) ? key : [key]).forEach((k) => m.delete(k)) },
 		_has: (k) => m.has(k),
@@ -63,11 +69,13 @@ function makeChrome(onSend) {
 		lastError: null,
 		getManifest: () => ({ version: '1.0.40', manifest_version: 3 }),
 		getURL: (p) => `chrome-extension://testextension/${p}`,
-		onMessage: { addListener: noop },
+		// popup 的消息入口：后面 testPopupRescanUsesFormValues 要直接喂消息进来。
+		onMessage: { addListener: (fn) => { messageListeners.push(fn) } },
 		onInstalled: { addListener: noop },
 		onStartup: { addListener: noop },
 		sendMessage: async () => ({}),
 	}
+	const messageListeners = []
 	/**
 	 * 扩展用的是 **chrome.* 的 callback 形态**（`dbgSend` 里 `sendCommand(target, method, params, cb)`），
 	 * 只返回 Promise 的假件会让 `await` 永远挂住 —— 这里两种形态都支持。
@@ -176,6 +184,16 @@ function makeChrome(onSend) {
 		/** 模拟 Chrome 主动 detach（用户开了 DevTools、页面变成 chrome-extension://、导航竞态）。 */
 		fireDetach: (tabId, reason = 'canceled_by_user') => { for (const fn of detachListeners) fn({ tabId }, reason) },
 		fireCdp: (tabId, method, params) => { for (const fn of eventListeners) fn({ tabId }, method, params) },
+		/** 喂一条 popup 消息进来，收回 sendResponse 的载荷（模拟 chrome.runtime 的消息往返）。 */
+		fireMessage: (msg) => new Promise((resolve) => {
+			let pending = false
+			for (const fn of messageListeners) {
+				const keepOpen = fn(msg, {}, resolve)
+				// 监听器回 true = 稍后会异步 sendResponse，别再自己解决这个 Promise。
+				if (keepOpen === true) { pending = true; break }
+			}
+			if (!pending) resolve(undefined)
+		}),
 	}
 }
 
@@ -1087,6 +1105,44 @@ async function testNetworkStatusFilter() {
 	eq("大写 '2XX' 也认", (await grab('2XX')).total, 1)
 }
 
+/* ──────────── 断言：popup 的 rescan = 测试项（用表单值，不落盘） ──────────── */
+
+/**
+ * 2026-11-01 主人口径：「重新扫描本地桥」他当**测试项**用 —— 填完 token 先点它试，再点保存。
+ * 于是两件事必须同时成立：
+ *   ① 试连用的是**表单里填的值**（不是存储里的旧值，否则"测试通过、保存后连不上"）；
+ *   ② 测试**不写存储**，落盘只由「保存并重连」那一步做；
+ *   ③ 状态面要把「运行中的 cfg」和「已落盘的 cfgPersisted」分开给，popup 才能算出
+ *      「表单里有没有未保存的改动」、并决定收起面板时回填哪份。
+ */
+async function testPopupRescanUsesFormValues() {
+	const { ctx, fake } = await loadWorker(() => ({ result: { value: '' } }))
+	const cfgOf = () => JSON.parse(vm.runInContext('JSON.stringify(cfg)', ctx))
+	await fake.chrome.storage.local.set({ port: 9777, token: 'saved-token', autoConnect: true, dialogPolicy: 'accept' })
+	await ctx.loadConfig()
+	eq('载入后 cfg 用的是已保存的 token', cfgOf().token, 'saved-token')
+
+	const status = await fake.fireMessage({ type: 'bridgeStatus' })
+	eq('bridgeStatus 带回 cfgPersisted', status?.cfgPersisted?.token, 'saved-token')
+
+	const rescan = await fake.fireMessage({
+		type: 'rescan',
+		tryConfig: { port: 9777, token: 'form-token', autoConnect: true, dialogPolicy: 'accept' },
+	})
+	eq('rescan 回执说明用了表单里的值', rescan?.usedFormValues, true)
+	eq('运行中的 cfg 变成表单里的 token', cfgOf().token, 'form-token')
+	eq('测试不写存储（已保存的仍是旧 token）', fake.chrome.storage.local._map.get('token'), 'saved-token')
+
+	const after = await fake.fireMessage({ type: 'bridgeStatus' })
+	eq('状态面：运行中 = 表单值', after?.cfg?.token, 'form-token')
+	eq('状态面：已落盘 = 旧值（popup 据此显示「有改动」）', after?.cfgPersisted?.token, 'saved-token')
+
+	const plain = await fake.fireMessage({ type: 'rescan' })
+	eq('不带 tryConfig 的 rescan 回执说明没用表单值', plain?.usedFormValues, false)
+	await new Promise((resolve) => setTimeout(resolve, 5))
+	eq('不带 tryConfig 时退回已保存的配置', cfgOf().token, 'saved-token')
+}
+
 /* ────────────────────────── 跑 ────────────────────────── */
 
 console.log('extension-hold: 接管浮层的三处真机契约')
@@ -1104,6 +1160,7 @@ await testHoldOnRefusedWhileAborted()
 await testClickBypass()
 await testHeldByUserCode()
 await testNetworkStatusFilter()
+await testPopupRescanUsesFormValues()
 
 const failed = results.filter((r) => !r.pass)
 console.log(`  ${results.length - failed.length}/${results.length} 通过`)
