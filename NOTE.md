@@ -1917,3 +1917,28 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 - L4 / L5 / L6（hold 的 `focused` 如实回填、Esc 长按定时器、补层串行锁）：要真机 DOM 才验得动，本轮只改了代码。
 
 部署：插件/core 是 self-plugins 里的**实体拷贝** ⇒ 拷完要重启 `dsh web` 才生效；扩展在 `D:\edge-extensions\dsh-browser-extension`，改完要在 `edge://extensions` 重载（版本应变 1.0.55）。
+### 线上验收（2026-11-01 01:19~01:23，重启 dsh web + 重载扩展后实测）
+
+桥自报：`pluginVersion=0.11.52`、`hello.version=1.0.55`、`extensionConnected=true`、`insecureToken=false`、edge 156。
+
+**console 两处（真机）**：页面里打 log/warn/error 三条 →
+- 显示时间是 **01:19:31**，与 `new Date(Date.now()).toLocaleTimeString()` 一致（改之前同一读数会偏，×1000 的溢出）；
+- `levels:['warn']` 回 **1 of 1**，命中的正是 `[warning]`（改之前 0 条）；
+- `levels:['debug']` 回「采到了 3 条，但全被过滤条件排除了」。
+
+**超时归类（真机）**：`browser_evaluate` 里 `await sleep(3000)`、只给 400ms 预算 ⇒
+`[command_timeout] eval timeout after 400ms — effectState=unknown`（改之前是 `[command_failed]`）。
+
+**同 URL 刷新（真机，2026-11-01 01:2x）**——判据：给页面设一个「本文件的标记」+ 读 `performance.timeOrigin`（两者都是**每个文档**的，换文档必变）：
+
+| 轮次 | 操作 | 口径 | 返回耗时 | 返回后标记 | timeOrigin |
+| --- | --- | --- | --- | --- | --- |
+| 起点 | 设 `window.__probeDoc='D1-marker'` | — | — | 在 | 1793467291644 |
+| 1 | 导航到**同一 URL** | commit | 140ms | **不在** | **1793467301301**（新） |
+| 2 | 再导航到同一 URL | domcontentloaded | 137ms | **不在** | **1793467314099**（新） |
+| 对照 | 同一 URL **只加 `#probe`**（只改 hash，不产生新文档） | commit | 5ms | **还在** | **不变** |
+
+对照那一行是关键：它证明这个读数**能看见"旧文档还在"**（返回 5ms、标记仍在、timeOrigin 没变），所以前两轮的"标记不在 + timeOrigin 变新"不是空话。
+**这条线上测量能证明的是**"导航返回时已经在新文档上"；"返回那一刻正好是 `frameNavigated`"这种更细的口径由台子上的 CDP 事件断言钉住（`extension-hold` 的 ④c/④d）。
+
+harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示在故意造超时时会出现，属正常，原始文案仍保留在错误里。
