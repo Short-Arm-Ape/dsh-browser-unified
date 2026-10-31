@@ -1782,3 +1782,30 @@ render-settings-pages 55、tool-render 111）。仓库与已部署件逐字节�
 
 部署：扩展已到 `D:\edge-extensions\dsh-browser-extension`（1.0.50，待重载）；插件侧无改动（`reused` 走透传）。
 
+### 全量只读自查：审计结论与待办坐标（2026-10-31 23:3x）
+
+三路并行只读审计（各自的报告已在会话里，这里是可执行的落点）：扩展 `src/extension/background.js`、插件宿主侧 6 个文件、core+client。共 **39 条**：high 6（1 suspected）、medium 14、low 19。
+
+**已修（提交 `de6d4c2` + `df85a4c`；发布位：扩展 `D:\edge-extensions\dsh-browser-extension` = 1.0.52，profile `self-plugins` = 插件 0.11.50 / core 0.1.13）**
+- 扩展：`suppressAutoHoldIfTaken` 只认页内镜像 `dismissedBy`（导航销毁浮层不再被当成"用户接管"）
+- 扩展：中止闸从 `cmdContent`（读）移到 `cmdInput`
+- 插件：`content` 移出 `SCRIPT_COMMANDS`、进 `READ_ONLY_ALLOWED`（只读档下 browser_read 可用）
+- 插件：`browser_permissions` 用 `userDataDir + profileDir`
+- core：在途取消 → 新码 `cancelled_in_flight`，写操作 `effectState=unknown`
+- client：`BrowserSectionBody` 拆成「只订阅的壳 + 只渲染的体」（hook 顺序）
+- 更早：CDP 会话丢失透明重连（`clearAttachment`/`onDetach`/`withCDP` 一次重放）、`basePort` 漏传、`waitUntil:none` 措辞
+
+**台子**：`extension-hold` 108 项（H1/H2 有变异验证）、`client-hooks-order`（自带变异对照）、`render-settings-pages` 64、`tool-render` 120、`run-all` **14/14**。
+
+**待办（下次会话直接照坐标做，不必重新审计）**
+1. `core/src/bridge/server.ts` `handleHttp`（≈391-444）：**不校验 Host/Origin**，`/api/status` 免 token ⇒ DNS rebinding 可读策略快照；照 WS 面复用 `isLoopbackHost` / `isTrustedUpgradeOrigin`
+2. `plugin/src/index.ts` `guardHttpCommand`（≈1291-1311）：只读档/`allowScript` 只管工具面，`POST /api/command` 可绕过；开头复刻 `execute` 的两道判据
+3. `core/src/bridge/server.ts` socket `data`/`error`（≈630-648）：缺 `this.clientSocket !== socket` 守卫，旧连接出错会拆掉**新**连接并把在途命令判成 `link_lost`
+4. `plugin/src/unified-tools.ts` 写侧（≈544-548，读侧 ≈80-90）：`issues.json` 解析失败后写入会把整本登记簿覆盖成一条 → 改成 fail-closed（文件存在但读不出就拒写）
+5. `extension/background.js` `cmdNetworkLog`（≈1037-1052）：`status:'failed'/'pending'` 只写"包含自己"没写"排除其余"，返回全部请求
+
+其余 medium（按价值排序）：扩展 `previousUrl` 收了没用（541/1426，同 URL 刷新可能秒回旧文档）；扩展 `cmdWait` 的 timeoutMs 非硬上限（3196-3302，用 `withBudget`）；插件 `browser_dialog` 未过 `authorizeExistingTab`（2296-2304）且 `'dialog'` 不在 `HTTP_PAGE_COMMANDS`（≈480）；`wait`/`eval` 未按预算放大桥超时（2084/2851，60s 先到）；core `classify` 不认扩展的 `timeout after`（errors.ts ≈165，`/time[do]? ?out after/`）；autoLaunch* 热更新不生效（index ≈1052-1063 早退、1170 watchdog）；`learnFromHello` 失败时每 5s 全盘扫（724-749）。
+low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` 查表、onRemoved 少清 `lastViewport`/`lastReadSignature`/`navArrivals`/`wokenTabs`、hold `focused` 恒 true、Esc 长按定时器、`maybeAutoHold` 与 handler 的 TOCTOU、console/network 的"没在采集"与"0 条"分不开、console `timestamp*1000`（suspected，需真机采一次）、AX 快照不重建指纹表、状态页 `innerHTML` 未转义、`cleanupArtifacts` 无扩展名过滤、self-update `unknown` 被当无漂移、client `set()` 返回 false 被当成功、client `T.border` 不存在。
+
+**上游**：PR #20（timeoutMs）仍 open、无评审；② `feat/nav-wait-until`（远端 `7c77c9b`，基于 #20 的 `1c692f4`）已就绪，等 #20 合并后 rebase 开 PR（正文草稿 `D:\work\DSHWS\scratch\upstream-pr-waituntil-20261031\PR.md`）。git push 到 github.com 当时不通，用 Git Data API 建分支。
+
