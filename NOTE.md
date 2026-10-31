@@ -1911,6 +1911,7 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 - 状态页转义不能靠"GET 一下 HTML 看看"：rows 是**浏览器里 fetch 之后才填的**。必须把返回的 `<script>` 取出来，在 `node:vm` 里配假 document 跑一遍真 `refresh()`，拿它写进 `innerHTML` 那串去断言。
 
 **变异验证**：**12/12** 被抓住（每条都先断言"原文找得到"，否则"没变红"就成了假结论）。本轮**没有**判别力兜底的几处，如实记下来：
+- 收尾自查抓到一条自己的毛病：`learnRetryDelayMs` 的注释写「封顶 10 分钟」，指数却只封到 5（实际最多 8 分钟）。已改成封到 6，测试也从「480000 或 600000 都算过」收紧成「必须 600000」。
 - M4 的调用点：`pageBridgeTimeout` 只有纯函数测试，没人钉住"三个调用点都真的用了它"（删掉某个调用点的 timeoutMs 参数，套件不会红）。
 - L12 的 UNREACHABLE 文案、L13 的 `set()` 返回 false、L14 的 `T.border`、L2 的 `Object.hasOwn`：都是没写测试的改动。
 - L4 / L5 / L6（hold 的 `focused` 如实回填、Esc 长按定时器、补层串行锁）：要真机 DOM 才验得动，本轮只改了代码。

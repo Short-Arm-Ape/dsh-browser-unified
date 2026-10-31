@@ -220,7 +220,7 @@ export declare function autoLaunchFingerprint(config: {
  * 学不成时 `learnedExtensionId` 不会被写入，于是 5 秒一次的定时器会**每轮全盘重扫**所有
  * profile —— 一直连着一个学不到位置的扩展就是每 5 秒一次磁盘风暴（2026-10-31 审计）。
  * @param attempts - 这个扩展 id 已经失败过几次（0 = 第一次失败）。
- * @returns 下次允许重试前要等的毫秒数。
+ * @returns 下次允许重试前要等的毫秒数（15s 起，指数增长，第 6 次起封顶 10 分钟）。
  */
 export declare function learnRetryDelayMs(attempts: number): number;
 /**

@@ -150,8 +150,8 @@ console.log('\n[5] 自动拉起这批旋钮必须算进「要重算」的指纹�
 	// 「握手即学习」失败后的退避：指数增长 + 封顶，别每 5 秒扫一次盘
 	check('第一次失败等 15s', learnRetryDelayMs(0) === 15_000, learnRetryDelayMs(0))
 	check('第二次 30s', learnRetryDelayMs(1) === 30_000, learnRetryDelayMs(1))
-	const last = learnRetryDelayMs(10)
-	check('失败再多也封顶在 10 分钟', last === 600_000 || last === 480_000, String(last))
+	check('第 5 次 8 分钟', learnRetryDelayMs(5) === 480_000, learnRetryDelayMs(5))
+	check('第 6 次起真的封顶在 10 分钟（注释写 10 分钟就得是 10 分钟）', learnRetryDelayMs(6) === 600_000 && learnRetryDelayMs(99) === 600_000, `${learnRetryDelayMs(6)} / ${learnRetryDelayMs(99)}`)
 	check('退避是单调不减的', learnRetryDelayMs(2) >= learnRetryDelayMs(1) && learnRetryDelayMs(4) >= learnRetryDelayMs(3))
 }
 
