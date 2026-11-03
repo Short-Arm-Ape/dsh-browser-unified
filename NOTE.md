@@ -1942,3 +1942,28 @@ low：console `levels:['warn']` 与 CDP `warning` 对不上、`Object.hasOwn` �
 **这条线上测量能证明的是**"导航返回时已经在新文档上"；"返回那一刻正好是 `frameNavigated`"这种更细的口径由台子上的 CDP 事件断言钉住（`extension-hold` 的 ④c/④d）。
 
 harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示在故意造超时时会出现，属正常，原始文案仍保留在错误里。
+---
+
+## 2026-11-03：上游那两个 PR 的结局，以及补上的 #21
+
+查于 2026-11-03 22:2x（`api.github.com`，只读）。
+
+**结局**：#20（① `timeoutMs`）**已于 2026-11-03 20:26 合并**（`927f779`，我们两条 commit 原样进去，CI run `41635718914`）；② 由维护者自己实现（`911e828`，v1.4.0）——他在 20:58 动手，21:03 回帖说「PR 位一直空着」。我们手上 `feat/nav-wait-until`（`7c77c9b`，在 fork 上，叠在 #20 的 `1c692f4` 之上）与写好的 PR 正文（`scratch/upstream-pr-waituntil-20261031/PR.md`）**没有独有内容了**：四档、主框架 `frameNavigated`、`committed` 闸、`tabs.open` 共用等待器、about:blank 两步、`navigatedWithinDocument`、`wait:false→none`、封闭 schema 三字段、变异测试他都做了。
+
+**时间线要点**（不要再复述成「本该合成一个 PR」）：拆两单是他在 #19 定的（10-30 19:47「先发 ①，② rebase 在 ① 上」）；① 从他收到到合并用了 4 天；① 一合并到他动手写 ② 只有 32 分钟。教训是**队列礼仪输给了窗口速度**：② 应该以「① 的分支为 base」同时开出去，而不是等 ① 合并。
+
+**仍站得住的一条，已提 issue #21**：桥余量 `BRIDGE_MARGIN_MS = 2000`（`src/index.ts:47`）只够覆盖等待预算，不够覆盖等待**之后**的三个后置探针（`background.js:1621` 落地地址 2s / `:1626` 错误页正文 2s / `:922` readyState 2s）。最坏 `cmdNav` 要 `budget + 4000`（落 error 页 `+6000`），桥在 `budget + 2000` 就超时 ⇒ 模型拿到 `command_timeout`（effectState unknown）而不是准备好的 `loadPending + waitedMs`。
+
+在**他们自己的假件**上量到（判于 2026-11-03 22:3x）：
+
+| 剧本 | budget | 桥 ceiling | 实际返回 | 超出 |
+|---|---|---|---|---|
+| 对照：探针正常 commit 800 | 800 | 2800 | 813ms | — |
+| commit 800 探针卡住 | 800 | 2800 | 4850ms | +2050 |
+| commit 默认 4000 探针卡住 | 4000 | 6000 | 8089ms | +2089 |
+| load 默认 15000 探针卡住 | 15000 | 17000 | 19292ms | +2292 |
+| tabs.open commit 800 探针卡住 | 800 | 2800 | 2825ms | +25（边界） |
+
+复现脚本在 fork 分支 `repro/nav-headroom`（`fc449e2`，基于上游 main `8c24589`）：`verify/repro_nav_headroom.mjs`，跑 `node verify/repro_nav_headroom.mjs`。**未接进 `npm run verify`**，也**没真机跑**（要的是「探针卡住」状态，假件的 `hang` 就是为它写的）。issue：<https://github.com/angelky7/dsh-browser-control/issues/21>，正文原文在 `scratch/upstream-reply-20261103/issue-body.md`。
+
+**不做的事**：#20/#19 不评论、不道谢（上游已了结）；`feat/nav-wait-until` 保留在 fork 当参考，不删也不提 PR。
