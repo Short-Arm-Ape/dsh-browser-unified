@@ -1967,3 +1967,44 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
 复现脚本在 fork 分支 `repro/nav-headroom`（`fc449e2`，基于上游 main `8c24589`）：`verify/repro_nav_headroom.mjs`，跑 `node verify/repro_nav_headroom.mjs`。**未接进 `npm run verify`**，也**没真机跑**（要的是「探针卡住」状态，假件的 `hang` 就是为它写的）。issue：<https://github.com/angelky7/dsh-browser-control/issues/21>，正文原文在 `scratch/upstream-reply-20261103/issue-body.md`。
 
 **不做的事**：#20/#19 不评论、不道谢（上游已了结）；`feat/nav-wait-until` 保留在 fork 当参考，不删也不提 PR。
+
+---
+
+## 2026-11-10：真浏览器台子（rig）接回来，Windows + Linux 一条入口
+
+改与跑于 2026-11-10 20:1x–20:3x（本机 Edge 157 / headless，node v26.13.0；WSL 侧 node v22）。
+
+**为什么动它**：10-30 换边之后 rig 停摆——两个 `.ps1` 硬编码 `%TEMP%\__pr-d-rig`（不存在），三个 `.sh` 硬编码 `/home/wsluser/projects/...`（WSL 里已无此路径）。迁移后它**从没真跑过**，只做过静态检查。
+
+**改了什么**：
+
+- 新增 `rig/rig.mjs`：唯一实现，Windows/Linux 同一份。子命令 `build|stub|up|run|status|down|smoke|matrix|probe`；工作目录默认 `<tmp>/dsh-rig`（`RIG_WORK` 可覆盖），**产物不进源码树**。
+- `rig/rig.sh`（POSIX）、`rig/rig.ps1`（Windows）两个薄壳；`mk-ext.sh`/`mk-ext-unified.sh`/`deploy.sh`/`probe.sh`/`teardown.sh` **调用形状不变**，内部转调 `rig.mjs`。
+- 删掉 `__rig-launch-run.ps1`、`__rig-teardown.ps1`（被取代，且路径写死）。
+- 新增 `rig/probe-scenario.mjs`（旧 `probe.sh` 的可移植版）、`rig/README.md`（两个平台的跑法、参数、产物、未覆盖项）。
+- 修两个只在 Windows 上才炸的写法：`os.tmpdir()` 给 8.3 短路径（`LOCALU~1`）→ 用 `homedir` 推长路径；`new URL(...).pathname` 给 `/D:/...` 前导斜杠 → 一律走 `fileURLToPath`（matrix / close-many-* 三处）。
+- 修两个**台子自身的**缺陷：① 收尾时按工作目录字符串 `pgrep` 会把调用方的 shell 当残留杀掉（现在按 `--user-data-dir=` 锚点、锚点经环境变量传，避免自己匹配自己）；② `up` 失败时会把自己刚起的 stub 留在端口上（现在会收掉）。
+
+**实测**（真机，不是假件）：
+
+| 场景 | 结果 |
+|---|---|
+| `run --scenario smoke` | 6/6 通过（tabs.list / nav /fast / ground truth / nav /slow?ms=1500 / tabs.open / tabs.close），收尾端口释放 |
+| `run --scenario probe` | 真机 ground truth：nav 到 /fast 回 `readyState=complete` 且 `location.href` 与回执一致；tabs.open 后分组落 `DSH` 蓝组 |
+| `run --scenario matrix` | 9 个剧本全跑通，证据落 `rig/evidence-matrix-20261110.json`（12:25:05–12:28:46 UTC） |
+
+**矩阵里量到的那个数（真机，正是 #21 的形状）**：
+
+| 剧本 | 桥 ceiling（budget+2000） | 实际返回 | 超出 |
+|---|---|---|---|
+| `nav-hang`（服务器接了不回，卡在提交前） | 15000+2000=17000 | **17540ms** | **+540** |
+| `nav-blackhole-ip`（不可路由地址，TCP 黑洞） | 17000 | **17597ms** | **+597** |
+| `open-hang` / `open-blackhole-ip` | 17000 | 15114 / 15143 | 未超（tabs.open 只有一个后置探针） |
+| `nav-local-slow` / `open-local-slow` / `nav-background-tab-slow` | — | 3.1s 级 | 正常 |
+| `nav-timeout-40s-page` | 17000 | 15098 | 未超 |
+
+这跟上一条记的、在上游假件台子上量的 `+525…+621ms` 对得上（我们这份的探针是**一个** 2500ms 的合并调用，桥余量 2000 ⇒ 理论超出 500ms）。**结论：0.11 线也有 #21 那个越界，真机确认量级约 +0.5s。**
+
+**Linux 侧到哪一步**：`bash -n` 全过；WSL 里 `build` / `status` / `down` 实跑通过；`up` 干净报「没找到浏览器」（WSL 没装 Chromium/Chrome/Edge），**端到端未测**——装上浏览器后同一条命令即可（平台差异只剩找浏览器、杀进程树两处）。
+
+**跑法不要在本文找**：`rig/README.md` 是唯一出处（一条命令 `node rig/rig.mjs run --tag <t> --scenario smoke|probe|matrix`）。

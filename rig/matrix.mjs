@@ -12,9 +12,11 @@
  * usage: node matrix.mjs <label>            (writes evidence-<label>.json)
  */
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const CTL = 'http://127.0.0.1:9781/ctl/cmd'
-const BASE = 'http://localhost:9781'
+const PORT = Number(process.env.RIG_PORT || 9781)
+const CTL = `http://127.0.0.1:${PORT}/ctl/cmd`
+const BASE = `http://localhost:${PORT}`
 const LABEL = process.argv[2] || 'run'
 const TRUTH_EXPR = 'JSON.stringify({href: location.href, ready: document.readyState, title: document.title})'
 
@@ -140,5 +142,8 @@ for (const s of scenarios) {
 
 await closeExtras()
 out.finishedAt = new Date().toISOString()
-fs.writeFileSync(new URL(`./evidence-${LABEL}.json`, import.meta.url).pathname, JSON.stringify(out, null, 2))
-console.log(`\nwrote evidence-${LABEL}.json`)
+// `.pathname` 在 Windows 上是 `/D:/...`（带前导斜杠），直接给 fs 会变成 `D:\D:\...`；
+// 必须走 fileURLToPath。
+const outPath = fileURLToPath(new URL(`./evidence-${LABEL}.json`, import.meta.url))
+fs.writeFileSync(outPath, JSON.stringify(out, null, 2))
+console.log(`\nwrote ${outPath}`)

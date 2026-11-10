@@ -10,10 +10,11 @@
  *
  * 用法: node close-many-real.mjs <rigTag> <outJson>
  */
-const RIG = 'http://127.0.0.1:9781'
+const RIG = `http://127.0.0.1:${process.env.RIG_PORT || 9781}`
 const TAG = process.argv[2] ?? 'C1'
-const OUT = process.argv[3] ?? `/home/wsluser/projects/__pr-E/evidence-${TAG}-real-browser.json`
+const OUT = process.argv[3] ?? fileURLToPath(new URL(`./evidence-${TAG}-real-browser.json`, import.meta.url))
 import { writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const steps = []
 let fails = 0

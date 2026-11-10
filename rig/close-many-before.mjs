@@ -6,9 +6,10 @@
  * 而且"前面已经关掉的"在结果里看不见）。用法: node close-many-before.mjs <rigTag> <outJson>
  */
 import { writeFileSync } from 'node:fs'
-const RIG = 'http://127.0.0.1:9781'
+import { fileURLToPath } from 'node:url'
+const RIG = `http://127.0.0.1:${process.env.RIG_PORT || 9781}`
 const TAG = process.argv[2] ?? 'B0'
-const OUT = process.argv[3] ?? `/home/wsluser/projects/__pr-E/evidence-${TAG}-real-browser.json`
+const OUT = process.argv[3] ?? fileURLToPath(new URL(`./evidence-${TAG}-real-browser.json`, import.meta.url))
 const steps = []; let fails = 0
 const check = (name, ok, detail = '') => { if (!ok) fails++; steps.push({ name, ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  -> ' + detail : ''}`) }
 const cmd = async (command, params = {}, timeoutMs = 20000) => {
