@@ -20,11 +20,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools'
+import { safeDefineTool } from './well-formed.js'
 
 // Loose wrapper over the real DSL: options are runtime-validated by
 // dsh-tools' assert layer anyway; a wide type keeps our three tools' schema
 // object shapes identical to the ones validated live in the dynamic preview.
-const defineTool = (options: unknown) => rawDefineTool(options as never)
+// 外面再套一层良构闸：render 文本 / 错误文案里的孤立代理项会毒化整个会话（见 well-formed.ts）。
+const defineTool = safeDefineTool(rawDefineTool)
 
 const ENTRY_STATUSES = ['proposed', 'accepted', 'applied', 'rejected', 'superseded'] as const
 const TEXT_OUT = {

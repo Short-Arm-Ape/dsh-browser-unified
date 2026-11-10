@@ -1,0 +1,338 @@
+{
+  "label": "navfix",
+  "startedAt": "2026-11-10T13:18:02.037Z",
+  "scenarios": [
+    {
+      "name": "nav-local-slow",
+      "what": "active tab (already loaded) -> a page whose body takes 3 s",
+      "targetTabId": 162257056,
+      "observedTabId": 162257056,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-682163"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-4",
+        "ok": true,
+        "result": {
+          "tabId": 162257056,
+          "url": "http://localhost:9781/slow?ms=3000",
+          "title": "SLOW-683874",
+          "waitUntil": "load",
+          "waitedMs": 3149,
+          "readyState": "complete"
+        },
+        "elapsedMs": 3154
+      },
+      "wallMs": 3157,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-683874"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-683874"
+      }
+    },
+    {
+      "name": "open-local-slow",
+      "what": "tabs.open -> a page whose body takes 3 s",
+      "targetTabId": 162257056,
+      "observedTabId": 162257057,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-691074"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-10",
+        "ok": true,
+        "result": {
+          "tabId": 162257057,
+          "url": "http://localhost:9781/slow?ms=3000",
+          "title": "SLOW-692807",
+          "waitUntil": "load",
+          "waitedMs": 3105,
+          "grouped": true,
+          "groupId": 1252956658,
+          "created": true
+        },
+        "elapsedMs": 3193
+      },
+      "wallMs": 3201,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-692807"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-692807"
+      }
+    },
+    {
+      "name": "nav-hang",
+      "what": "active tab -> a server that accepts and never answers (navigation stuck before commit)",
+      "targetTabId": 162257056,
+      "observedTabId": 162257056,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-700073"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-17",
+        "ok": true,
+        "result": {
+          "tabId": 162257056,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-700073",
+          "waitUntil": "load",
+          "waitedMs": 15057,
+          "loadPending": true,
+          "pendingUrl": "http://localhost:9781/hang"
+        },
+        "elapsedMs": 16514
+      },
+      "wallMs": 16519,
+      "truthAtReturn": {
+        "error": "rig timeout after 10000ms"
+      },
+      "truthAfterSettle": {
+        "error": "rig timeout after 10000ms"
+      }
+    },
+    {
+      "name": "open-hang",
+      "what": "tabs.open -> a server that accepts and never answers",
+      "targetTabId": 162257056,
+      "observedTabId": 162257059,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-744376"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-23",
+        "ok": true,
+        "result": {
+          "tabId": 162257059,
+          "url": "",
+          "title": "",
+          "pendingUrl": "http://localhost:9781/hang",
+          "waitUntil": "load",
+          "waitedMs": 15120,
+          "loadPending": true,
+          "grouped": true,
+          "groupId": 82401077,
+          "created": true
+        },
+        "elapsedMs": 15248
+      },
+      "wallMs": 15254,
+      "truthAtReturn": {
+        "href": "about:blank",
+        "ready": "complete",
+        "title": ""
+      },
+      "truthAfterSettle": {
+        "href": "about:blank",
+        "ready": "complete",
+        "title": ""
+      }
+    },
+    {
+      "name": "nav-blackhole-ip",
+      "what": "active tab -> a non-routable IP (TCP connect black hole)",
+      "targetTabId": 162257056,
+      "observedTabId": 162257056,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-766426"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-30",
+        "ok": true,
+        "result": {
+          "tabId": 162257056,
+          "url": "http://localhost:9781/fast",
+          "title": "FAST-766426",
+          "waitUntil": "load",
+          "waitedMs": 15031,
+          "loadPending": true,
+          "pendingUrl": "http://10.255.255.1:8080/"
+        },
+        "elapsedMs": 16521
+      },
+      "wallMs": 16528,
+      "truthAtReturn": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "loading",
+        "title": "10.255.255.1"
+      },
+      "truthAfterSettle": {
+        "error": "rig timeout after 10000ms"
+      }
+    },
+    {
+      "name": "open-blackhole-ip",
+      "what": "tabs.open -> a non-routable IP",
+      "targetTabId": 162257056,
+      "observedTabId": 162257061,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-808505"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-36",
+        "ok": true,
+        "result": {
+          "tabId": 162257061,
+          "url": "http://10.255.255.1:8080/",
+          "title": "10.255.255.1",
+          "waitUntil": "load",
+          "waitedMs": 1442,
+          "grouped": true,
+          "groupId": 936243802,
+          "created": true
+        },
+        "elapsedMs": 1576
+      },
+      "wallMs": 1581,
+      "truthAtReturn": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "10.255.255.1"
+      },
+      "truthAfterSettle": {
+        "error": "rig timeout after 10000ms"
+      }
+    },
+    {
+      "name": "nav-bad-host",
+      "what": "active tab -> a host that cannot resolve (RFC 2606 .invalid)",
+      "targetTabId": 162257056,
+      "observedTabId": 162257056,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-829923"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-43",
+        "ok": true,
+        "result": {
+          "tabId": 162257056,
+          "url": "http://rig-nx.invalid/",
+          "siteUnreachable": {
+            "reason": "unreachable"
+          },
+          "error": "无法连接 — 检查 rig-nx.invalid 中是否有拼写错误。",
+          "waitUntil": "load",
+          "waitedMs": 423,
+          "readyState": "complete"
+        },
+        "elapsedMs": 430
+      },
+      "wallMs": 436,
+      "truthAtReturn": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "rig-nx.invalid"
+      },
+      "truthAfterSettle": {
+        "href": "chrome-error://chromewebdata/",
+        "ready": "complete",
+        "title": "rig-nx.invalid"
+      }
+    },
+    {
+      "name": "nav-timeout-40s-page",
+      "what": "active tab -> a page that finishes after 40 s (extension timeout is 15 s)",
+      "targetTabId": 162257056,
+      "observedTabId": 162257056,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-838111"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-49",
+        "ok": true,
+        "result": {
+          "tabId": 162257056,
+          "url": "http://localhost:9781/slow?ms=40000",
+          "title": "SLOW-839803",
+          "waitUntil": "load",
+          "waitedMs": 15098,
+          "readyState": "loading",
+          "loadPending": true,
+          "pendingUrl": "http://localhost:9781/slow?ms=40000"
+        },
+        "elapsedMs": 15109
+      },
+      "wallMs": 15115,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=40000",
+        "ready": "loading",
+        "title": "SLOW-839803"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=40000",
+        "ready": "loading",
+        "title": "SLOW-839803"
+      }
+    },
+    {
+      "name": "nav-background-tab-slow",
+      "what": "navigate a NON-active tab -> a page whose body takes 3 s",
+      "targetTabId": 162257063,
+      "observedTabId": 162257063,
+      "before": {
+        "href": "http://localhost:9781/fast",
+        "ready": "complete",
+        "title": "FAST-859360"
+      },
+      "commandResult": {
+        "type": "result",
+        "id": "rig-57",
+        "ok": true,
+        "result": {
+          "tabId": 162257063,
+          "url": "http://localhost:9781/slow?ms=3000",
+          "title": "SLOW-862254",
+          "waitUntil": "load",
+          "waitedMs": 3201,
+          "readyState": "complete"
+        },
+        "elapsedMs": 3237
+      },
+      "wallMs": 3241,
+      "truthAtReturn": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-862254"
+      },
+      "truthAfterSettle": {
+        "href": "http://localhost:9781/slow?ms=3000",
+        "ready": "complete",
+        "title": "SLOW-862254"
+      }
+    }
+  ],
+  "finishedAt": "2026-11-10T13:21:09.497Z"
+}

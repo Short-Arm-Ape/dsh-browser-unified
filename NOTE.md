@@ -2019,3 +2019,61 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
 都正常，只在执行时报「无法执行二进制文件: 可执行文件格式错误」；正确平台名是 `linux-arm64`。
 
 **跑法不要在本文找**：`rig/README.md` 是唯一出处（一条命令 `node rig/rig.mjs run --tag <t> --scenario smoke|probe|matrix`）。
+
+---
+
+## 2026-11-10：0.11.53 / 扩展 1.0.56 —— 收尾的两处修复
+
+只修不加功能。做的与量的都在 2026-11-10 20:5x–21:3x。
+
+### 修 1：后置探针共享命令死线（扩展侧）
+
+上面 rig 那节量到的 `+540 / +597ms`（Windows / Linux，真机）就是这个：等待吃满预算后，
+后置探针还要再花 2.5s，而桥只给 `budget + 2000` 的余量，于是模型拿到 `command_timeout`
+（effectState=unknown）而不是已经准备好的 `loadPending`。
+
+- `background.js` 新增 `PROBE_GRACE_MS = 1500` 与 `probeBudgetMs(startedAt, waitBudgetMs, cap)`；
+  `cmdNav` 的落地探针与错误页正文探针都改成**按剩余时间切片**，一点时间不剩就跳过
+  （缺 `readyState` 是诚实的，假超时不是）。
+- 顺带修了两处**完全没有预算**的探针：① 错误页正文那次过去直接 `withCDP(...)`，CDP 哑掉就挂死；
+  ② 导航**前**的中止态探针（`HOLD_ABORT_PROBE`）也没有预算——这次在 rig 上一开「探针卡住」的复现
+  就永久挂住，连导航都没发起。前者给了 `errProbeMs`，后者给 1000ms。
+
+读数（同一份脚本，假件台子 `scratch/upstream-diff-20261110/headroom-ours/`）：
+
+| 剧本 | 修前 | 修后 | ceiling |
+|---|---|---|---|
+| commit 800 探针卡住 | 3382 | **2311** | 2800 |
+| commit 4000 探针卡住 | 6621 | **5508** | 6000 |
+| load 15000 探针卡住 | 17525 | **16507** | 17000 |
+
+真机（rig matrix，Edge 157 headless，证据 `rig/evidence-navfix.json`）：`nav-hang` 17540 → **16514**、
+`nav-blackhole-ip` 17597 → **16521**，都在 17000 以内。本轮 `open-blackhole-ip` 只用 1576ms——
+这次 Chrome 对 `10.255.255.1` 立刻判不可达（不是黑洞），属环境差异，不是改动的效果。
+
+### 修 2：半个 emoji 不许进会话（插件 + 扩展）
+
+- 新增 `src/well-formed.ts`：`toWellFormed` / `sliceWellFormed` / `hardenToolDefinition` / `safeDefineTool`。
+- **三条**注册路径全部接线：`index.ts` 的 `defineTool`、`unified-tools.ts` 自己的包装、
+  以及 `buddy.ts` —— 后者是**直接** `ctx.tools.register({...})`，最容易漏（第一次接线就漏了它，
+  测试当场抓出 8 条渲染器仍在漏半个字符）。
+- 扩展侧：结果回传处统一 `wellFormedDeep`；错误文案 `toWellFormed`；错误页正文改用
+  `clipWellFormed`（页面内先切 4200，SW 再切 4000，保证切点不落在半个字符上）。
+- 新增 `tests/text-wellformed.mjs`：31 个渲染器逐个喂「带孤立代理项 + 切点正好落在 emoji 中间」的值
+  （28 个真正检查，3 个需要专属 value 形状的记为跳过），并带一条**阴性对照**——证明旧的
+  `JSON.stringify(...).slice(0, 2000)` 确实会切出半个 emoji，否则断言全绿也没有意义。
+- 回归：`node tests/run-all.mjs` **19/19 套件通过**（42.9s，含新加的这条）。
+
+### 顺带修的
+
+`packages/browser-unified-mit/registry/design/registry.json` 的 `de-034` 条目停在
+`updatedAt 2026-09-29`（另外两份是 `2026-10-22`），`build-release.mjs` 的「单一真源」闸是红的。
+已用 `design/registry.json` 覆盖，三份 sha256 一致（`95F1641A…`）。
+
+### 产物与装法
+
+`dist-release/` 七个资产 + `.sha256`，闸门全过：`dsh-browser-unified-0.11.53.tgz`（263KB）、
+`DSH-Browser-Control-v1.0.56.zip`（91KB）、core 0.1.15、mit 0.1.1 等。
+
+装：扩展 zip 解开覆盖 `D:\edge-extensions\dsh-browser-extension\` 后在 Edge 里点一次「重新加载」；
+插件 tgz 装进 profile 后需要重启 `dsh web`（重启是主人的手，不由代理代劳）。

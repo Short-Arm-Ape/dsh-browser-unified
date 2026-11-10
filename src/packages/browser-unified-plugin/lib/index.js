@@ -26,6 +26,7 @@ import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools';
 import { BridgeServer, classify, cleanupArtifacts, GuardedBridge, UrlPolicy } from 'browser-unified-core';
 import { DEFAULT_METADATA_HOSTNAMES, DEFAULT_METADATA_IPS, realmOf } from 'browser-unified-core';
 import { applyUnifiedTools, currentPluginVersion, loadIssues } from './unified-tools.js';
+import { safeDefineTool, sliceWellFormed as sliceWellFormedImpl } from './well-formed.js';
 // 原 dsh-browser-buddy 的能力（de-036 合并）：工具面分层 / 状态注入 / 调用即唤醒 / 登记簿送达
 // + browser_tools / browser_frames / browser_frame_eval。
 import { applyBuddyFeatures } from './buddy.js';
@@ -35,7 +36,14 @@ import { brandIdFromHelloName, exeCandidates, hostStyle, locateExtensionProfile,
 // Schema shapes below are the same ones the upstream plugin shipped and the
 // dsh-tools assert layer validates at runtime; the loose wrapper only widens
 // the compile-time view (types differ between rc builds).
-const defineTool = (options) => rawDefineTool(options);
+//
+// 这里同时是**会话毒化**的最后一道闸：页面文本可能被截断切出半个 emoji（高位代理项），
+// 孤立代理项经 `JSON.stringify` 变成裸 `\ud83d`，模型的 JSON 解析器会拒收整个请求体，
+// 坏字符还会随会话历史每轮重放（上游 v1.7.10 / issue #26）。所以 render 文本与错误文案
+// 一律先过 `toWellFormed`，源头截断点改用 `sliceWellFormed`。
+const defineTool = safeDefineTool(rawDefineTool);
+/** 截断长文本时用良构切片（切点不落在半个 emoji 上）。 */
+const sliceWellFormed = sliceWellFormedImpl;
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'browser-bridge';
 /** The tool registry this plugin contributes `browser_*` tools to. */
@@ -2325,7 +2333,7 @@ function applyBrowserTools(ctx, controller, getConfig) {
         },
         output: {
             schema: { type: 'object', additionalProperties: true },
-            render: (_args, value) => [{ type: 'text', text: JSON.stringify(value).slice(0, 2000) }],
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
         },
         presentCall: args => ({ card: 'generic', title: `Click ${args.ref ?? args.selector ?? ''}`, kind: 'other' }),
         async execute(args, exec) {
@@ -2350,7 +2358,7 @@ function applyBrowserTools(ctx, controller, getConfig) {
         },
         output: {
             schema: { type: 'object', additionalProperties: true },
-            render: (_args, value) => [{ type: 'text', text: JSON.stringify(value).slice(0, 2000) }],
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
         },
         presentCall: args => ({ card: 'generic', title: `Type into ${args.ref ?? args.selector ?? 'element'}`, kind: 'other' }),
         async execute(args, exec) {
@@ -2374,7 +2382,7 @@ function applyBrowserTools(ctx, controller, getConfig) {
         },
         output: {
             schema: { type: 'object', additionalProperties: true },
-            render: (_args, value) => [{ type: 'text', text: JSON.stringify(value).slice(0, 2000) }],
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
         },
         presentCall: args => ({ card: 'generic', title: `Press ${args.key}`, kind: 'other' }),
         async execute(args, exec) {
@@ -2395,7 +2403,7 @@ function applyBrowserTools(ctx, controller, getConfig) {
         },
         output: {
             schema: { type: 'object', additionalProperties: true },
-            render: (_args, value) => [{ type: 'text', text: JSON.stringify(value).slice(0, 2000) }],
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
         },
         presentCall: () => ({ card: 'generic', title: 'Scroll browser page', kind: 'other' }),
         async execute(args, exec) {

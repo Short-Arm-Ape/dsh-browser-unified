@@ -30,6 +30,7 @@
  * 本文件是 AGPL-3.0-only（同插件）。
  */
 import { randomUUID } from 'node:crypto';
+import { hardenToolDefinition } from './well-formed.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -101,6 +102,9 @@ const OUTPUT_SCHEMA = {
     },
     required: ['ok', 'text'],
 };
+/** buddy 的工具是**直接**注册的（不走 defineTool），所以在这里单独套一次良构闸：
+ *  render 文本与错误文案里的孤立代理项会毒化整个会话（见 well-formed.ts）。 */
+const makeRegisterTool = (ctx) => (definition) => ctx.tools.register(hardenToolDefinition(definition));
 const renderText = (_args, value) => [{ type: 'text', text: String(value.text) }];
 /**
  * 0.2.0 的 `.volatile()` 字段在组合结果里不是普通值，而是惰性访问器对象
@@ -132,6 +136,7 @@ function unwrapVolatile(config) {
  */
 export function applyBuddyFeatures(options) {
     const ctx = options.ctx;
+    const registerTool = makeRegisterTool(ctx);
     const controller = options.controller ?? null;
     const authorizeTab = typeof options.authorizeTab === 'function' ? options.authorizeTab : null;
     let settings = options.settings;
@@ -912,7 +917,7 @@ export function applyBuddyFeatures(options) {
         text: () => statusText(),
     }), 'browser-bridge: state context');
     /* ------------------------------------------------------------------- tools */
-    ctx.tools.register({
+    registerTool({
         name: 'browser_tools',
         description: "Tool-surface switches, bridge status and the JS dialog policy. `list` shows resident and expanded tools; `enable` / `disable` with a group (interact / debug / session / frames / registry) expands or collapses one; `status` shows port, extension connection, layering and auto-launch; `probe` re-scans the port; `auto_launch` with `value` toggles launch-on-tool-use; `dialog` reads or sets the dialog policy (`policy` = accept / dismiss / manual, `persist:true` stores it in the extension) or `answer` answers the dialog that is open now. Resident read-only tools work without expanding anything.",
         parameters: {
@@ -1005,7 +1010,7 @@ export function applyBuddyFeatures(options) {
     /* ------------------------------------------------------------- frame tools */
     // 老式管理页（路由器/光猫/交换机）大量用 <frameset>。宿主 browser_read 从 0.8.0 起已能
     // 拍平同源子帧、并用 `frame` 指定单帧，所以这里只留宿主没有的两件：**列帧结构** 与 **在帧里求值**。
-    ctx.tools.register({
+    registerTool({
         name: 'browser_frames',
         description: "List the tab's frame structure (needed for old frameset admin pages): index / name / src / url and same-origin flag per frame, plus a text preview. When browser_read returns only a title and URL (a frameset page it cannot read), look here first, then use browser_frame_eval on one frame.",
         parameters: {
@@ -1035,7 +1040,7 @@ export function applyBuddyFeatures(options) {
             return { ok: true, text: lines.join('\n') };
         },
     });
-    ctx.tools.register({
+    registerTool({
         name: 'browser_frame_eval',
         description: "Run JavaScript in a given frame's document / window scope (old admin pages often keep their tables and fields in one frame). Budget is 15s by default; `timeoutMs` overrides it.",
         parameters: {

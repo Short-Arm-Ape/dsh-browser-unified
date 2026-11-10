@@ -361,8 +361,11 @@ function handleBridgeMessage(msg) {
 	if (msg.type === 'ping') { send({ type: 'pong', t: msg.t }); return; }
 	if (msg.type === 'command' && typeof msg.id === 'string') {
 		runCommand(msg.command, msg.params ?? {})
-			.then((result) => send({ type: 'result', id: msg.id, ok: true, result }))
-			.catch((err) => send({ type: 'result', id: msg.id, ok: false, error: String((err && err.message) || err) }));
+			// 回给桥之前统一过一遍 `toWellFormed`：页面文本可能是被截断切出的半个 emoji，
+			// 孤立代理项会让模型侧拒收整个请求体（上游 issue #26）。源头截断点也改用
+			// clipWellFormed，这里是最后一道保险。
+			.then((result) => send({ type: 'result', id: msg.id, ok: true, result: wellFormedDeep(result) }))
+			.catch((err) => send({ type: 'result', id: msg.id, ok: false, error: toWellFormed(String((err && err.message) || err)) }));
 	}
 }
 
@@ -525,6 +528,66 @@ function withBudget(promise, ms, fallback) {
 		promise.catch(() => fallback),
 		new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
 	]);
+}
+
+/**
+ * 等待结束后的探针能用多少时间。
+ *
+ * 桥给这条命令的总余量是 `budget + 2000`（插件侧 `nav-budget.ts` 的 NAV_BRIDGE_MARGIN_MS）。
+ * 等待本身吃满预算后，旧实现里每个后置探针还各自再拿 2s（本仓库合并成一个 2500ms 的探针），
+ * 于是真机上 `nav` 会在 17540ms 才返回、而桥在 17000ms 就判超时 —— 模型拿到的是
+ * `command_timeout`（effectState=unknown），不是这条命令已经准备好的 `loadPending`。
+ * 2026-11-10 在 rig 上量到 Windows +540ms / Linux +559ms，即同一个缺陷。
+ *
+ * 所以探针的总可用时间被限成 `PROBE_GRACE_MS`（必须留在桥余量之内），并按剩余时间切片；
+ * 一点时间都不剩时干脆跳过 —— 缺 `readyState` 是诚实的，假超时不是。
+ */
+const PROBE_GRACE_MS = 1500;
+function probeBudgetMs(startedAt, waitBudgetMs, cap = 2500) {
+	const remaining = startedAt + Math.max(0, waitBudgetMs) + PROBE_GRACE_MS - Date.now();
+	return remaining <= 0 ? 0 : Math.min(cap, remaining);
+}
+
+/**
+ * 把字符串里的孤立代理项换成 U+FFFD。
+ *
+ * 为什么必须做：页面文本可以被截断切出半个 emoji（`slice` 落在高位代理项上）。孤立代理项经
+ * `JSON.stringify` 变成裸 `\ud83d`，模型侧的 JSON 解析器会拒收**整个请求体**，而且坏字符会
+ * 随会话历史每轮重放，`/compact` 也救不回来（上游 v1.7.10 的 issue #26 就是这个）。
+ */
+function toWellFormed(text) {
+	const s = String(text ?? '');
+	if (typeof s.toWellFormed === 'function') return s.toWellFormed();
+	let out = '';
+	for (let i = 0; i < s.length; i++) {
+		const code = s.charCodeAt(i);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			const next = s.charCodeAt(i + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) { out += s[i] + s[i + 1]; i++; } else out += '\uFFFD';
+		} else if (code >= 0xdc00 && code <= 0xdfff) out += '\uFFFD';
+		else out += s[i];
+	}
+	return out;
+}
+
+/** 深拷贝一遍并把所有字符串过 `toWellFormed`；发回桥之前统一走这里。 */
+function wellFormedDeep(value) {
+	if (typeof value === 'string') return toWellFormed(value);
+	if (value === null || typeof value !== 'object') return value;
+	if (Array.isArray(value)) return value.map(wellFormedDeep);
+	const out = {};
+	for (const key of Object.keys(value)) out[key] = wellFormedDeep(value[key]);
+	return out;
+}
+
+/** 按字符截断但不切出半个代理项（切点落在高位代理项上就退一格）。 */
+function clipWellFormed(text, max) {
+	const s = String(text ?? '');
+	if (s.length <= max) return s;
+	let end = max;
+	const code = s.charCodeAt(end - 1);
+	if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+	return s.slice(0, end);
 }
 
 /**
@@ -1490,7 +1553,9 @@ async function cmdNav(params) {
 	const waitUntil = params.wait === false ? 'none' : navWaitMode(params.waitUntil);
 	const timeoutMs = navBudget(waitUntil, params.timeoutMs);
 	// 用户按过「中止操作」时，导航也一并拦下（中止＝别再动这个页面）
-	await withCDP(tab.id, (send) => assertNotAborted(send, 'nav')).catch((error) => {
+	// 探针本身也要有预算：CDP 在文档卡在提交前时根本不回，无预算的 await 会让 nav
+	// **还没发起导航**就永久挂住（2026-11-10 在 rig 上连着跑复现脚本时撞到）。
+	await withBudget(withCDP(tab.id, (send) => assertNotAborted(send, 'nav')), 1000, undefined).catch((error) => {
 		if (error instanceof Error && error.message.includes('用户终止控制')) throw error
 		// 探不到（页面正在导航/已崩）就不拦：不能因为探针失败把正常导航也禁掉
 	})
@@ -1511,33 +1576,43 @@ async function cmdNav(params) {
 	let landedUrl = '';
 	let landedReadyState = '';
 	let errorPageMarker = false;
-	try {
-		// bi-036：文档卡在 commit 之前时 CDP **不回** `Runtime.evaluate`，这个探针会把整条
-		// `nav` 拖过调用方的预算（rig 实测：/hang 上 25s 都没回答）。给它一个自己的小预算，
-		// 超时就当作"探不到落地地址"往下走 —— 后面的 loadPending 会如实说"没等完"。
-		const probe = await withBudget(withCDP(tab.id, (send) => send('Runtime.evaluate', {
-			expression: 'JSON.stringify({ href: location.href, readyState: document.readyState, mainFrameError: !!document.getElementById("main-frame-error") })',
-			awaitPromise: false, returnByValue: true, userGesture: true,
-		}).then((r) => String(r.result?.value ?? ''))), waitUntil === 'none' ? 500 : 2500, null);
-		if (probe !== null) {
-			try {
-				const parsed = JSON.parse(probe);
-				landedUrl = typeof parsed.href === 'string' ? parsed.href : '';
-				landedReadyState = typeof parsed.readyState === 'string' ? parsed.readyState : '';
-				errorPageMarker = parsed.mainFrameError === true;
-			} catch { landedUrl = probe; }
-		}
-	} catch { /* no debugger possible (e.g. chrome:// pages) — fall through */ }
+	// 探针只能花「等待预算 + PROBE_GRACE_MS(1.5s)」里剩下的时间：桥的总余量是 +2s，
+	// 等待吃满预算后探针再从余量里偷 2.5s，模型看到的就是 command_timeout 而不是 loadPending。
+	const probeMs = probeBudgetMs(startedNav, timeoutMs, 2500);
+	if (probeMs > 0) {
+		try {
+			// bi-036：文档卡在 commit 之前时 CDP **不回** `Runtime.evaluate`，这个探针会把整条
+			// `nav` 拖过调用方的预算（rig 实测：/hang 上 25s 都没回答）。给它一个自己的小预算，
+			// 超时就当作"探不到落地地址"往下走 —— 后面的 loadPending 会如实说"没等完"。
+			const probe = await withBudget(withCDP(tab.id, (send) => send('Runtime.evaluate', {
+				expression: 'JSON.stringify({ href: location.href, readyState: document.readyState, mainFrameError: !!document.getElementById("main-frame-error") })',
+				awaitPromise: false, returnByValue: true, userGesture: true,
+			}).then((r) => String(r.result?.value ?? ''))), probeMs, null);
+			if (probe !== null) {
+				try {
+					const parsed = JSON.parse(probe);
+					landedUrl = typeof parsed.href === 'string' ? parsed.href : '';
+					landedReadyState = typeof parsed.readyState === 'string' ? parsed.readyState : '';
+					errorPageMarker = parsed.mainFrameError === true;
+				} catch { landedUrl = probe; }
+			}
+		} catch { /* no debugger possible (e.g. chrome:// pages) — fall through */ }
+	}
 	let siteUnreachable;
 	let loadError;
 	if (/^chrome-error:/.test(landedUrl) || errorPageMarker) {
 		let errText = '';
-		try {
-			errText = await withCDP(tab.id, (send) => send('Runtime.evaluate', {
-				expression: 'document.body ? document.body.innerText.slice(0, 4000) : ""',
-				awaitPromise: false, returnByValue: true, userGesture: true,
-			}).then((r) => String(r.result?.value ?? '')));
-		} catch { /* classification falls back below */ }
+		// 错误页正文那次探针过去**没有预算**：CDP 哑掉时 nav 会一直挂着（同上）。
+		const errProbeMs = probeBudgetMs(startedNav, timeoutMs, 2000);
+		if (errProbeMs > 0) {
+			try {
+				const raw = await withBudget(withCDP(tab.id, (send) => send('Runtime.evaluate', {
+					expression: 'document.body ? document.body.innerText.slice(0, 4200) : ""',
+					awaitPromise: false, returnByValue: true, userGesture: true,
+				}).then((r) => String(r.result?.value ?? ''))), errProbeMs, '');
+				errText = clipWellFormed(raw, 4000);
+			} catch { /* classification falls back below */ }
+		}
 		// Error-page copy is localized (zh-CN shows 无法找到 … 的 DNS 地址,
 		// en-US shows ERR_NAME_NOT_RESOLVED); match either plus any bare DNS
 		// mention such as DNS_PROBE_STARTED.
