@@ -2077,3 +2077,46 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
 
 装：扩展 zip 解开覆盖 `D:\edge-extensions\dsh-browser-extension\` 后在 Edge 里点一次「重新加载」；
 插件 tgz 装进 profile 后需要重启 `dsh web`（重启是主人的手，不由代理代劳）。
+
+---
+
+## 2026-11-10：接回 GitHub —— 0.11.20 之后的 20 条历史推上主账号仓
+
+做于 2026-11-10 22:2x–22:4x。目标仓：`Short-Arm-Ape/dsh-browser-unified`（主人的账号，public，AGPL-3.0）。
+
+### 为什么原来断在 0.11.20
+
+这个仓最后一次 push 是 **2026-10-17 19:13**，内容是 **0.11.20**（138 文件、根级 `packages/ tests/ extension/ upstream/ docs/`）。
+10-18 换边、10-30 在 Windows 重建本地仓时历史是从 WSL 归档**重新 import** 的（首条提交写着 `no prior VCS history`），
+而本地仓**没有配 remote** —— 于是 0.11.21 → 0.11.53 这 20 条提交一直只在笔记本上。
+
+### 这台机器上 `git push` 走不通，改用 Git Data API 回放
+
+实测（2026-11-10 22:2x）：`https://github.com` → **reset / 15s 超时**；`api.github.com` → 200（0.7s）；
+`codeload.github.com` → 301。SSH 两个端点都能连（`git@ssh.github.com:443` 与 `git@github.com:22` 都回
+`Permission denied (publickey)`），但本机没有已授权给这个账号的 key，token 的 scope 里也没有 `public_key`
+⇒ **加不了 key**。所以：
+
+- `scratch/gh-push-api/replay.py`：blob（去重 **351**）→ 逐层 tree（**163**）→ commit（**20**，保留作者/时间/正文原文）
+  → 最后 `PATCH /git/refs/heads/main`（force）。每建一个 tree 都与本地 tree sha 比对，不等就中止。
+- 旧 main 顶（`3bbe7186`，0.11.20）先打 tag **`v0.11.20-archive`**，任何东西都没丢。
+- 全程 **212 次 API 调用**、约 6 分钟；中途遇到一次 `RemoteDisconnected`，脚本加了退避重试 + 本地缓存
+  （`uploaded.json` / `trees.json`）后断点续跑完成。
+
+### 核过的（独立读回，不是脚本自述）
+
+| 读数 | 值 |
+|---|---|
+| 远端 main | `f1a1deb1`「fix(nav,text): share the command deadline…」 |
+| 远端提交数 | **20** |
+| 远端 blob | **278**（277 文件 + 1 符号链接） |
+| **tree sha 与本地 HEAD 相同** | **是**（`d810760c…` 两边一致 ⇒ 内容逐字节相同） |
+| 抽查 4 个文件 blob sha | `NOTE.md` / `rig/rig.mjs` / `src/extension/background.js` / `lib/index.js` 全部一致 |
+| tag | `v0.11.20-archive` → `3bbe7186`（0.11.20 的旧顶） |
+
+### 还没解决的（已知代价）
+
+- **两边的 commit sha 不同**（内容相同、历史条数相同，但每条 hash 不一样 —— API 侧重建的）。
+  等以后 `github.com` 可达、或给账号加一把 SSH key 之后，正常做法是 `git push --force` 让远端跟本地对齐。
+- 本地仓现在配了 `origin`（https），但这台机器上 `git push/fetch` 仍不通；**同步只能继续走 `replay.py`**。
+  给账号加一把 ed25519 key 是最省事的长期解法。
