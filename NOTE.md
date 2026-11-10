@@ -2005,6 +2005,17 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
 
 这跟上一条记的、在上游假件台子上量的 `+525…+621ms` 对得上（我们这份的探针是**一个** 2500ms 的合并调用，桥余量 2000 ⇒ 理论超出 500ms）。**结论：0.11 线也有 #21 那个越界，真机确认量级约 +0.5s。**
 
-**Linux 侧到哪一步**：`bash -n` 全过；WSL 里 `build` / `status` / `down` 实跑通过；`up` 干净报「没找到浏览器」（WSL 没装 Chromium/Chrome/Edge），**端到端未测**——装上浏览器后同一条命令即可（平台差异只剩找浏览器、杀进程树两处）。
+**Linux 侧（2026-11-10 20:3x–20:4x 补完）**：`bash -n` 全过之外，端到端也跑通了。WSL 里没有浏览器，也不想动系统包，
+所以装了 **Chrome for Testing 157.0.8103.50（linux-arm64）** 到 `~/.local/rig-browsers/`——解开就能跑、不需要 root。
+这件事固化成 `rig/install-browser.sh`（按 `uname -m` 自动选平台，装完打印 `RIG_BROWSER=` 那一行），别的项目也能直接用。
+
+- `run --tag linux --scenario smoke`：**6/6 通过**，收尾端口释放；
+- `run --tag linux-matrix --scenario matrix`：**9 个剧本全跑通**，证据 `rig/evidence-linux-matrix.json`（12:43:22–12:47:57 UTC）；
+- 同一张表在 Linux 上：`nav-hang` **17559ms**、`nav-blackhole-ip` **17577ms**，桥 ceiling 仍是 17000 ⇒ **+559 / +577ms**，
+  和 Windows 侧（+540 / +597）一致 ⇒ **这个越界是我们自己实现的，与平台无关**。
+
+⚠ 架构坑（吃掉一次 194MB 下载）：这台 WSL 是 **aarch64**，WSL 的 `uname -m`、Windows 的 `PROCESSOR_ARCHITECTURE` 都是 ARM64
+（Edge 装在 `Program Files (x86)` 走 x86 仿真，所以 UA 写着 `Win64; x64`——别拿 UA 判架构）。按 `linux64` 下的 x86-64 包解压、`file`
+都正常，只在执行时报「无法执行二进制文件: 可执行文件格式错误」；正确平台名是 `linux-arm64`。
 
 **跑法不要在本文找**：`rig/README.md` 是唯一出处（一条命令 `node rig/rig.mjs run --tag <t> --scenario smoke|probe|matrix`）。

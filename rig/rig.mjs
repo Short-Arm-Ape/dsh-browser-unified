@@ -256,6 +256,9 @@ async function launchBrowser(ext) {
     `http://127.0.0.1:${PORT}/fast`,
   ]
   if (!opt.windowed) args.unshift('--headless=new')
+  // 平台私有开关（容器/CI 里常要 --no-sandbox；`--disable-dev-shm-usage` 同理）：空格分隔。
+  const extra = String(process.env.RIG_EXTRA_ARGS || '').trim()
+  if (extra) args.push(...extra.split(/\s+/))
   const logFd = fs.openSync(path.join(WORK, 'browser.log'), 'a')
   const child = spawn(exe, args, { stdio: ['ignore', logFd, logFd], detached: true })
   child.unref()

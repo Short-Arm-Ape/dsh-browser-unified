@@ -17,6 +17,17 @@
 - 一台装了 Edge / Chrome / Chromium 的机器
 - 端口 9781 空闲（**真桥是 9777，台子绝不碰它**）
 
+**没有浏览器又不想动系统包**（WSL / 容器 / 只想给测试用一份独立的）：
+
+```bash
+./rig/install-browser.sh          # 装 Chrome for Testing 到 ~/.local/rig-browsers/，不需要 root
+# 它会按 uname -m 自动选 linux64 / linux-arm64，最后打印一行 RIG_BROWSER=<路径>
+RIG_BROWSER=~/.local/rig-browsers/chrome-*/chrome-*/chrome node rig/rig.mjs run --tag lb --scenario smoke
+```
+
+⚠ 这台笔记本的 WSL 是 **aarch64**：拿 `linux64`（x86-64）的包会在执行时报「可执行文件格式错误」，
+解压和 `file` 都看不出问题——先 `uname -m` 再下包。容器/CI 里若报 sandbox 错，加 `RIG_EXTRA_ARGS="--no-sandbox"`。
+
 ## 快速开始
 
 ```bash
@@ -70,6 +81,7 @@ Windows 用 `pwsh -File rig\rig.ps1 …`，Linux/macOS 用 `./rig/rig.sh …`（
 | `--keep` | `run` 跑完不收尾，留着让你手动探 |
 | `--timeout 90` | 等 `rigTag` 的秒数（默认 60） |
 | `RIG_BROWSER=/path/to/chrome` | 指定浏览器可执行文件 |
+| `RIG_EXTRA_ARGS="--no-sandbox --disable-dev-shm-usage"` | 追加给浏览器的开关（容器/CI 里常用；空格分隔） |
 
 ## 已知未覆盖
 
