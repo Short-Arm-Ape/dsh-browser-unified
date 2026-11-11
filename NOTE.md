@@ -2209,3 +2209,80 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
 **replay 整条历史 = 把过去所有内容重新公开一次。** 推之前要按**内容**过一遍，而不是按**提交**过一遍 ——
 尤其当历史里混着「写给人看的东西」：方案、盘点、还没发出去的对外稿。这次漏的正是这一类：
 代码面是干净的，人话面不是。
+
+---
+
+## 2026-11-12：路线 A 开工 —— 上游基线 + 三件搬运 + 影子装机（P1–P3）
+
+主人定调（2026-11-10）：「以上游为主线，我们收线」。0.11 线已结账（末版 0.11.53 / 扩展 1.0.56），
+本文件以下记的是**新主线**的开工状态。代码在主仓的另一个分支上，与 0.11 线并存，互不干扰。
+
+### 落在哪
+
+| 东西 | 位置 |
+|---|---|
+| 上游基线（**孤儿提交**，原样 106 文件） | 分支 `vendor/upstream-main-a6d9f05` = `939ad9a` |
+| 我们的搬运 | 分支 `route-a`，检出在独立 worktree `D:\work\dsh-route-a` |
+| 0.11 线主检出 | 仍是 `master`（本节提交前 `6bbae37`），未受影响 |
+| 一眼看改动面 | `git -C D:\work\dsh-browser-unified diff --stat vendor/upstream-main-a6d9f05 route-a` |
+
+**基线是 main 顶 `a6d9f05c`，不是 `v1.7.10` 标签**（`dc42e4d5`）：标签之后还有 **8 条未发布提交**，
+其中三条我们要 —— `426020a`（**#21 的修法，就是我们提的那个 issue**）、`7f1e64e3`（focus 抢窗口）、
+`e94836e`（`browser_upload`）。核于 2026-11-11（`compare/v1.7.10...main`）。
+
+**与计划的偏差**：这台机器 `github.com:443` 是 reset，`git fetch` 通不了，所以没有 `upstream` remote；
+改成 codeload 取 tarball → 原样落成孤儿提交。跟新版时重取 tarball、在新孤儿分支上 rebase `route-a`。
+
+### 搬了什么（相对上游的改动面：`src/` 下 6 个文件改动 + 4 个新模块）
+
+1. **目标授权**（`src/url-policy.ts` 894 行 + `src/index.ts` 接线 ~99 行 + 新错误码 `url_blocked`）。
+   上游只对**动作种类**设闸（只读档 / 脚本开关），对**打向哪个主机**完全不设防 ——
+   模型可以把主人登录态的浏览器开到本机桥（`127.0.0.1:9777`）或任意站点。这是唯一「不搬就出事」的一块。
+2. **权限探针**（`src/permissions.ts` 489 行 + `src/permission-report.ts` 94 行 + 工具 `browser_permissions`）。
+   chrome 自己的权限气泡在 CDP 侧**没有任何事件**，没有它，超时只能猜「页面慢」。
+3. **profile 定位层**（`src/browser-profiles.ts` 682 行）：第 2 项的底座。
+   上游 hello **没有扩展 id**，所以定位给了三条线索：`browserProfile`（profile 目录）/ `extensionPath`
+   （扩展安装目录，未打包加载的扩展在 Preferences 里记的是路径）/ `extensionId`。**不改上游扩展即可成立。**
+
+### 搬运时挖出并修掉的两个真 bug
+
+- **`host:port` 形式的 allow/deny 条目静默失效**：名单匹配在主机名上，`normalizeEntry` 不剥端口 ⇒
+  写 `127.0.0.1:9777` 既不报错也不生效。已加 `stripEntryPort()`。**0.11 线也带着这个 bug，已收线不动，记在这里。**
+- **`url_blocked` 没接进 `/api/command` 的 HTTP 状态映射**：会掉进 `502`（「扩展报了具体失败」），
+  而它恰恰是唯一**没有发给扩展**的情况。已改成 `403`。
+
+### 验过的读数（核于 2026-11-12 00:0x–01:1x）
+
+| 项 | 读数 |
+|---|---|
+| 上游验收台在本机 | **38/41 通过**；失败的 3 个是上游台自己的取物条件（缺 git tag、缺 `releases.json`、脚本硬编码 `C:\Users\gzx`） |
+| 闸门阳性对照 `verify/verify_url_gate.mjs` | **10/10**（回环、云元数据、ask 未授权、deny 压过放行、控制页开关、intranet 例外） |
+| 权限探针单测 `verify/verify_permissions_read.mjs` | **24/24**（从 0.11 线移植） |
+| **影子装机**（真 Edge 157 + 上游扩展 1.7.2 + 真 `apply()`） | **12/12**：公网导航 `200` 真打开、**回环导航 `403 url_blocked`**、`hello` 带 `capabilities=40` 且无 `extensionId`、模型面工具同样出结果 |
+| 真机权限读数（只读） | 与本会话早些时候 0.11 线插件读到的**一字不差**：124 个权限类、26 类无记录、`loopback_network` 在无记录名单里 |
+
+### 台子上必须记住的两处适配（都写进 `verify/README.md` 了）
+
+- 8 个用**不可解析假主机名**的剧本（`a.test` / `p.example` …）构造 `Config` 时带 `urlMode: "intranet"`：
+  闸门对「解析不出」是 fail-closed，这是对的，但那些剧本本来就拿假名字跑。**闸门本身由 `verify_url_gate.mjs` 专验。**
+- `verify_http` / `verify_bundle_http` / `verify_plugin` 的端口改成 **9779**（9777 常驻着在跑的 dsh 桥）。
+
+### 已知缺口（不粉饰）
+
+- `click` 点到链接造成的跳转、`eval` 里改 `location` 都到不了这道闸门。前者要「执行后再核当前标签页地址」，
+  后者由 `allowScript` / 只读档约束。
+- **`dsh plugin add` + 真宿主起 `dsh web` 的安装冒烟没做**：那要新的 `DSH_HOME`（红线：同一 `DSH_HOME`
+  不并发两个 `dsh web`）、要凭据、要模型跑一轮。建议留到 P4 切换时一起验。
+- `route-a` 分支**没有推到远端**（远端仍是 0.11 线）。要推的话得先决定这仓对外的形态。
+
+### 复现
+
+```
+# 全台（40 个脚本里 37 个能在这台机器跑，另 3 个缺取物条件）
+cd D:\work\dsh-route-a && npm install && npm run build && npm run verify
+
+# 影子装机（真浏览器，跑完自己收）
+node D:\work\DSHWS\scratch\route-a-migration\p3-shadow.mjs
+```
+
+计划与重叠矩阵（**内部文档，不进公开仓**）：`D:\work\DSHWS\archives\route-a-migration-20261112\`。
