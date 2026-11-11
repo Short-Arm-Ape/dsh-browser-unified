@@ -2261,11 +2261,15 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
 | **影子装机**（真 Edge 157 + 上游扩展 1.7.2 + 真 `apply()`） | **12/12**：公网导航 `200` 真打开、**回环导航 `403 url_blocked`**、`hello` 带 `capabilities=40` 且无 `extensionId`、模型面工具同样出结果 |
 | 真机权限读数（只读） | 与本会话早些时候 0.11 线插件读到的**一字不差**：124 个权限类、26 类无记录、`loopback_network` 在无记录名单里 |
 
-### 台子上必须记住的两处适配（都写进 `verify/README.md` 了）
+### 台子上必须记住的三处适配（前两处写进 `verify/README.md` 了，第三处待补）
 
 - 8 个用**不可解析假主机名**的剧本（`a.test` / `p.example` …）构造 `Config` 时带 `urlMode: "intranet"`：
   闸门对「解析不出」是 fail-closed，这是对的，但那些剧本本来就拿假名字跑。**闸门本身由 `verify_url_gate.mjs` 专验。**
 - `verify_http` / `verify_bundle_http` / `verify_plugin` 的端口改成 **9779**（9777 常驻着在跑的 dsh 桥）。
+- 本机 Node **26.13.0 只剥类型、不做转译**：`import` 带**参数属性**（`constructor(private x: T)`）的 `.ts` 源码
+  会抛 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`（实测：`src/index.ts` / `src/url-policy.ts` 抛，`src/server.ts` /
+  `src/errors.ts` / `src/text.ts` 能进）。所以验收脚本一律 import **构建产物** `../lib/index.js`，先 `npm run build`
+  —— 这也顺带是「验的是 npm 用户拿到的那份」。（核于 2026-11-12）
 
 ### 已知缺口（不粉饰）
 
