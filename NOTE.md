@@ -2120,3 +2120,35 @@ harness 的「命令超时 ≠ 页面没内容 / 可能是权限气泡」提示�
   等以后 `github.com` 可达、或给账号加一把 SSH key 之后，正常做法是 `git push --force` 让远端跟本地对齐。
 - 本地仓现在配了 `origin`（https），但这台机器上 `git push/fetch` 仍不通；**同步只能继续走 `replay.py`**。
   给账号加一把 ed25519 key 是最省事的长期解法。
+
+---
+
+## 2026-11-11：0.11 线结账 —— 那格没量到的真机读数，以及为什么
+
+**0.11.53 / 扩展 1.0.56 是这条线的最后一版**（主人 2026-11-10：「先把 0.11 版本收尾，毕竟我本身就准备换路线了」）。
+之后只跟上游，不再往 0.11.x 加版本号。
+
+### 两处修复的读数（核于 2026-11-10）
+
+| 场景 | 修前 | 修后 | ceiling |
+|---|---|---|---|
+| fake `commit 800` | 3382 | **2311** | 2800 |
+| fake `commit 4000` | 6621 | **5508** | 6000 |
+| fake `load 15000` | 17525 | **16507** | 17000 |
+| 真机 headless Edge `nav-hang` | 17540 | **16514** | 17000 |
+| 真机 `nav-blackhole-ip` | 17597 | **16521** | 17000 |
+
+`waitUntil:'none'` 仍 **279 ms** 返回（`readyState=loading`、`pendingUrl` 已置位）——给后置探针加预算没有把「不等待」也拖住。
+回归网 `node tests/run-all.mjs` → **19/19 套**（42.9 s）；rig `smoke` **6/6**（Windows 与 WSL 各一次）。
+
+### 缺的那一格：在主人自己的 Edge profile 上没量成
+
+`browser_navigate` 到假桥 `http://127.0.0.1:9781/hang` → `command_timeout`（5000 ms）。
+**原因不是我们的代码**：`browser_permissions` 读该 origin → 26 个权限类**全无记录**（含 `loopback_network` /
+`local_network_access`），且**有 1 个 pending 请求已等 16 s** ⇒ Edge 的「本地网络访问」授权气泡在等人点，
+扩展看不到也点不了它（机制见上面 2026-09-29 那节）。
+
+**判据（30 秒）**：localhost 导航超时时，**先调 `browser_permissions` 看有没有 pending**，再怀疑桥或扩展。
+计时类验收走 `rig/`（headless + 临时空 profile，没有这个气泡），不要在主人的 profile 里量。
+
+⇒ 「修好了」的证据是上表与假桥两张表，**不含**主人 profile 上的一次真机读数；后者截至本行仍未取得。
