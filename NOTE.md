@@ -2333,6 +2333,26 @@ node D:\work\DSHWS\scratch\route-a-migration\p3-shadow.mjs
   —— 四个入口在 PowerShell 里 `exit 0` 却什么都不干。四份 shim 已修（见下条）。所以「pnpm 坏」不再是
   不走 `dsh plugin add` 的理由，**npm 用户的安装门仍未真跑过一次 install**。
 
+### 安装门：已真验（2026-11-13 23:1x）
+
+P3 留下的「`dsh plugin add` + 真宿主挂载没做」这一半，今晚补上了，用的是**一次性 profile**：
+
+| 步 | 读数 |
+|---|---|
+| 造 profile | `dsh probe --from-default-profile headless --dump-config`（不挂载，4 个文件） |
+| 装（真 home） | `dsh plugin --profile probe add @angelky7/dsh-browser-control` → **exit 0 / 14 s**；pnpm 12.15.0 |
+| 装（隔离 home，`DSH_HOME=D:\dsh-scratch-h4`） | 同样 exit 0 / 60 ms（缓存命中）—— 说明这条路**不依赖** `D:\dsh-data` 里那些手工改动 |
+| 装后自动做的事 | 依赖写 `"^1.7.10"`，**并且 `dsh.profile.bundles` 自动追加了一行** `<包名>` —— 这步是关键，手装时是我自己改的 |
+| 落地量 | 28 个文件 / 516 KB；从 profile 根 `import` 成功，导出 `name = browser-bridge` |
+| 包自带 patch 是否被认 | `dsh probe --patch <port-overlay> --dump-config` 打出 `# == @angelky7/dsh-browser-control, patched by <overlay>`，条目 `id: browser-bridge` ✅ |
+| **真宿主挂载** | 在隔离 home 里起 probe（overlay 把端口改 9778）：**9778 监听建立**（pid 67132），9777 那个正式实例毫发无损 ⇒ 插件在真宿主里挂起来了 |
+
+⚠ 一条必须记住的差别：**注册表上那份是上游官方 1.7.10（`lib/index.js` 179 KB，里面既没有 `url_blocked` 也没有 `browser_permissions`）**，
+我们的补丁版是 258.8 KB。也就是说 `dsh plugin add @angelky7/dsh-browser-control` 装的是**上游原版**，
+要装我们这版只能从 tgz / 目录装。
+
+一次性件已清：`profiles\probe`、`D:\dsh-scratch-h4` 都删了；收工后 9777 仍归正式实例（pid 59904）。
+
 ### 回滚（一条命令，之后仍需 reload 扩展 + 重启）
 
 ```powershell
