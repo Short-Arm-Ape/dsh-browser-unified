@@ -2393,3 +2393,28 @@ pwsh -File D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1 -Apply
 | `README.md` 重写 | 从「0.7.x 快照 + 指向已不存在的 `../dsh-browser-unified-src/`」改成现状：0.11 线收口、主线是上游、怎么装、历史在哪 |
 | 本机主线 | 上游 1.7.10 + 扩展 1.7.2（见上节） |
 | 0.11 代码 | 仍在 `src/packages/browser-unified-plugin`（`master` 历史里），标签可检出 |
+
+## 2026-11-14：仓的状态快照 + 补上根目录缺失的 LICENSE
+
+核于 **2026-11-14 00:0x–00:2x**（远端读数走 API，本地读数走 `git`）。
+
+| 项 | 值 |
+|---|---|
+| 仓 | `Short-Arm-Ape/dsh-browser-unified`，public，非 fork，默认 `main` |
+| 远端 main | `b7468342`（远端 sha 与本地不同，内容相同） |
+| 分支 | `main` / `ci/host-verification`（10-17）/ `release/0.11.33`（10-17） |
+| 标签 | 8 个，末位 `v0.11.53-final` → `a2c1d0b` |
+| PR / Issue | 4 个 PR **全部 closed/merged**，0 issue |
+| 星 / fork | 0 / 1（`long-arm-ape/dsh-browser-unified`，停在 10-17 的脏副本） |
+| 根目录 | 9 条目 + 本次新增的 `LICENSE`；4 份内部文档不在远端 |
+| 本地 | `master` 干净；`route-a` = `5036170`（**只在本地**，打了本地标签 `route-a-ports-20261112`）；`vendor/upstream-main-a6d9f05` 也只在本地 |
+
+**修掉的缺陷**：README 与 `NOTICE.md` 都写「`LICENSE` 是本仓 AGPL-3.0 全文」，但**根目录从来没有这个文件**
+（只有各子包里有）。GitHub 因此把仓判为「无许可证」，API 的 `/license` 返回 404 —— 公开仓却等于默认
+「保留所有权利」。已把 AGPL-3.0 全文（34,524 B，与 `src/packages/browser-unified-plugin/LICENSE` 逐字节
+相同）补到根目录；补后 API 读数为 `AGPL-3.0`。
+
+**仍然开着的口**：`route-a`（我们带三件搬运的上游补丁）与 `vendor/…`（上游原样）**只存在于这台笔记本**。
+公开仓的 README 写的是「补丁构建只在这台机器上」，与现状一致；但这也意味着硬盘一坏，目标授权与权限探针
+这两块就没了（能重建的部分只有 `archives/route-a-migration-20261112/` 里的计划与补丁脚本）。
+要「既备份又不公开」，只有一条路：新建私有仓（需要账号侧动作）。
