@@ -2290,3 +2290,50 @@ node D:\work\DSHWS\scratch\route-a-migration\p3-shadow.mjs
 ```
 
 计划与重叠矩阵（**内部文档，不进公开仓**）：`D:\work\DSHWS\archives\route-a-migration-20261112\`。
+
+## 2026-11-13：P4 切换落地 —— 这台机器的主线已经是上游了
+
+**结论：切换完成并实测通过。**这台机器现在跑的是 `@angelky7/dsh-browser-control`（基线 main 顶 `a6d9f05c`
++ 我们的三件搬运）配上游扩展 **1.7.2**。（核于 2026-11-13 22:47–23:0x）
+
+### 换了哪四处（都在本机，带备份）
+
+| 位置 | 从 | 到 |
+|---|---|---|
+| 插件包 `profiles\web\self-plugins\dsh-browser-control` | 无 | `@angelky7/dsh-browser-control@1.7.10`（发布文件，703 KB） |
+| `profiles\web\package.json` | 依赖/bundles 指 `dsh-browser-unified` | 指 `@angelky7/dsh-browser-control`（node_modules 里是 junction） |
+| `profiles\web\cordis.patch.yml` 的 browser-bridge 块 | 旧包名 + 我们专有的 4 个键 | 新包名 + 新包认的键（`browserProfile` / `extensionPath`），**token 原样保留** |
+| `D:\edge-extensions\dsh-browser-extension`（原地换，id 与存储不变） | 1.0.56 | **1.7.2** |
+
+回滚物：扩展 `_backup\dsh-browser-extension-1.0.56-20261113`；两份配置 `.bak-20261113-p4`；
+旧插件目录与 `browser-unified-core` **留在盘上没删**。回滚脚本见下。
+
+### 读数（核于 2026-11-13）
+
+| 项 | 读数 |
+|---|---|
+| 宿主 | pid 59904，22:47:56 起，9777 由它持有（旧 pid 57060 已退） |
+| 工具面 | **31 条**（与 `lib/index.js` 里注册的名单逐条对上） |
+| 扩展 | `browser_info` 报 **1.7.2**（reload 之前一直报 1.0.56 —— 未打包扩展换磁盘文件不会自动生效） |
+| 公网导航 | `https://example.com/` 真打开（标签页标题变成 Example Domain），`browser_read` 读回正文 |
+| 闸门拒绝 | `http://169.254.169.254/latest/meta-data/` → `[url_blocked]`，`effectState=not_started`（命令没发给浏览器） |
+| 权限探针 | `browser_permissions` 在真机跑通：`Profile 3` 靠 `extensionPath` 命中，124 个权限类 / 26 类无记录 —— 与 0.11 线早些时候的读数**一字不差** |
+
+顺带一条：**上游 hello 对字段是宽容的** —— 重载前旧扩展 1.0.56 照样能跟新插件握手（只报 `1.0.56`），
+所以「能连上」不能用来判断扩展版本新旧，得看 `browser_info` 的版本号。
+
+### 切换带来的实际差异（不是纸面差异）
+
+- **分层工具面没了**：`layeredTools` / `enabledGroups` / `autoLaunchOnToolUse` 是 0.11 线专有，
+  上游没有对等物（PLAN §3 记为「可延后」）。现在 **31 个工具全部常驻**，每轮上下文比切换前大。
+- 扩展侧我们那条 `dialogPolicy` 存储项新扩展不读（它只认 `port` / `token` / `autoConnect`）。
+- 装机方式**不是** `dsh plugin add`：本机 pnpm 的 bin 声明是坏的，所以走的是「拷贝发布文件 + junction +
+  改 package.json/bundles」这条手工等价路径。**npm 用户的安装门还没验过。**
+
+### 回滚（一条命令，之后仍需 reload 扩展 + 重启）
+
+```powershell
+pwsh -File D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1 -Apply
+```
+
+判据：`browser_info` 报 `1.0.56`，工具面回到旧插件那套（含 `browser_tools` / `browser_policy_status`）。
