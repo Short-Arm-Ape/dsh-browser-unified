@@ -2327,8 +2327,11 @@ node D:\work\DSHWS\scratch\route-a-migration\p3-shadow.mjs
 - **分层工具面没了**：`layeredTools` / `enabledGroups` / `autoLaunchOnToolUse` 是 0.11 线专有，
   上游没有对等物（PLAN §3 记为「可延后」）。现在 **31 个工具全部常驻**，每轮上下文比切换前大。
 - 扩展侧我们那条 `dialogPolicy` 存储项新扩展不读（它只认 `port` / `token` / `autoConnect`）。
-- 装机方式**不是** `dsh plugin add`：本机 pnpm 的 bin 声明是坏的，所以走的是「拷贝发布文件 + junction +
-  改 package.json/bundles」这条手工等价路径。**npm 用户的安装门还没验过。**
+- 装机方式**不是** `dsh plugin add`：走的是「拷贝发布文件 + junction + 改 package.json/bundles」这条手工等价路径。
+  **原因此前记错了**（2026-11-13 复核）：本机 `pnpm` 的 `.cmd` 层在 2026-10-29 就修过、今天实测
+  `dsh plugin --profile web --version` 返回 12.15.0（会转发给 pnpm，正常）；真正坏的是**没人修过的 `.ps1` 层**
+  —— 四个入口在 PowerShell 里 `exit 0` 却什么都不干。四份 shim 已修（见下条）。所以「pnpm 坏」不再是
+  不走 `dsh plugin add` 的理由，**npm 用户的安装门仍未真跑过一次 install**。
 
 ### 回滚（一条命令，之后仍需 reload 扩展 + 重启）
 
