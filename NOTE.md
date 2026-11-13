@@ -2418,3 +2418,41 @@ pwsh -File D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1 -Apply
 公开仓的 README 写的是「补丁构建只在这台机器上」，与现状一致；但这也意味着硬盘一坏，目标授权与权限探针
 这两块就没了（能重建的部分只有 `archives/route-a-migration-20261112/` 里的计划与补丁脚本）。
 要「既备份又不公开」，只有一条路：新建私有仓（需要账号侧动作）。
+
+## 2026-11-14 更正：本机回到我们自己的 0.11.53，跟随上游那条线作废
+
+**主人 2026-11-14 00:1x 纠正了方向**（三句话，原样记）：
+
+1. 「本地装统一浏览器插件（我们自己的仓）」
+2. 「换向指的是我们仓库准备考虑换路线（还是走融合），现有以 caob23 为上游的这条线结束」
+3. 「caob23 若还有精力另行维护」
+
+**所以上面 2026-11-12 / 11-13 那两节（P1–P5：搬三件到上游、切换、退休）里的操作方向是错的**：
+「以上游为主线」被我实现成了「本机装上游 + 我们打补丁」，而主人的意思是**本机装我们自己的东西**、
+**跟着别人仓走的方向结束**。技术动作没白做（那三件补丁本来就是从 0.11 搬过去的，反过来说明 0.11 自己就有），
+但结论要改。
+
+### 已执行的回滚（核于 2026-11-14 00:2x）
+
+| 面 | 现状 |
+|---|---|
+| 扩展 | `D:\edge-extensions\dsh-browser-extension` 回 **1.0.56**（manifest 已核） |
+| profile 依赖 | `dsh-browser-unified` → `link:…self-plugins/dsh-browser-unified`（**0.11.53**） |
+| `dsh.profile.bundles` | 含 `dsh-browser-unified`，不含 `@angelky7/dsh-browser-control` |
+| `cordis.patch.yml` | browser-bridge 块回到 0.11 那套（含 `layeredTools` / `enabledGroups` / `autoLaunchProfileDir`） |
+| junction `node_modules\@angelky7\…` | 已删 |
+| 盘上保留 | `self-plugins\dsh-browser-unified`（0.11.53）与 `self-plugins\dsh-browser-control`（1.7.10）都在，后者不再挂载 |
+
+回滚脚本：`D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1`（已跑过；它同时是 P4 的撤销件）。
+**仍待人的两步**：`edge://extensions` 里 reload 扩展；重启 `dsh web`。判据：`browser_info` 报 `1.0.56`，
+工具面回到 0.11 那套（含 `browser_tools` / `browser_policy_status`）。
+
+### route-a 的处置
+
+`route-a` 分支（基于 angelky7 `a6d9f05` + 三件搬运）**搁置**：本地分支与标签 `route-a-ports-20261112` 都留着，
+但**不再跟进上游、也不再是本机主线**。它搬的三件东西在 0.11.53 里本来就有，所以它没有独有价值；
+要复用它只有一种情形——将来「融合」方向要把某一块单独提出来时当参考实现。
+
+### 接下来
+
+本仓要「换路线（还是走融合）」，方案待定。**下一轮讨论该从这里开始，不要从 P5 或补丁线继续。**
