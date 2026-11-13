@@ -2389,7 +2389,7 @@ pwsh -File D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1 -Apply
 
 | 动作 | 状态 |
 |---|---|
-| 标签 `v0.11.53-final` | 远端指向 `a2c1d0b`（0.11.53 代码的远端对应提交） |
+| 标签 `v0.11.53-final` | 远端指向 `a2c1d0b`（0.11.53 代码的远端对应提交）。**已核**：该提交处 `src/packages/browser-unified-plugin/package.json` 的 `version` 读数 = `0.11.53`；远端 main 的最新 tree = 本地 HEAD tree |
 | `README.md` 重写 | 从「0.7.x 快照 + 指向已不存在的 `../dsh-browser-unified-src/`」改成现状：0.11 线收口、主线是上游、怎么装、历史在哪 |
 | 本机主线 | 上游 1.7.10 + 扩展 1.7.2（见上节） |
 | 0.11 代码 | 仍在 `src/packages/browser-unified-plugin`（`master` 历史里），标签可检出 |
