@@ -2360,3 +2360,36 @@ pwsh -File D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1 -Apply
 ```
 
 判据：`browser_info` 报 `1.0.56`，工具面回到旧插件那套（含 `browser_tools` / `browser_policy_status`）。
+
+## 2026-11-13：P5 退休 0.11 线 + 新扩展专有命令的真机补验
+
+**结论：0.11 线收口了。**代码定格在标签 **`v0.11.53-final`**，README 改指向新主线；本机主线是上游
+1.7.10 + 扩展 1.7.2（P4 那节）。以下读数核于 **2026-11-13 23:4x–00:0x**。
+
+### 标签落到哪个提交（有坑，记下来）
+
+远端 `main` 的历史是 2026-11-11 用 Git Data API 回放出来的，**sha 与本地不同但内容相同**：
+远端 `274d7d6` 的 tree = `2c5ec0fa…`，与本地 `6bbae37` 的 tree **逐字节相同**。所以「0.11.53 那个提交」
+在远端叫 **`a2c1d0b`**（`fix(nav,text): share the command deadline…`），本地叫 `cc8b25f`。
+**打远端标签要用远端的 sha**，拿本地 sha 去 API 建 ref 会 422（对象不存在）。
+
+### 真机补验：只在新扩展（1.7.2）里有的命令
+
+| 命令 | 读数 |
+|---|---|
+| `tabs.close` 批量 | 一次关两个（`[875841756, 875841759]`）→ `requested:2, closed:[两个], failed:[]` ✅ |
+| `browser_hold` | `on` → `covered:true`，`off` → `covered:true` ✅（1.7.x 才有的接管层） |
+| `browser_drag`（html5 模式） | 在 example.com 上注入两个 div 后拖拽：**`dragstart` 与 `drop` 两个监听都触发了** ✅ —— 但工具自己回报「drop fired but **no drop handler ran**」是**假阴性**，别信那句话 |
+| `browser_upload` | 配置里 `allowUpload` 未开 → 拒绝且明确说「No command was sent」✅（**真传文件没验**：要 `allowUpload: true` + `uploadDir` + 重启 `dsh web`） |
+
+顺带一条口径：`browser_drag` 那条假阴性属于「工具的报告文本 ≠ 页面里实际发生的事」，和我 2026-11-12
+记的那类错同源 —— **判拖放成没成，要在页面里挂监听读数，别读工具的总结。**
+
+### 退休动作清单
+
+| 动作 | 状态 |
+|---|---|
+| 标签 `v0.11.53-final` | 远端指向 `a2c1d0b`（0.11.53 代码的远端对应提交） |
+| `README.md` 重写 | 从「0.7.x 快照 + 指向已不存在的 `../dsh-browser-unified-src/`」改成现状：0.11 线收口、主线是上游、怎么装、历史在哪 |
+| 本机主线 | 上游 1.7.10 + 扩展 1.7.2（见上节） |
+| 0.11 代码 | 仍在 `src/packages/browser-unified-plugin`（`master` 历史里），标签可检出 |
