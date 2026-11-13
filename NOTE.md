@@ -2456,3 +2456,18 @@ pwsh -File D:\work\DSHWS\archives\p4-switch-20261113\rollback.ps1 -Apply
 ### 接下来
 
 本仓要「换路线（还是走融合）」，方案待定。**下一轮讨论该从这里开始，不要从 P5 或补丁线继续。**
+
+### 顺带：台式机交接已推（2026-11-14 01:0x）
+
+给台式机（`DESKTOP-MFI7DKM`）推了一份「0.11.39 → 0.11.53」的交接包，通道 **SSH**
+（`localhost@192.168.31.10`，密钥 `~/.ssh/dshserver`，0.4 s 返回；**ping 是 False，别拿 ping 判可达**）：
+
+- 落点 `F:\dsh-data\inbox-from-laptop\`：交接 md（8,463 B）+ `dsh-browser-unified-0.11.53.tgz`（269,682 B）
+  + `browser-unified-core-0.1.15.tgz`（53,590 B）+ `dsh-browser-extension-1.0.56.zip`（95,571 B），**逐文件 sha256 两端一致**。
+- 台式机现状（远程只读核）：DSH `0.2.1-rc.2` / node v24.22.2 / `dsh web` pid 24816 听 3080+9777 /
+  已装 **0.11.39 + core 0.1.10** / Edge 只有 `Default,1,2,4,5`（无 Profile 3）。
+- 两条核过的结论：core **0.1.10 已具备** 0.11.53 需要的导出（`realmOf`、`DEFAULT_METADATA_*`），核心升级可选；
+  台式机现有 patch 的键在 0.11.53 的 `Config()` 下**全部不抛错**（`autoLaunchEnabled` / `autoLaunchProfileName` 静默透传）。
+- 交接文档里写进了那条**没修**的坑：`allowHosts` / `denyHosts` 写 `host:port` 会静默失效。
+- 探针留在台式机 `F:\dsh-data\` 的 7 个 `__*.ps1` 已删净。
+- 存档：[`archives/desktop-handoff-20261114/`](../DSHWS/archives/desktop-handoff-20261114/INDEX.md)（含 payload 与校验和）。
