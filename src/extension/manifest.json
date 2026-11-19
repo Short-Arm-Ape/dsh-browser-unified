@@ -2,9 +2,10 @@
 	"manifest_version": 3,
 	"name": "DSH Browser Control",
 	"short_name": "DSH Bridge",
-	"version": "1.0.58",
+	"version": "1.0.59",
 	"description": "让 DeepSeek Harness (dsh) 通过本地桥接服务控制浏览器：导航、读内容、执行 JS、点击、输入、按键、截图。",
 	"minimum_chrome_version": "116",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArVptFDdubvzmnxKHWf7CfERu4Z8K1VUt4DEqoleCPC8wbVDxsh+iMeIg6zTr1AgveuA0wbCilzB21VH+B3hqV+aOJMvs5MQnLSzHBhyQPeozOGA9eHFTKzpguix73Mx/ikCoOt0erPltQXe1Cvjl1qYq5ZKHs2fFxsCP54rhQkLZV47AIKF5Y9CzGxCxyPxHGNFnDfxY8ztFZfFJsD8FUcx21YCyG/9RD5TZQ2f9+CBW0DaOiVMvPJ9LGp1KhTVVUiLH3IudpStB8MC5TXxYJeXfFXLjUtI9c4uCOArdmIoFhTXVk7GfL9t6NIXz46hQxnAmw8VSg4Xlp3ycPdG1uQIDAQAB",
 	"permissions": [
 		"debugger",
 		"tabs",
