@@ -242,6 +242,24 @@ try {
 		const timeout = diagnoseOffline({ target, spawn: { pid: 5151, spawnedAt: 1000, exitCode: null, waitedMs: 8000 } })
 		check('进程还在、等到超时 ⇒ hello-timeout', timeout.primary?.id === 'hello-timeout', timeout.primary?.id)
 		check('超时文案带等待时长', timeout.text.includes('8000 ms'))
+		check('进程真活着时 hello-timeout 才可以说「浏览器起来了」', timeout.text.includes('浏览器起来了但扩展没连上'), timeout.text.slice(0, 120))
+
+		// 2026-11-19 台机实测：Edge 已在跑时再用 `--user-data-dir=<那份>` 拉起，进程 56–75 ms
+		// 退出、**exit 21**（PROFILE_IN_USE），不是 exit 0。旧判据只认 exit 0，于是回执落到
+		// hello-timeout 上说「浏览器起来了但扩展没连上」—— 进程 56 ms 就死了，那句话是假话，
+		// 跟 11-15「唤起了但没用」是同一句话。
+		const profileInUse = diagnoseOffline({ target, spawn: { pid: 4243, spawnedAt: 1000, exitedAt: 1056, exitCode: 21, waitedMs: 5000 } })
+		check('拉起进程 56 ms 就 exit 21 ⇒ profile-in-use（既不是 merged，也不是超时）',
+			profileInUse.primary?.id === 'profile-in-use', profileInUse.primary?.id)
+		check('exit 21 文案点名 PROFILE_IN_USE / 毫秒数 / 资料页 /「没有被加载」',
+			profileInUse.text.includes('PROFILE_IN_USE') && profileInUse.text.includes('56 ms')
+			&& profileInUse.text.includes('Profile 4') && profileInUse.text.includes('没有被加载'),
+			profileInUse.text.slice(0, 110))
+		check('exit 21 不许被读成「被合并进已运行实例」（两者成因相反）',
+			!profileInUse.causes.some((cause) => cause.id === 'merged-into-running-instance'),
+			profileInUse.causes.map((cause) => cause.id).join(','))
+		check('进程已退出时不许说「浏览器起来了但扩展没连上」',
+			!profileInUse.text.includes('浏览器起来了但扩展没连上'), profileInUse.text.slice(0, 110))
 
 		const sandbox = diagnoseOffline({ env: 'sandbox', target: { userDataDir: 'D:\\tmp\\sb', profileDir: 'Default' } })
 		check('沙箱环境要标出来（沙箱结论不代表用户的浏览器）', sandbox.text.includes('sandbox'))

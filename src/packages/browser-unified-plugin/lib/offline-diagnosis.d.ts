@@ -29,6 +29,8 @@ export type OfflineCauseId =
  | 'extension-disabled'
 /** 拉起的进程**根本没起来**（异步 `error`：可执行文件不在 / 无权限）。 */
  | 'launch-failed'
+/** 拉起的进程以 exit 21（PROFILE_IN_USE）退出：user-data-dir 被别的浏览器进程拿着，本次启动作废。 */
+ | 'profile-in-use'
 /** 拉起的进程几乎立刻退出（exit 0）：启动被合并进已运行实例，目标资料页没加载。 */
  | 'merged-into-running-instance'
 /** 曾经 hello 过，现在断了。 */
@@ -116,7 +118,8 @@ export interface OfflineDiagnosis {
  * 按证据给原因。
  *
  * 优先级 = 「越接近根因的越靠前」：占用（别的桥在管）> 握手被拒（扩展来了但被拦）
- * > 端口不在窗口内（扩展拨不到）> 浏览器进程根本没起来 > 扩展不在/被禁 > 启动被合并
+ * > 端口不在窗口内（扩展拨不到）> 浏览器进程根本没起来 > 扩展不在/被禁
+ * > 资料页被别的浏览器进程占着（exit 21）> 启动被合并进已运行实例（exit 0）
  * > 曾经连上过 > 超时。
  * @param evidence - 调用方收集的证据。
  * @returns 诊断结果（`text` 已可直接拼进错误文案）。

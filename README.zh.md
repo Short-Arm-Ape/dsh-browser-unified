@@ -7,7 +7,7 @@ MV3 扩展，把 `browser_*` 工具交给模型，前面套一层可配置的 UR
 
 | 包 | 版本 | 是什么 |
 |---|---|---|
-| `dsh-browser-unified` | 0.11.54 | 插件：31 个 `browser_*` 工具（27 个驱动浏览器 + 4 个注册表/工具），GUI 设置分区 |
+| `dsh-browser-unified` | 0.11.55 | 插件：31 个 `browser_*` 工具（27 个驱动浏览器 + 4 个注册表/工具），GUI 设置分区 |
 | `browser-unified-core` | 0.1.15 | URL 策略、审批层、桥（收编自上游）、guarded bridge、错误分类 |
 | `dsh-browser-unified-mit` | 0.1.1 | MIT 版：没有桥、没有浏览器工具 |
 | 扩展 `DSH Browser Control` | 1.0.58 | MV3 扩展；**用本仓这版**，别换回上游 |
@@ -24,7 +24,7 @@ MV3 扩展，把 `browser_*` 工具交给模型，前面套一层可配置的 UR
    ```bash
    dsh plugin --profile <profile> add \
      file:/abs/path/browser-unified-core-0.1.15.tgz \
-     file:/abs/path/dsh-browser-unified-0.11.54.tgz
+     file:/abs/path/dsh-browser-unified-0.11.55.tgz
    ```
 
 3. **重启 `dsh web`**。包内 patch 默认 `enabled: true`，装好即监听 `127.0.0.1:9777`。
