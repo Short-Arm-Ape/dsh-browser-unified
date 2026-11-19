@@ -11,7 +11,7 @@ AGPL-3.0-only.
 | `dsh-browser-unified` | 0.11.55 | the plugin: 31 `browser_*` tools (27 driving a browser + 4 registry/tooling), GUI settings section |
 | `browser-unified-core` | 0.1.15 | URL policy, approval layer, bridge (vendored from upstream), guarded bridge, error classification |
 | `dsh-browser-unified-mit` | 0.1.1 | MIT edition without the bridge and without browser tools |
-| extension `DSH Browser Control` | 1.0.58 | MV3 extension; **use this repo's build**, not upstream's |
+| extension `DSH Browser Control` | 1.0.59 | MV3 extension; **use this repo's build**, not upstream's |
 
 ## Install
 
