@@ -14,6 +14,17 @@
  * @module offline-diagnosis
  */
 const DEFAULT_SCAN = { base: 9777, count: 10 };
+/**
+ * chromium 的 `RESULT_CODE_PROFILE_IN_USE`（CEF 侧同名常量 `CEF_RESULT_CODE_PROFILE_IN_USE`）＝ 21。
+ *
+ * 2026-11-19 台机实测：Edge 157 已在跑（用户从开始菜单起的，没带 `--user-data-dir`），
+ * 再用 `--user-data-dir=<默认那份>` 拉起，进程 56–75 ms 就退出、**exit 21**；
+ * 而同一份代码在临时 `user-data-dir` 上的第二次拉起是 **exit 0**（那才是被合并进已运行实例）。
+ * 两件事对用户是同一个症状（窗口没出来、资料页没加载），但**成因相反**：
+ * exit 0 是「网址交给了老进程」，exit 21 是「老进程没接，这次启动作废」。
+ * 混成一句就会把人支去关浏览器 —— 11-15 那次「唤起了但没用」就是这个坑。
+ */
+const PROFILE_IN_USE_EXIT_CODE = 21;
 function profileLabel(target) {
     return `${target.profileDir}${target.profileName === undefined ? '' : `（${target.profileName}）`}`;
 }
@@ -21,7 +32,8 @@ function profileLabel(target) {
  * 按证据给原因。
  *
  * 优先级 = 「越接近根因的越靠前」：占用（别的桥在管）> 握手被拒（扩展来了但被拦）
- * > 端口不在窗口内（扩展拨不到）> 浏览器进程根本没起来 > 扩展不在/被禁 > 启动被合并
+ * > 端口不在窗口内（扩展拨不到）> 浏览器进程根本没起来 > 扩展不在/被禁
+ * > 资料页被别的浏览器进程占着（exit 21）> 启动被合并进已运行实例（exit 0）
  * > 曾经连上过 > 超时。
  * @param evidence - 调用方收集的证据。
  * @returns 诊断结果（`text` 已可直接拼进错误文案）。
@@ -114,6 +126,31 @@ export function diagnoseOffline(evidence) {
             evidence: ['extension=present-disabled', ...(evidence.extensionId === undefined ? [] : [`extensionId=${evidence.extensionId}`])],
         });
     }
+    // exit 21 = PROFILE_IN_USE：连资料页都没接过就退出了。它必须排在
+    // `merged-into-running-instance` 前面 —— 那一条说的是 exit 0「网址已经交给老进程」，
+    // 而这里连交都没交成。判据只看「起来过又退出 + exit 21」，不看退出得多快：
+    // 用户在别的机器/会话里也可能让这个 user-data-dir 被占着。
+    if (spawn !== undefined && spawn.spawnError === undefined && spawn.exitedAt !== undefined
+        && spawn.exitCode === PROFILE_IN_USE_EXIT_CODE) {
+        const livedMs = spawn.spawnedAt === undefined ? undefined : spawn.exitedAt - spawn.spawnedAt;
+        causes.push({
+            id: 'profile-in-use',
+            detail: `这个资料页被别的浏览器进程占着，**这次启动作废**（exit ${PROFILE_IN_USE_EXIT_CODE} = PROFILE_IN_USE）：`
+                + `拉起的进程${spawn.pid === undefined ? '' : ` pid ${spawn.pid}`}`
+                + `${livedMs === undefined ? '' : `在 ${livedMs} ms 内就退出了`}，`
+                + `${target === undefined ? '目标资料页' : `目标资料页 ${profileLabel(target)}`}没有被加载 —— `
+                + '已经有 Edge 在用这个 user-data-dir，新进程连这个资料页都没接过，所以网址也没进去。'
+                + '要么让那个已经在跑的 Edge 自己打开这个资料页（手动点一下），'
+                + '要么把它的窗口全部关掉，再让我拉起',
+            evidence: [
+                ...(spawn.pid === undefined ? [] : [`spawnPid=${spawn.pid}`]),
+                ...(livedMs === undefined ? [] : [`livedMs=${livedMs}`]),
+                `exitCode=${String(spawn.exitCode)}`,
+                'profileInUse=21',
+                `waitedMs=${spawn.waitedMs}`,
+            ],
+        });
+    }
     if (spawn !== undefined && spawn.spawnError === undefined && spawn.exitedAt !== undefined
         && (spawn.exitCode === 0 || spawn.exitCode === null || spawn.exitCode === undefined)) {
         const livedMs = spawn.spawnedAt === undefined ? undefined : spawn.exitedAt - spawn.spawnedAt;
@@ -145,11 +182,16 @@ export function diagnoseOffline(evidence) {
         });
     }
     if (spawn !== undefined && spawn.spawnError === undefined) {
+        // 进程已经退出时**不许**再说「浏览器起来了」—— 那是 11-15 台机那句误人的话
+        // （进程 56 ms 就死了，回执却让人去查端口和令牌）。退出与否决定这句话。
+        const exited = spawn.exitedAt !== undefined;
         causes.push({
             id: 'hello-timeout',
             detail: `拉起后等了 ${spawn.waitedMs} ms 没等到 hello`
-                + `${spawn.pid === undefined ? '' : `（进程 pid ${spawn.pid} ${spawn.exitedAt === undefined ? '还在跑' : '已退出'}）`}`
-                + '：浏览器起来了但扩展没连上，按下面的顺序查端口 → 令牌 → 扩展是否装在这个资料页 → 是否被禁用',
+                + `${spawn.pid === undefined ? '' : `（进程 pid ${spawn.pid} ${exited ? `已退出，exit ${String(spawn.exitCode)}` : '还在跑'}）`}`
+                + (exited
+                    ? '：**拉起的进程已经退出了**，「浏览器起来了」这一步没成立 —— 先看上面那条原因'
+                    : '：浏览器起来了但扩展没连上，按下面的顺序查端口 → 令牌 → 扩展是否装在这个资料页 → 是否被禁用'),
             evidence: [
                 `waitedMs=${spawn.waitedMs}`,
                 ...(spawn.pid === undefined ? [] : [`spawnPid=${spawn.pid}`]),
