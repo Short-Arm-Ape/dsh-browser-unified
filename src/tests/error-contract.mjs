@@ -1,0 +1,159 @@
+#!/usr/bin/env node
+/**
+ * error-contract.mjs — 失败文案的「该不该重试」契约（纯逻辑，不需要浏览器/重启）。
+ *
+ * 动机（上游 v1.0.13 同一条）：宿主的失败内容是 `Error: ${message}`，而 `code` /
+ * `effectState` / `hint` 这些结构化字段只进 `error.info` 与 HTTP 面 —— **模型读不到**。
+ * 于是"点超时了要不要重试""链路断了动作落没落"这种决定，模型只能瞎猜；猜错的代价是
+ * 点两次、提交两次表单。所以决定下一步所需的信息必须**写进 message 本身**。
+ *
+ * 本测试钉住四件事：
+ *   1. 写操作超时/掉线 ⇒ `effectState=unknown`（可能已经落到页面上），文案里必须出现该字样与下一步；
+ *   2. 读操作同样的失败 ⇒ `not_started`（重试安全）；
+ *   3. **策略拦截**（UrlPolicyError，命令根本没发出去）⇒ `policy_blocked` 且 `not_started`
+ *      —— 不能按"写操作"一律报 unknown，那是把确定的事说成不确定；
+ *   4. 各类底层文案 → code 的映射，以及 classify 的幂等（core 桥包一次、插件壳再包一次）。
+ *
+ * 复现：node tests/error-contract.mjs      # 需要先 npm run build（core 的 dist/ 要有）
+ */
+
+import path from 'node:path'
+import { createRequire } from 'node:module'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const pkg = path.resolve(here, '..', 'packages', 'browser-unified-plugin')
+const require = createRequire(path.join(pkg, 'package.json'))
+const corePath = require.resolve('browser-unified-core')
+const core = await import(pathToFileURL(corePath).href)
+
+const results = []
+function check(name, ok, detail) {
+	results.push({ name, ok })
+	console.log(`${ok ? '  ✓' : '  ✗'} ${name}${detail === undefined ? '' : ` — ${detail}`}`)
+}
+
+const { classify, BridgeError, isWriteCommand } = core
+
+console.log('\n[1] 写命令集合：判据是「重试会不会造成额外损害」')
+{
+	check('click / nav / press / input / tabs.close 是写命令',
+		['click', 'nav', 'press', 'input', 'tabs.close'].every((c) => isWriteCommand(c)))
+	check('只读命令不是写命令', !['content', 'snapshot', 'find', 'screenshot', 'wait', 'tabs.list', 'browser.info'].some((c) => isWriteCommand(c)))
+	check('window.ensure 不算写命令（幂等：没窗口才建）', !isWriteCommand('window.ensure'))
+}
+
+console.log('\n[2] 写操作超时 = 结果未知；读操作超时 = 重试安全')
+{
+	const write = classify('click', new Error('browser command timed out after 800ms: click'))
+	check('code = command_timeout', write.code === 'command_timeout', write.code)
+	check('effectState = unknown', write.effectState === 'unknown', write.effectState)
+	check('message 里带 effectState=unknown', write.message.includes('effectState=unknown'))
+	check('message 里带"不要直接重试"的下一步', write.message.includes('不要直接重试'))
+	check('message 里没有把原始描述吞掉', write.message.includes('timed out after 800ms'))
+
+	const read = classify('snapshot', new Error('browser command timed out after 800ms: snapshot'))
+	check('读命令同文案 ⇒ not_started', read.effectState === 'not_started', read.effectState)
+	check('读命令的文案说"重试安全"', read.message.includes('重试安全'))
+
+	// 扩展页内的预算用尽（write 侧才是要紧的：点一下超时了，事件可能已经发出去了）。
+	const pageWrite = classify('click', new Error('eval timeout after 15000ms'))
+	check('页内超时也归 command_timeout', pageWrite.code === 'command_timeout', pageWrite.code)
+	check('页内超时的写命令 ⇒ unknown（不能当没发生）', pageWrite.effectState === 'unknown', pageWrite.effectState)
+	check('hint 指向加大 timeoutMs', pageWrite.hint.includes('timeoutMs'), pageWrite.hint.slice(0, 40))
+	const pageRead = classify('wait', new Error('wait timeout after 10000ms'))
+	check('页内超时的读命令 ⇒ not_started', pageRead.effectState === 'not_started', pageRead.effectState)
+}
+
+console.log('\n[3] 策略拦截：命令没发出去，"没动到页面"是确定的')
+{
+	const err = new Error('WEB_BLOCKED_URL: 目标被 URL 策略拦下')
+	err.name = 'UrlPolicyError'
+	const blocked = classify('nav', err)
+	check('code = policy_blocked（本仓库扩展码）', blocked.code === 'policy_blocked', blocked.code)
+	check('effectState = not_started（不能报 unknown）', blocked.effectState === 'not_started', blocked.effectState)
+	check('hint 指向设置里的策略项而不是"重试"', blocked.hint.includes('策略') && blocked.hint.includes('不会有不同结果'))
+}
+
+console.log('\n[4] 底层文案 → code 的映射')
+{
+	const cases = [
+		['no browser extension connected — open the browser…', 'extension_offline'],
+		['the browser extension disconnected mid-command', 'link_lost'],
+		['browser-bridge stopped', 'link_lost'],
+		['browser command cancelled: click', 'cancelled'],
+		['浏览器控制未启用 —— 到 dsh 设置 →「浏览器」分区打开开关', 'bridge_disabled'],
+		['listen EADDRINUSE: address already in use 127.0.0.1:9777', 'bridge_disabled'],
+		['尚未加载配置', 'not_configured'],
+		['扩展报回：selector not found', 'command_failed'],
+		// 扩展页内的两种预算用尽：都不含 "timed out after"，以前一律掉进 command_failed。
+		['eval timeout after 15000ms', 'command_timeout'],
+		['wait timeout after 10000ms —— 页面**仍在加载/导航还没落到新文档**（期间跳过了 3 次"旧文档上的命中"）', 'command_timeout'],
+	]
+	for (const [message, code] of cases) {
+		const got = classify('click', new Error(message))
+		check(`${code} ← ${message.slice(0, 34)}…`, got.code === code, got.code)
+	}
+}
+
+console.log('\n[5] 幂等：桥包一次、插件壳再包一次，code 不能被洗掉')
+{
+	const first = classify('click', new Error('browser command timed out after 800ms: click'))
+	const second = classify('click', first)
+	check('同一个对象原样返回（不二次改造）', second === first)
+	check('再包一次 message 也不会出现两段契约文案', (second.message.match(/effectState=/g) ?? []).length === 1)
+	check('BridgeError 带 command / detail / toJSON', first.command === 'click'
+		&& first.detail === 'browser command timed out after 800ms: click'
+		&& first.toJSON().effectState === 'unknown')
+}
+
+// ---- 2026-10-17：hello 规范化（protocol 曾被漏拷，协商形同虚设）----
+{
+	const { normalizeHello } = core
+	check('normalizeHello 已导出', typeof normalizeHello === 'function')
+	const h1 = normalizeHello({ client: 'dsh-browser-extension', version: '1.0.22', protocol: 1, browser: { name: 'edge', version: '155', ua: 'x' }, extensionId: 'abc' })
+	check('protocol 被保留（这是修的那个洞）', h1.protocol === 1, JSON.stringify(h1))
+	check('extensionId 被保留', h1.extensionId === 'abc')
+	const h2 = normalizeHello({ client: 'c', version: 'v', browser: { name: 'n', version: '1', ua: '' } })
+	check('旧扩展不带 protocol ⇒ undefined（不是 0，状态面自己兜底）', h2.protocol === undefined)
+	check('protocol 非法类型被忽略',
+		normalizeHello({ protocol: 'one' }).protocol === undefined
+		&& normalizeHello({ protocol: -3 }).protocol === undefined
+		&& normalizeHello({ protocol: Number.NaN }).protocol === undefined)
+	check('protocol 小数被截断成整数', normalizeHello({ protocol: 1.9 }).protocol === 1)
+	check('缺 client/version 有兜底', normalizeHello({}).client === 'unknown' && normalizeHello({}).version === 'unknown')
+}
+
+console.log('\n[z] 2026-10-24：窗口没显示出来 ⇒ window_not_shown + not_started（不许当普通失败重试）')
+{
+	const { classify: cls, WINDOW_NOT_SHOWN_MARKER } = core
+	check('WINDOW_NOT_SHOWN_MARKER 已导出', WINDOW_NOT_SHOWN_MARKER === 'browser-window-not-shown:')
+	const err = cls('click', new Error('browser-window-not-shown: 浏览器窗口存在但没有显示出来（outerWidth×outerHeight = 0×0）'))
+	check('归类为 window_not_shown', err.code === 'window_not_shown', err.code)
+	check('副作用状态是 not_started（输入没派发出去）', err.effectState === 'not_started', err.effectState)
+	check('给模型的文案已剥掉线上前缀', err.detail.indexOf('browser-window-not-shown:') < 0, err.detail.slice(0, 60))
+	check('下一步指向"让用户切出窗口"，不是"换选择器重试"',
+		/窗口/.test(err.message) && /读取类工具/.test(err.message), err.message.slice(0, 140))
+}
+
+console.log('\n[z2] 2026-11-18：元素在 DOM 里但点不到 ⇒ element_not_visible + not_started（不是"点错"，是"没点"）')
+{
+	const { classify: cls, ELEMENT_NOT_VISIBLE_MARKER } = core
+	check('ELEMENT_NOT_VISIBLE_MARKER 已导出', ELEMENT_NOT_VISIBLE_MARKER === 'element-not-visible:')
+	const err = cls('click', new Error('element-not-visible: #btn 在 DOM 里但点不到：它的盒子是 0×0。用 browser_snapshot 重新取 ref'))
+	check('归类为 element_not_visible', err.code === 'element_not_visible', err.code)
+	check('副作用状态是 not_started（一个鼠标事件都没派发）', err.effectState === 'not_started', err.effectState)
+	check('给模型的文案已剥掉线上前缀', err.detail.indexOf('element-not-visible:') < 0, err.detail.slice(0, 60))
+	check('下一步先指向"重新取 ref / 隐藏的响应式副本"，不是盲目重试',
+		/重新取 ref/.test(err.message) && /隐藏的响应式副本/.test(err.message), err.message.slice(0, 160))
+	check('同一选择器连试两次的止损也写进了 hint', /连试两次/.test(err.message))
+	check('写操作也报 not_started（这条错发生在派发之前，不该报 unknown）',
+		cls('input', new Error('element-not-visible: x')).effectState === 'not_started')
+}
+
+const failed = results.filter((r) => !r.ok)
+console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)
+if (failed.length > 0) {
+	for (const f of failed) console.log('  - ' + f.name)
+	process.exit(1)
+}

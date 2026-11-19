@@ -1,0 +1,19 @@
+[2026-10-17T14:52:42.301Z] rig stub listening on 0.0.0.0:9781 (ws /ws, pages /fast /slow, ctl /ctl/state /ctl/cmd)
+[2026-10-17T14:52:47.101Z] GET /fast -> FAST-767101
+[2026-10-17T14:52:47.230Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T14:52:47.237Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UO1","version":"1.0.111","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T14:52:48.754Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:52:48.793Z] GET /press -> PRESS-768793
+[2026-10-17T14:52:50.120Z] CTL nav -> elapsed=1365ms ok=true {"tabId":40128720,"url":"http://localhost:9781/press","title":"PRESS-768793"}
+[2026-10-17T14:52:50.847Z] CTL lock.status {}
+[2026-10-17T14:52:50.849Z] CTL lock.status -> elapsed=2ms ok=true {"locked":false}
+[2026-10-17T14:52:50.856Z] CTL lock.status {}
+[2026-10-17T14:52:50.858Z] CTL lock.status -> elapsed=2ms ok=true {"locked":false}
+[2026-10-17T14:52:50.863Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:52:50.891Z] CTL click -> elapsed=28ms ok=true {"tabId":40128720,"clicked":{"x":200,"y":48,"tag":"button","text":"go"},"hitVerified":true,"dialogsAnswered":0}
+[2026-10-17T14:52:50.897Z] CTL lock.set {"locked":true}
+[2026-10-17T14:52:50.900Z] CTL lock.set -> elapsed=3ms ok=true {"locked":true}
+[2026-10-17T14:52:50.905Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:52:50.907Z] CTL click -> elapsed=1ms ok=false 浏览器扩展已被用户在本地锁定，拒绝一切操作。请在浏览器右上角的扩展图标里解除锁定后再试。
+[2026-10-17T14:52:50.911Z] CTL eval {"expression":"1"}
+[2026-10-17T14:52:50.913Z] CTL eval -> elapsed=1ms ok=false 浏览器扩展已被用户在本地锁定，拒绝一切操作。请在浏览器右上角的扩展图标里解除锁定后再试。

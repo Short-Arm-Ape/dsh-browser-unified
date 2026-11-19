@@ -1,0 +1,104 @@
+[2026-10-12T17:07:56.958Z] rig stub listening on 0.0.0.0:9781 (ws /ws, pages /fast /slow, ctl /ctl/state /ctl/cmd)
+[2026-10-12T17:08:05.289Z] GET /fast -> FAST-885289
+[2026-10-12T17:08:07.036Z] extension connected from 127.0.0.1 token=present
+[2026-10-12T17:08:07.039Z] hello: {"type":"hello","client":"dsh-browser-extension","version":"1.0.16","protocol":1,"rigTag":"C1","browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"}}
+[2026-10-12T17:08:31.738Z] CTL tabs.list {}
+[2026-10-12T17:08:31.742Z] CTL tabs.list -> elapsed=4ms ok=true {"count":1,"activeTabId":25808545,"tabs":[{"id":25808545,"url":"http://localhost:9781/fast","title":"FAST-885289","active":true}]}
+[2026-10-12T17:08:31.751Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:31.780Z] GET /fast -> FAST-911780
+[2026-10-12T17:08:31.883Z] CTL tabs.open -> elapsed=132ms ok=true {"tabId":25808546,"url":"http://127.0.0.1:9781/fast","title":"FAST-911780","grouped":true,"groupId":1802768035,"created":true}
+[2026-10-12T17:08:31.889Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:31.927Z] GET /fast -> FAST-911927
+[2026-10-12T17:08:31.969Z] CTL tabs.open -> elapsed=80ms ok=true {"tabId":25808547,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":1802768035,"created":false}
+[2026-10-12T17:08:31.974Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:32.018Z] GET /fast -> FAST-912018
+[2026-10-12T17:08:32.103Z] CTL tabs.open -> elapsed=129ms ok=true {"tabId":25808548,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":1802768035,"created":false}
+[2026-10-12T17:08:32.108Z] CTL tabs.closeMany {"tabIds":[25808546,25808547,25808548]}
+[2026-10-12T17:08:32.236Z] CTL tabs.closeMany -> elapsed=127ms ok=true {"requested":3,"closed":[25808546,25808547,25808548],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:32.243Z] CTL tabs.list {}
+[2026-10-12T17:08:32.251Z] CTL tabs.list -> elapsed=8ms ok=true {"count":1,"activeTabId":25808545,"tabs":[{"id":25808545,"url":"http://localhost:9781/fast","title":"FAST-885289","active":true}]}
+[2026-10-12T17:08:32.258Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:32.286Z] GET /fast -> FAST-912285
+[2026-10-12T17:08:32.368Z] CTL tabs.open -> elapsed=110ms ok=true {"tabId":25808552,"url":"http://127.0.0.1:9781/fast","title":"FAST-912285","grouped":true,"groupId":1560721010,"created":true}
+[2026-10-12T17:08:32.373Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:32.405Z] GET /fast -> FAST-912405
+[2026-10-12T17:08:32.478Z] CTL tabs.open -> elapsed=104ms ok=true {"tabId":25808553,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":1560721010,"created":false}
+[2026-10-12T17:08:32.485Z] CTL tabs.closeMany {"tabIds":[25808552,25808553]}
+[2026-10-12T17:08:32.579Z] CTL tabs.closeMany -> elapsed=94ms ok=true {"requested":2,"closed":[25808552,25808553],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:32.585Z] CTL tabs.closeMany {"tabIds":[25808552,25808553]}
+[2026-10-12T17:08:32.592Z] CTL tabs.closeMany -> elapsed=7ms ok=true {"requested":2,"closed":[],"alreadyGone":[25808552,25808553],"failed":[]}
+[2026-10-12T17:08:32.597Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:32.625Z] GET /fast -> FAST-912625
+[2026-10-12T17:08:32.698Z] CTL tabs.open -> elapsed=101ms ok=true {"tabId":25808556,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":948729876,"created":true}
+[2026-10-12T17:08:32.702Z] CTL tabs.close {"tabId":25808556}
+[2026-10-12T17:08:32.760Z] CTL tabs.close -> elapsed=58ms ok=true {"requested":1,"closed":[25808556],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:32.765Z] CTL tabs.close {"tabId":25808556}
+[2026-10-12T17:08:32.838Z] CTL tabs.close -> elapsed=73ms ok=true {"requested":1,"closed":[],"alreadyGone":[25808556],"failed":[]}
+[2026-10-12T17:08:32.842Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:32.871Z] GET /fast -> FAST-912871
+[2026-10-12T17:08:32.976Z] CTL tabs.open -> elapsed=132ms ok=true {"tabId":25808558,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":801165004,"created":true}
+[2026-10-12T17:08:32.979Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:33.018Z] GET /fast -> FAST-913018
+[2026-10-12T17:08:33.060Z] CTL tabs.open -> elapsed=80ms ok=true {"tabId":25808559,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":801165004,"created":false}
+[2026-10-12T17:08:33.064Z] CTL tabs.close {"tabId":25808559}
+[2026-10-12T17:08:33.225Z] CTL tabs.close -> elapsed=161ms ok=true {"requested":1,"closed":[25808559],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:33.230Z] CTL tabs.closeMany {"tabIds":[25808558,25808559]}
+[2026-10-12T17:08:33.286Z] CTL tabs.closeMany -> elapsed=56ms ok=true {"requested":2,"closed":[25808558],"alreadyGone":[25808559],"failed":[]}
+[2026-10-12T17:08:33.290Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:33.317Z] GET /fast -> FAST-913317
+[2026-10-12T17:08:33.507Z] CTL tabs.open -> elapsed=217ms ok=true {"tabId":25808562,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":828704166,"created":true}
+[2026-10-12T17:08:33.511Z] CTL tabs.closeMany {"tabIds":[25808562,25808562,"x",-1,0,null]}
+[2026-10-12T17:08:33.567Z] CTL tabs.closeMany -> elapsed=56ms ok=true {"requested":1,"closed":[25808562],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:33.571Z] CTL tabs.closeMany {"tabIds":[]}
+[2026-10-12T17:08:33.574Z] CTL tabs.closeMany -> elapsed=3ms ok=false params.tabIds must be a non-empty array of tab ids
+[2026-10-12T17:08:33.578Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:33.605Z] GET /fast -> FAST-913605
+[2026-10-12T17:08:33.703Z] CTL tabs.open -> elapsed=125ms ok=true {"tabId":25808564,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":1157949885,"created":true}
+[2026-10-12T17:08:33.708Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:33.739Z] GET /fast -> FAST-913738
+[2026-10-12T17:08:34.037Z] CTL tabs.open -> elapsed=329ms ok=true {"tabId":25808565,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":1157949885,"created":false}
+[2026-10-12T17:08:34.041Z] CTL tabs.closeMany {"tabIds":[25808564,25808565]}
+[2026-10-12T17:08:34.042Z] CTL tabs.close {"tabId":25808565}
+[2026-10-12T17:08:34.221Z] CTL tabs.close -> elapsed=179ms ok=true {"requested":1,"closed":[25808565],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:34.271Z] CTL tabs.closeMany -> elapsed=229ms ok=true {"requested":2,"closed":[25808564,25808565],"alreadyGone":[],"failed":[]}
+[2026-10-12T17:08:34.274Z] CTL tabs.list {}
+[2026-10-12T17:08:34.303Z] CTL tabs.list -> elapsed=29ms ok=true {"count":1,"activeTabId":25808545,"tabs":[{"id":25808545,"url":"http://localhost:9781/fast","title":"FAST-885289","active":true}]}
+[2026-10-12T17:08:34.307Z] CTL ping {}
+[2026-10-12T17:08:34.378Z] CTL ping -> elapsed=70ms ok=true {"pong":true,"t":1791824914324,"version":"1.0.16"}
+[2026-10-12T17:08:34.381Z] CTL tabs.list {}
+[2026-10-12T17:08:34.386Z] CTL tabs.list -> elapsed=5ms ok=true {"count":1,"activeTabId":25808545,"tabs":[{"id":25808545,"url":"http://localhost:9781/fast","title":"FAST-885289","active":true}]}
+[2026-10-12T17:08:53.310Z] GET /fast -> FAST-933309
+[2026-10-12T17:08:53.476Z] extension connected from 127.0.0.1 token=present
+[2026-10-12T17:08:53.488Z] hello: {"type":"hello","client":"dsh-browser-extension","version":"1.0.16","protocol":1,"rigTag":"B0","browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"}}
+[2026-10-12T17:08:54.836Z] CTL tabs.list {}
+[2026-10-12T17:08:54.844Z] CTL tabs.list -> elapsed=7ms ok=true {"count":1,"activeTabId":809765934,"tabs":[{"id":809765934,"url":"http://localhost:9781/fast","title":"FAST-933309","active":true}]}
+[2026-10-12T17:08:54.848Z] CTL tabs.closeMany {"tabIds":[1,2]}
+[2026-10-12T17:08:54.851Z] CTL tabs.closeMany -> elapsed=3ms ok=false unknown command: tabs.closeMany
+[2026-10-12T17:08:54.855Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:54.874Z] GET /fast -> FAST-934874
+[2026-10-12T17:08:54.918Z] CTL tabs.open -> elapsed=63ms ok=true {"tabId":809765935,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":2046696564,"created":true}
+[2026-10-12T17:08:54.922Z] CTL tabs.close {"tabId":809765935}
+[2026-10-12T17:08:54.943Z] CTL tabs.close -> elapsed=21ms ok=true {"closed":809765935}
+[2026-10-12T17:08:54.948Z] CTL tabs.close {"tabId":809765935}
+[2026-10-12T17:08:54.950Z] CTL tabs.close -> elapsed=2ms ok=false No tab with id: 809765935.
+[2026-10-12T17:08:54.954Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:54.971Z] GET /fast -> FAST-934971
+[2026-10-12T17:08:55.007Z] CTL tabs.open -> elapsed=53ms ok=true {"tabId":809765937,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":738591470,"created":true}
+[2026-10-12T17:08:55.011Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:55.028Z] GET /fast -> FAST-935028
+[2026-10-12T17:08:55.070Z] CTL tabs.open -> elapsed=59ms ok=true {"tabId":809765938,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":738591470,"created":false}
+[2026-10-12T17:08:55.074Z] CTL tabs.open {"url":"http://127.0.0.1:9781/fast","wait":false}
+[2026-10-12T17:08:55.090Z] GET /fast -> FAST-935089
+[2026-10-12T17:08:55.118Z] CTL tabs.open -> elapsed=44ms ok=true {"tabId":809765939,"url":"","title":"","pendingUrl":"http://127.0.0.1:9781/fast","grouped":true,"groupId":738591470,"created":false}
+[2026-10-12T17:08:55.123Z] CTL tabs.close {"tabId":809765937}
+[2026-10-12T17:08:55.164Z] CTL tabs.close -> elapsed=41ms ok=true {"closed":809765937}
+[2026-10-12T17:08:55.169Z] CTL tabs.close {"tabId":999999}
+[2026-10-12T17:08:55.242Z] CTL tabs.close -> elapsed=73ms ok=false No tab with id: 999999.
+[2026-10-12T17:08:55.245Z] CTL tabs.close {"tabId":809765938}
+[2026-10-12T17:08:55.261Z] CTL tabs.close -> elapsed=15ms ok=true {"closed":809765938}
+[2026-10-12T17:08:55.264Z] CTL tabs.close {"tabId":809765939}
+[2026-10-12T17:08:55.426Z] CTL tabs.close -> elapsed=162ms ok=true {"closed":809765939}
+[2026-10-12T17:08:55.430Z] CTL tabs.list {}
+[2026-10-12T17:08:55.433Z] CTL tabs.list -> elapsed=3ms ok=true {"count":1,"activeTabId":809765934,"tabs":[{"id":809765934,"url":"http://localhost:9781/fast","title":"FAST-933309","active":true}]}
+[2026-10-12T17:08:55.436Z] CTL ping {}
+[2026-10-12T17:08:55.438Z] CTL ping -> elapsed=2ms ok=true {"pong":true,"t":1791824935437,"version":"1.0.16"}

@@ -1,0 +1,178 @@
+{
+  "at": "2026-10-17T13:43:21.316Z",
+  "rigTag": "UG4",
+  "version": "1.0.101",
+  "raw": {
+    "on": {
+      "tabId": 1512121666,
+      "active": true,
+      "blockKeys": false,
+      "id": "__dsh_hold_overlay__",
+      "shadow": true
+    },
+    "statusUser": {
+      "tabId": 1512121666,
+      "active": false,
+      "at": 1792244597760,
+      "closedAt": 1792244598500,
+      "dismissedBy": "user",
+      "shadow": false,
+      "text": "正在把「局域网」档改成放行"
+    },
+    "off": {
+      "tabId": 1512121666,
+      "active": false,
+      "at": 1792244598531,
+      "closedAt": 1792244598538,
+      "dismissedBy": "agent",
+      "text": "第二次"
+    },
+    "statusNav": {
+      "tabId": 1512121666,
+      "active": false,
+      "at": null,
+      "closedAt": null,
+      "dismissedBy": null,
+      "shadow": false,
+      "text": ""
+    },
+    "style": {
+      "cardBg": "rgba(10, 12, 16, 0.42)",
+      "cardBorder": "1px",
+      "cardShadow": "rgba(0, 0, 0, 0.35) 0px 10px 40px 0px",
+      "cardBackdrop": "blur(6px) saturate(1.2)",
+      "titleStroke": "0px",
+      "titleShadow": "rgba(0, 0, 0, 0.75) 0px 1px 2px",
+      "wrapBg": "rgba(8, 10, 14, 0.45)",
+      "titleSize": 19
+    }
+  },
+  "checks": [
+    {
+      "name": "基线：确实停在 /press 页面",
+      "ok": true,
+      "detail": "nav.ok=true"
+    },
+    {
+      "name": "基线拿到页面指纹",
+      "ok": true,
+      "detail": "{\"bodyLen\":1187,\"sheets\":0,\"nodes\":5,\"state\":{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}}"
+    },
+    {
+      "name": "hold.on 回 active=true",
+      "ok": true,
+      "detail": "{\"tabId\":1512121666,\"active\":true,\"blockKeys\":false,\"id\":\"__dsh_hold_overlay__\",\"shadow\":true}"
+    },
+    {
+      "name": "内容装在 Shadow DOM 里",
+      "ok": true,
+      "detail": "{\"tabId\":1512121666,\"active\":true,\"blockKeys\":false,\"id\":\"__dsh_hold_overlay__\",\"shadow\":true}"
+    },
+    {
+      "name": "浮层铺满视口（宽高 == 视口）",
+      "ok": true,
+      "detail": "{\"w\":766,\"h\":456}"
+    },
+    {
+      "name": "卡片里写着\"模型在做什么\"",
+      "ok": true,
+      "detail": "模型正在操作这个标签页正在把「局域网」档改成放行连续点两下任意处即可接管"
+    },
+    {
+      "name": "提示里写明\"连点两下接管\"",
+      "ok": true,
+      "detail": "模型正在操作这个标签页正在把「局域网」档改成放行连续点两下任意处即可接管"
+    },
+    {
+      "name": "z-index 在最上层",
+      "ok": true,
+      "detail": "2147483647"
+    },
+    {
+      "name": "页面 body 未被改动（长度/节点数一致）",
+      "ok": true,
+      "detail": "bodyLen 1187->1187, nodes 5->5"
+    },
+    {
+      "name": "没有往页面加样式表（Shadow DOM 不外泄）",
+      "ok": true,
+      "detail": "0 -> 0"
+    },
+    {
+      "name": "页面计数器没被触发（没有假点击）",
+      "ok": true,
+      "detail": "{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}"
+    },
+    {
+      "name": "host 挂在 <html> 上而不是 <body> 里",
+      "ok": true
+    },
+    {
+      "name": "按钮中心点的最上层元素是浮层 host",
+      "ok": true,
+      "detail": "{\"topId\":\"__dsh_hold_overlay__\",\"btnTag\":\"button\"}"
+    },
+    {
+      "name": "locked 状态下 click 成功",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "页面真的收到了这次点击（submit=1）",
+      "ok": true,
+      "detail": "{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}"
+    },
+    {
+      "name": "两下之后浮层从 DOM 里消失",
+      "ok": true
+    },
+    {
+      "name": "status 报 active=false 且 dismissedBy=user",
+      "ok": true,
+      "detail": "{\"tabId\":1512121666,\"active\":false,\"at\":1792244597760,\"closedAt\":1792244598500,\"dismissedBy\":\"user\",\"shadow\":false,\"text\":\"正在把「局域网」档改成放行\"}"
+    },
+    {
+      "name": "撤掉后页面元素恢复可点（命中点回到按钮）",
+      "ok": true
+    },
+    {
+      "name": "撤掉后页面仍未被改动",
+      "ok": true
+    },
+    {
+      "name": "hold.off ⇒ active=false 且 dismissedBy=agent",
+      "ok": true,
+      "detail": "{\"tabId\":1512121666,\"active\":false,\"at\":1792244598531,\"closedAt\":1792244598538,\"dismissedBy\":\"agent\",\"text\":\"第二次\"}"
+    },
+    {
+      "name": "页面一导航，status 不再假报\"还锁着\"",
+      "ok": true,
+      "detail": "{\"tabId\":1512121666,\"active\":false,\"at\":null,\"closedAt\":null,\"dismissedBy\":null,\"shadow\":false,\"text\":\"\"}"
+    },
+    {
+      "name": "中央块是**半透明**（alpha 在 0.25~0.6：既给文字深底、又让页面透出来）",
+      "ok": true,
+      "detail": "rgba(10, 12, 16, 0.42) (alpha=0.42)"
+    },
+    {
+      "name": "有毛玻璃模糊（backdrop-filter），页面透过它仍可辨认",
+      "ok": true,
+      "detail": "blur(6px) saturate(1.2)"
+    },
+    {
+      "name": "整页黑幕更轻了（≤0.5，页面内容看得清）",
+      "ok": true,
+      "detail": "rgba(8, 10, 14, 0.45)"
+    },
+    {
+      "name": "标题够大（≥18px）",
+      "ok": true,
+      "detail": "19"
+    },
+    {
+      "name": "没有用文字描边（上次实测会把 13px 正文糊死）",
+      "ok": true,
+      "detail": "0px"
+    }
+  ]
+}

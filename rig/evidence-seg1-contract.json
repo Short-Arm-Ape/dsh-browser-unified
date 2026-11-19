@@ -1,0 +1,121 @@
+{
+  "at": "2026-10-13T12:13:08.693Z",
+  "rigTag": "UC2",
+  "version": "1.0.92",
+  "raw": {
+    "info": {
+      "client": "dsh-browser-extension",
+      "version": "1.0.92",
+      "browser": {
+        "name": "edge",
+        "version": "155.0.0.0",
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"
+      }
+    },
+    "find": {
+      "tabId": 1030815053,
+      "selector": "#i",
+      "count": 1,
+      "items": [
+        {
+          "tag": "input",
+          "id": "i",
+          "rect": {
+            "x": 8,
+            "y": 12,
+            "w": 177,
+            "h": 21
+          }
+        }
+      ]
+    },
+    "dialog": {
+      "policy": "accept",
+      "recent": []
+    },
+    "dialogSet": {
+      "policy": "manual",
+      "recent": []
+    },
+    "content": {
+      "tabId": 1030815053,
+      "mode": "text",
+      "title": "PRESS-585907",
+      "url": "http://localhost:9781/press",
+      "readyState": "complete",
+      "content": "go",
+      "frames": []
+    },
+    "navPendingResp": {
+      "type": "result",
+      "id": "rig-27",
+      "ok": true,
+      "result": {
+        "tabId": 1030815053,
+        "url": "http://localhost:9781/slow?ms=8000",
+        "title": "SLOW-587211",
+        "loadPending": true,
+        "pendingUrl": "http://localhost:9781/slow?ms=8000"
+      },
+      "elapsedMs": 1508
+    },
+    "navPending": {
+      "tabId": 1030815053,
+      "url": "http://localhost:9781/slow?ms=8000",
+      "title": "SLOW-587211",
+      "loadPending": true,
+      "pendingUrl": "http://localhost:9781/slow?ms=8000"
+    }
+  },
+  "checks": [
+    {
+      "name": "有 client / version / browser.name / browser.version / browser.ua",
+      "ok": true,
+      "detail": "{\"client\":\"dsh-browser-extension\",\"version\":\"1.0.92\",\"browser\":{\"name\":\"edge\",\"version\":\"155.0.0.0\",\"ua\":\"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/"
+    },
+    {
+      "name": "count 是数字且 items 是数组",
+      "ok": true,
+      "detail": "{\"tabId\":1030815053,\"selector\":\"#i\",\"count\":1,\"items\":[{\"tag\":\"input\",\"id\":\"i\",\"rect\":{\"x\":8,\"y\":12,\"w\":177,\"h\":21}}]}"
+    },
+    {
+      "name": "item 有 tag/id/rect{x,y,w,h}",
+      "ok": true,
+      "detail": "{\"tag\":\"input\",\"id\":\"i\",\"rect\":{\"x\":8,\"y\":12,\"w\":177,\"h\":21}}"
+    },
+    {
+      "name": "选择器没命中时 count=0 且 items 为空（不是报错）",
+      "ok": true
+    },
+    {
+      "name": "policy 是 accept|dismiss|manual 之一",
+      "ok": true,
+      "detail": "accept"
+    },
+    {
+      "name": "recent 是数组",
+      "ok": true,
+      "detail": "{\"policy\":\"accept\",\"recent\":[]}"
+    },
+    {
+      "name": "设 policy=manual 会回显新策略",
+      "ok": true,
+      "detail": "manual"
+    },
+    {
+      "name": "content 是字符串且带 title/url",
+      "ok": true,
+      "detail": "len=2"
+    },
+    {
+      "name": "loadPending=true",
+      "ok": true,
+      "detail": "{\"tabId\":1030815053,\"url\":\"http://localhost:9781/slow?ms=8000\",\"title\":\"SLOW-587211\",\"loadPending\":true,\"pendingUrl\":\"http://localhost:9781/slow?ms=8000\"}"
+    },
+    {
+      "name": "pendingUrl 指向 /slow（或 tabs 的 pendingUrl）",
+      "ok": true,
+      "detail": "http://localhost:9781/slow?ms=8000"
+    }
+  ]
+}

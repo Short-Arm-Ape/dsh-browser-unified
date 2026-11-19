@@ -1,0 +1,96 @@
+[2026-10-12T17:45:33.423Z] rig stub listening on 0.0.0.0:9781 (ws /ws, pages /fast /slow, ctl /ctl/state /ctl/cmd)
+[2026-10-12T17:45:41.571Z] GET /fast -> FAST-141571
+[2026-10-12T17:45:42.739Z] extension connected from 127.0.0.1 token=present
+[2026-10-12T17:45:42.744Z] hello: {"type":"hello","client":"dsh-browser-extension","version":"1.0.90","browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"rigTag":"UB0","extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-12T17:45:45.857Z] CTL tabs.list {}
+[2026-10-12T17:45:45.862Z] CTL tabs.list -> elapsed=4ms ok=true {"count":1,"windows":1,"noWindow":false,"activeTabId":2124781401,"tabs":[{"id":2124781401,"url":"http://localhost:9781/fast","title":"FAST-141571","active":true}]}
+[2026-10-12T17:45:45.871Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-12T17:45:45.894Z] GET /press -> PRESS-145893
+[2026-10-12T17:45:47.270Z] CTL nav -> elapsed=1398ms ok=true {"tabId":2124781401,"url":"http://localhost:9781/press","title":"PRESS-145893"}
+[2026-10-12T17:45:48.942Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:45:48.948Z] CTL eval -> elapsed=5ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:45:48.959Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:45:48.963Z] CTL eval -> elapsed=3ms ok=true {"tabId":2124781401,"value":"{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}","valueType":"string"}
+[2026-10-12T17:45:51.256Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:45:51.262Z] CTL eval -> elapsed=5ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:45:51.281Z] CTL press {"key":"x"}
+[2026-10-12T17:45:51.298Z] CTL press -> elapsed=17ms ok=true {"tabId":2124781401,"key":"x"}
+[2026-10-12T17:45:51.307Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:45:51.310Z] CTL eval -> elapsed=3ms ok=true {"tabId":2124781401,"value":"{\"value\":\"xx\",\"formValue\":\"\",\"keydown\":1,\"keypress\":2,\"input\":2,\"submit\":0,\"beforeinput\":2}","valueType":"string"}
+[2026-10-12T17:46:02.903Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-12T17:46:02.929Z] GET /press -> PRESS-162929
+[2026-10-12T17:46:04.116Z] CTL nav -> elapsed=1212ms ok=true {"tabId":2124781401,"url":"http://localhost:9781/press","title":"PRESS-162929"}
+[2026-10-12T17:46:04.122Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:04.127Z] CTL eval -> elapsed=5ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:04.130Z] CTL press {"key":"x"}
+[2026-10-12T17:46:04.140Z] CTL press -> elapsed=10ms ok=true {"tabId":2124781401,"key":"x"}
+[2026-10-12T17:46:04.144Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:04.147Z] CTL eval -> elapsed=3ms ok=true {"tabId":2124781401,"value":"{\"value\":\"xx\",\"formValue\":\"\",\"keydown\":1,\"keypress\":2,\"input\":2,\"submit\":0,\"beforeinput\":2}","valueType":"string"}
+[2026-10-12T17:46:04.152Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:04.155Z] CTL eval -> elapsed=3ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:04.158Z] CTL press {"key":"7"}
+[2026-10-12T17:46:04.165Z] CTL press -> elapsed=7ms ok=true {"tabId":2124781401,"key":"7"}
+[2026-10-12T17:46:04.168Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:04.171Z] CTL eval -> elapsed=3ms ok=true {"tabId":2124781401,"value":"{\"value\":\"77\",\"formValue\":\"\",\"keydown\":1,\"keypress\":2,\"input\":2,\"submit\":0,\"beforeinput\":2}","valueType":"string"}
+[2026-10-12T17:46:04.175Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:04.179Z] CTL eval -> elapsed=4ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:04.184Z] CTL press {"key":"x","modifiers":["shift"]}
+[2026-10-12T17:46:04.188Z] CTL press -> elapsed=4ms ok=true {"tabId":2124781401,"key":"x"}
+[2026-10-12T17:46:04.191Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:04.192Z] CTL eval -> elapsed=1ms ok=true {"tabId":2124781401,"value":"{\"value\":\"xx\",\"formValue\":\"\",\"keydown\":1,\"keypress\":2,\"input\":2,\"submit\":0,\"beforeinput\":2}","valueType":"string"}
+[2026-10-12T17:46:04.197Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-12T17:46:04.199Z] CTL eval -> elapsed=2ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:04.203Z] CTL press {"key":"Enter"}
+[2026-10-12T17:46:04.215Z] CTL press -> elapsed=12ms ok=true {"tabId":2124781401,"key":"Enter"}
+[2026-10-12T17:46:04.219Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:04.221Z] CTL eval -> elapsed=2ms ok=true {"tabId":2124781401,"value":"{\"value\":\"xx\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":2,\"beforeinput\":0}","valueType":"string"}
+[2026-10-12T17:46:04.224Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:04.228Z] CTL eval -> elapsed=4ms ok=true {"tabId":2124781401,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:04.231Z] CTL press {"key":"ArrowRight"}
+[2026-10-12T17:46:04.237Z] CTL press -> elapsed=6ms ok=true {"tabId":2124781401,"key":"ArrowRight"}
+[2026-10-12T17:46:04.240Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:04.242Z] CTL eval -> elapsed=2ms ok=true {"tabId":2124781401,"value":"{\"value\":\"\",\"formValue\":\"\",\"keydown\":1,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}","valueType":"string"}
+[2026-10-12T17:46:04.245Z] CTL emulate {"device":"desktop"}
+[2026-10-12T17:46:04.251Z] CTL emulate -> elapsed=6ms ok=true {"tabId":2124781401,"width":1280,"height":800,"deviceScaleFactor":1,"isMobile":false,"hasTouch":false,"userAgent":null}
+[2026-10-12T17:46:04.254Z] CTL emulate {"device":"reset"}
+[2026-10-12T17:46:04.259Z] CTL emulate -> elapsed=4ms ok=true {"tabId":2124781401,"reset":true}
+[2026-10-12T17:46:14.850Z] GET /fast -> FAST-174850
+[2026-10-12T17:46:14.949Z] extension connected from 127.0.0.1 token=present
+[2026-10-12T17:46:14.959Z] hello: {"type":"hello","client":"dsh-browser-extension","version":"1.0.91","browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"rigTag":"UC1","extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-12T17:46:18.159Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-12T17:46:18.181Z] GET /press -> PRESS-178181
+[2026-10-12T17:46:19.467Z] CTL nav -> elapsed=1308ms ok=true {"tabId":794592662,"url":"http://localhost:9781/press","title":"PRESS-178181"}
+[2026-10-12T17:46:19.477Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:19.497Z] CTL eval -> elapsed=20ms ok=true {"tabId":794592662,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:19.505Z] CTL press {"key":"x"}
+[2026-10-12T17:46:19.522Z] CTL press -> elapsed=17ms ok=true {"tabId":794592662,"key":"x"}
+[2026-10-12T17:46:19.528Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:19.534Z] CTL eval -> elapsed=5ms ok=true {"tabId":794592662,"value":"{\"value\":\"x\",\"formValue\":\"\",\"keydown\":1,\"keypress\":1,\"input\":1,\"submit\":0,\"beforeinput\":1}","valueType":"string"}
+[2026-10-12T17:46:19.543Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:19.551Z] CTL eval -> elapsed=8ms ok=true {"tabId":794592662,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:19.555Z] CTL press {"key":"7"}
+[2026-10-12T17:46:19.562Z] CTL press -> elapsed=7ms ok=true {"tabId":794592662,"key":"7"}
+[2026-10-12T17:46:19.567Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:19.582Z] CTL eval -> elapsed=14ms ok=true {"tabId":794592662,"value":"{\"value\":\"7\",\"formValue\":\"\",\"keydown\":1,\"keypress\":1,\"input\":1,\"submit\":0,\"beforeinput\":1}","valueType":"string"}
+[2026-10-12T17:46:19.586Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:19.589Z] CTL eval -> elapsed=2ms ok=true {"tabId":794592662,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:19.595Z] CTL press {"key":"x","modifiers":["shift"]}
+[2026-10-12T17:46:19.602Z] CTL press -> elapsed=7ms ok=true {"tabId":794592662,"key":"x"}
+[2026-10-12T17:46:19.606Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:19.613Z] CTL eval -> elapsed=7ms ok=true {"tabId":794592662,"value":"{\"value\":\"x\",\"formValue\":\"\",\"keydown\":1,\"keypress\":1,\"input\":1,\"submit\":0,\"beforeinput\":1}","valueType":"string"}
+[2026-10-12T17:46:19.616Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-12T17:46:19.654Z] CTL eval -> elapsed=38ms ok=true {"tabId":794592662,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:19.658Z] CTL press {"key":"Enter"}
+[2026-10-12T17:46:19.703Z] CTL press -> elapsed=45ms ok=true {"tabId":794592662,"key":"Enter"}
+[2026-10-12T17:46:19.707Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:19.710Z] CTL eval -> elapsed=3ms ok=true {"tabId":794592662,"value":"{\"value\":\"x\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}","valueType":"string"}
+[2026-10-12T17:46:19.714Z] CTL eval {"expression":"__reset()"}
+[2026-10-12T17:46:19.718Z] CTL eval -> elapsed=4ms ok=true {"tabId":794592662,"value":true,"valueType":"boolean"}
+[2026-10-12T17:46:19.721Z] CTL press {"key":"ArrowRight"}
+[2026-10-12T17:46:19.748Z] CTL press -> elapsed=27ms ok=true {"tabId":794592662,"key":"ArrowRight"}
+[2026-10-12T17:46:19.751Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-12T17:46:19.755Z] CTL eval -> elapsed=4ms ok=true {"tabId":794592662,"value":"{\"value\":\"\",\"formValue\":\"\",\"keydown\":1,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}","valueType":"string"}
+[2026-10-12T17:46:19.758Z] CTL emulate {"device":"desktop"}
+[2026-10-12T17:46:19.768Z] CTL emulate -> elapsed=10ms ok=true {"tabId":794592662,"width":1280,"height":800,"deviceScaleFactor":1,"isMobile":false,"hasTouch":false,"userAgent":null}
+[2026-10-12T17:46:19.771Z] CTL emulate {"device":"reset"}
+[2026-10-12T17:46:19.775Z] CTL emulate -> elapsed=4ms ok=true {"tabId":794592662,"reset":true}

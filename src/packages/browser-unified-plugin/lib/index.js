@@ -1,0 +1,3751 @@
+/**
+ * Browser-bridge plugin: one local WebSocket endpoint the DSH Browser Control
+ * extension connects to, plus the model-facing `browser_*` tools that drive
+ * The Settings-managed `enabled` flag starts and stops the listener live —
+ * no reload needed beyond the config recomposition 0.2.0 performs on a write.
+ *
+ * Since DSH 0.2.0 the Host is the single source of truth for settings: the
+ * user layer is folded into this plugin's loader-entry config, so `apply(ctx,
+ * config)` already receives the effective values and no `settings.register`
+ * call is involved. Fields must be declared `.volatile()` in `Config` or the
+ * namespace is skipped by `describe()` and never reaches the Settings UI.
+ *
+ * Tools stay mounted whenever the plugin does; calling one while the bridge
+ * is disabled or the extension is offline fails with a message naming the
+ * fix, so the model can tell the user what to do instead of hanging.
+ * @module @deepseek-ai/dsh-browser-bridge
+ */
+import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import z from '@deepseek-ai/schemastery';
+import { defineTool as rawDefineTool } from '@deepseek-ai/dsh-tools';
+import { BridgeError, BridgeServer, classify, cleanupArtifacts, GuardedBridge, UrlPolicy } from 'browser-unified-core';
+import { DEFAULT_METADATA_HOSTNAMES, DEFAULT_METADATA_IPS, realmOf } from 'browser-unified-core';
+import { applyUnifiedTools, currentPluginVersion, loadIssues } from './unified-tools.js';
+import { safeDefineTool, sliceWellFormed as sliceWellFormedImpl } from './well-formed.js';
+// 原 dsh-browser-buddy 的能力（de-036 合并）：工具面分层 / 状态注入 / 调用即唤醒 / 登记簿送达
+// + browser_tools / browser_frames / browser_frame_eval。
+import { applyBuddyFeatures } from './buddy.js';
+import { navBridgeTimeout, pageBridgeTimeout } from './nav-budget.js';
+import { CONTENT_SETTING, DEFAULT_PERMISSION_POLICY_ENTRIES, chromiumTime, readOriginPermissions, readPermissionStoreTolerant } from './permissions.js';
+import { brandIdFromHelloName, exeCandidates, extensionPresenceInProfile, hostStyle, locateExtensionProfile, profileDisplayName, profileHasExtension, splitProfilePath, toLinuxPath, } from './browser-profiles.js';
+import { findLiveOwner, removeOwnRecord, writeOwnerRecord, } from './bridge-registry.js';
+import { diagnoseOffline } from './offline-diagnosis.js';
+import { OFFLINE_RETRY_DELAY_MS, shouldRetryOffline } from './offline-retry.js';
+// Schema shapes below are the same ones the upstream plugin shipped and the
+// dsh-tools assert layer validates at runtime; the loose wrapper only widens
+// the compile-time view (types differ between rc builds).
+//
+// 这里同时是**会话毒化**的最后一道闸：页面文本可能被截断切出半个 emoji（高位代理项），
+// 孤立代理项经 `JSON.stringify` 变成裸 `\ud83d`，模型的 JSON 解析器会拒收整个请求体，
+// 坏字符还会随会话历史每轮重放（上游 v1.7.10 / issue #26）。所以 render 文本与错误文案
+// 一律先过 `toWellFormed`，源头截断点改用 `sliceWellFormed`。
+const defineTool = safeDefineTool(rawDefineTool);
+/** 截断长文本时用良构切片（切点不落在半个 emoji 上）。 */
+const sliceWellFormed = sliceWellFormedImpl;
+/** Cordis plugin name used by loader diagnostics. */
+export const name = 'browser-bridge';
+/** The tool registry this plugin contributes `browser_*` tools to. */
+export const inject = ['tools', 'systemPrompt'];
+/** Settings namespace carrying the bridge switch and endpoint options. */
+export const BROWSER_BRIDGE_SETTINGS_NAMESPACE = 'browser-bridge';
+// 注：`.volatile()` 让 schemastery 的推断类型带上 `Volatile<>` 包装，与下面导出的
+// `interface Config`（普通字段类型）在 TS 层面不兼容；运行时值不受影响，故断言。
+export const Config = z.object({
+    enabled: z.boolean().default(true).volatile(),
+    port: z.number().step(1).min(1024).max(65_535).default(9777).volatile(),
+    token: z.string().default('dsh-local').volatile(),
+    shotsDir: z.string().default('dsh-browser-shots').volatile(),
+    urlMode: z.string().default('public').volatile(),
+    blockMetadata: z.boolean().default(true).volatile(),
+    metadataHostnames: z.array(z.string()).default([...DEFAULT_METADATA_HOSTNAMES]).volatile(),
+    metadataIps: z.array(z.string()).default([...DEFAULT_METADATA_IPS]).volatile(),
+    internetAccess: z.string().volatile(),
+    lanAccess: z.string().volatile(),
+    localAccess: z.string().volatile(),
+    internetTemp: z.boolean().default(true).volatile(),
+    lanTemp: z.boolean().default(true).volatile(),
+    localTemp: z.boolean().default(true).volatile(),
+    askMode: z.string().default('inherit').volatile(),
+    dshAccessEnabled: z.boolean().default(false).volatile(),
+    /** 只读档：开启后模型只能读页面、不能操作（点击/输入/导航/求值一律拒）。 */
+    readOnly: z.boolean().default(false).volatile(),
+    /** 允许模型在这台浏览器里执行任意脚本（eval / 帧内 eval / content.debug）—— 等价于给模型一个 devtools 控制台。 */
+    allowScript: z.boolean().default(true).volatile(),
+    /** 允许 `browser_hold` 给标签页加防误触浮层。关闭后调用一律拒绝。 */
+    holdEnabled: z.boolean().default(true).volatile(),
+    /** 脚本越界导航检查：跑完 `browser_evaluate` 后比对标签页地址，被带到未授权地址就报错（拦不住脚本本身）。 */
+    evalNavGuard: z.boolean().default(true).volatile(),
+    /**
+     * 浮层的出现方式：`black`（默认）＝ 模型开始操作某个标签页时自动补上（用户双击接管或模型
+     * `hold.off` 之后这个标签页本会话不再自动补）；`white` ＝ 只在模型主动调 `browser_hold` 时出现。
+     */
+    holdMode: z.string().default('black').volatile(),
+    /**
+     * 焦点策略（默认 auto）：`auto`＝只切标签页、**不**把浏览器窗口提到前台；
+     * `always`＝每次都提到前台（老行为）；`never`＝连标签页都不切（后台操作，键盘类可能到不了）。
+     * 抢焦点的直接后果：用户正在别的窗口里操作时，下一次点击落到浏览器上 ⇒ 误触（主人 2026-10-22）。
+     */
+    focusMode: z.string().default('auto').volatile(),
+    /**
+     * 最小化时是否自动把窗口恢复出来（默认关）。
+     * 关掉时：最小化且视口 0×0 的命令会被拒（并给出三条出路）；开着时：先恢复窗口再执行 ——
+     * 注意 `state:'normal'` 会顺带取消"最大化"，所以默认不做。
+     */
+    restoreWhenMinimized: z.boolean().default(false).volatile(),
+    /**
+     * de-034 决定权：浏览器权限气泡（本地网络访问 / 通知 / 定位…）由谁定。
+     * `policy`（默认）＝按下面的每类策略：只会"允许"或"询问"，**不会自动拒绝**；
+     * `ask`＝逐次交回浏览器/人；`model`＝允许模型逐次主张（敏感类仍不许模型放行）。
+     * **执行侧尚未接线**（要扩展权限 + 真机验证），见 NOTE.md。
+     */
+    permissionDecider: z.string().default('policy').volatile(),
+    /**
+     * de-034 每类策略，每行 `pref=allow|deny|inherit`（例：`automatic_downloads=allow`）。
+     * 默认放权（2026-10-22）：剪贴板与本地网络放行，其余类不写即询问；非法值按 `inherit`。
+     * 键名用 `browser_permissions` 报出的类名（`CURATED_CLASSES[].pref`）。
+     */
+    permissionPolicy: z.array(z.string()).default([...DEFAULT_PERMISSION_POLICY_ENTRIES]).volatile(),
+    dshOrigins: z.array(z.string()).default([]).volatile(),
+    allowHosts: z.array(z.string()).default([]).volatile(),
+    denyHosts: z.array(z.string()).default([]).volatile(),
+    registryDir: z.string().default('').volatile(),
+    autoLaunchEnabled: z.boolean().default(false).volatile(),
+    autoLaunchIdleSeconds: z.number().step(1).min(3).max(3600).default(15).volatile(),
+    autoLaunchBrowserExe: z.string().default('').volatile(),
+    autoLaunchProfileDir: z.string().default('').volatile(),
+    autoLaunchProfileName: z.string().default('').volatile(),
+    autoLaunchTempProfile: z.boolean().default(false).volatile(),
+    autoLaunchExtensionDir: z.string().default('').volatile(),
+    // 同伴件合并进来的旋钮（de-036）
+    layeredTools: z.boolean().default(true).volatile(),
+    autoLaunchOnToolUse: z.boolean().default(false).volatile(),
+    autoLaunchWaitMs: z.number().step(1).min(0).max(60_000).default(4_000).volatile(),
+    enabledGroups: z.array(z.string()).default([]).volatile(),
+});
+/**
+ * Validate a dsh-origin entry: `http(s)://host[:port]` or `host:*` (any port).
+ */
+function assertOriginList(list) {
+    if (!Array.isArray(list))
+        return;
+    if (list.length > 16)
+        throw new Error('browser-bridge: dshOrigins 最多 16 条');
+    const ok = (raw) => {
+        const value = raw.trim().toLowerCase();
+        if (value.length === 0 || value.length > 200 || /\s/.test(value))
+            return false;
+        if (/^https?:\/\/[a-z0-9.\-\[\]:]+$/.test(value))
+            return true;
+        if (/^[a-z0-9.\-\[\]]+:\*$/.test(value))
+            return true;
+        return false;
+    };
+    for (const raw of list) {
+        if (typeof raw !== 'string' || !ok(raw)) {
+            throw new Error(`browser-bridge: dshOrigins 包含非法条目 "${String(raw)}"（格式: http(s)://host[:port] 或 host:*）`);
+        }
+    }
+}
+const MAX_METADATA_ENTRIES = 64;
+const MAX_HOST_ENTRIES = 128;
+/**
+ * Validate a host-list (allow/deny/metadata). Entries must survive hostname
+ * normalization (optionally as a `*.suffix` wildcard) and contain no URL
+ * syntax / whitespace / control characters.
+ */
+function assertHostList(kind, list) {
+    const bad = (entry) => {
+        throw new Error(`browser-bridge: ${kind} 包含非法条目 "${entry}"（仅允许主机名/IP 或 *.suffix，去掉协议、路径与空白）`);
+    };
+    if (!Array.isArray(list))
+        return;
+    if (list.length > MAX_HOST_ENTRIES) {
+        throw new Error(`browser-bridge: ${kind} 最多 ${MAX_HOST_ENTRIES} 条`);
+    }
+    for (const raw of list) {
+        if (typeof raw !== 'string')
+            bad(String(raw));
+        const entry = raw.trim();
+        if (entry.length === 0)
+            bad(raw);
+        if (entry.length > 253)
+            bad(raw);
+        if (/[\s/\\@?#\u0000-\u001f\u007f]/.test(entry))
+            bad(raw);
+    }
+}
+/**
+ * Validate the metadata endpoint configuration. Both lists are fully
+ * user-maintained (the built-ins are only their initial value); entries must
+ * survive hostname normalization and contain no URL syntax.
+ */
+function assertMetadataLists(config) {
+    assertHostList('metadataHostnames', config.metadataHostnames);
+    assertHostList('metadataIps', config.metadataIps);
+}
+/**
+ * 「本 DSH 控制页」的本机地址：由宿主从 `webServer.port` 推导，**不再要求用户登记一个会过期的
+ * 写死 origin**（GUI 端口可以变，也可能是 OS 随机分配的端口 0 → 实际监听端口）。
+ * 用户自己登记的列表仍然生效，用于额外地址（局域网 IP / 自定义域名 / 反向代理等）。
+ */
+/** 焦点策略取值归一：只认 auto/always/never，其余一律 auto（不抢焦点最安全）。 */
+function focusModeOf(value) {
+    return value === 'always' || value === 'never' ? value : 'auto';
+}
+function mergeDshOrigins(config, controlOrigins) {
+    const merged = [...(config.dshOrigins ?? [])];
+    for (const origin of controlOrigins) {
+        if (!merged.includes(origin))
+            merged.push(origin);
+    }
+    return merged;
+}
+function policyOptionsFor(config, controlOrigins = []) {
+    return {
+        mode: config.urlMode,
+        blockMetadata: config.blockMetadata,
+        metadataHostnames: config.metadataHostnames ?? [...DEFAULT_METADATA_HOSTNAMES],
+        metadataIps: config.metadataIps ?? [...DEFAULT_METADATA_IPS],
+        internetAccess: config.internetAccess,
+        lanAccess: config.lanAccess,
+        localAccess: config.localAccess,
+        internetTemp: config.internetTemp ?? true,
+        lanTemp: config.lanTemp ?? true,
+        localTemp: config.localTemp ?? true,
+        dshAccessEnabled: config.dshAccessEnabled ?? false,
+        dshOrigins: mergeDshOrigins(config, controlOrigins),
+        allowHosts: config.allowHosts ?? [],
+        // de-016/de-018: 受限态「放行」档 = 忽略黑名单（红线/元数据/DSH 等仍先行）。
+        // 策略实例按当前 askMode 静态构建；红线不经此列表，因此仍生效。
+        denyHosts: config.askMode === 'allow' ? [] : config.denyHosts ?? [],
+    };
+    // 注：合并进来的 4 个旋钮（layeredTools / autoLaunchOnToolUse / autoLaunchWaitMs /
+    // enabledGroups）**不进** UrlPolicyOptions —— 它们由 schema 的默认值与 resolved 配置直接带给
+    // applyBuddyFeatures。
+}
+/**
+ * One text content block, with a ceiling that **says so** instead of silently dropping data.
+ *
+ * 为什么要有它：这批工具曾把有用数据留在结构化 `value` 里，`render` 只回一行摘要
+ * （`browser_snapshot` → "N interactive elements"、`browser_console_log`／`browser_network_log`
+ * → "N of M …"），或者把 JSON 硬切到 300/400 字符（`browser_evaluate`／`browser_tabs`）。
+ * 模型只看得到 render 的文本，于是这些工具在模型侧等于废掉 —— `browser_snapshot` 连 ref 都拿不到，
+ * 而 ref 正是它存在的理由（本机实测撞到过）。
+ */
+function textBlock(text, max = 20_000) {
+    const value = String(text ?? '');
+    if (value.length <= max)
+        return [{ type: 'text', text: value }];
+    return [{ type: 'text', text: `${value.slice(0, max)}\n…（已截断：全文 ${value.length} 字符；分段取可用 browser_evaluate，过滤可用 urlPattern/status）` }];
+}
+const SNAPSHOT_REF_SELECTOR_PATTERN = /^e\d+$/;
+/**
+ * 单次 `browser_read` 能塞进上下文的窗口（上游 v1.0.12 的口径）。
+ *
+ * 以前是"一次最多 120 000 字符 + 截断标记"——长页面一次就把上下文吃掉一大块，模型还没法接着读。
+ * 现在按窗口取：默认/上限都是这个数，头部直接给出 `chars a-b of N; call again with offset=b`。
+ */
+const READ_WINDOW_MAX_CHARS = 20_000;
+/**
+ * 把 `selector` / `text` / `fn` 三种写法收敛成扩展 `wait` 命令的参数 + 一句人话标签。
+ *
+ * 三者是**互斥**的（共用同一个 `wait` 命令），同时给了就按 selector > text > fn 取第一个，
+ * 并把选择写进标签里 —— 免得"我传了但等的是另一个条件"这种静默歧义。
+ */
+function describeWaitCondition(args) {
+    const selector = args.selector ?? args.waitSelector;
+    const text = args.text ?? args.waitText;
+    const fn = args.fn ?? args.waitFn;
+    const stable = Number(args.stable);
+    if (Number.isFinite(stable) && stable > 0)
+        return { params: { stableMs: Math.trunc(stable) }, label: `正文稳定 ${Math.trunc(stable)}ms` };
+    if (typeof selector === 'string' && selector.length > 0)
+        return { params: { selector }, label: `选择器出现 ${selector}` };
+    if (typeof text === 'string' && text.length > 0)
+        return { params: { text }, label: `正文包含「${text}」` };
+    if (typeof fn === 'string' && fn.length > 0)
+        return { params: { fn }, label: `谓词为真 ${fn}` };
+    return undefined;
+}
+/**
+ * 把 `urlPattern` 编译成匹配器：`/re/flags` 形式按正则，其余按**子串**（默认大小写不敏感）。
+ * 正则写坏时不抛（退回子串匹配）—— 批量关页签是收拾动作，不该因为一个 pattern 写错整批失败。
+ */
+function compileUrlPattern(pattern) {
+    const asRegex = /^\/(.*)\/([a-z]*)$/.exec(pattern);
+    if (asRegex !== null) {
+        try {
+            const flags = asRegex[2].includes('i') ? asRegex[2] : `${asRegex[2]}i`;
+            const re = new RegExp(asRegex[1], flags);
+            return (url) => re.test(url);
+        }
+        catch { /* 非法正则 → 按子串匹配 */ }
+    }
+    const needle = pattern.toLowerCase();
+    return (url) => url.toLowerCase().includes(needle);
+}
+/**
+ * HTTP 命令面里"带 URL、会改变浏览器去向"的命令（与 core 的 `URL_COMMANDS` 对齐）。
+ */
+const HTTP_URL_COMMANDS = new Set(['nav', 'tabs.open']);
+/**
+ * HTTP 命令面里"作用于页面内容"的命令：对**已开标签页**跑同一套红线判据
+ * （云元数据 / DSH 控制页 / deny 名单 / 分域拒绝），与工具层的 `authorizeExistingTab` 一致。
+ */
+const HTTP_PAGE_COMMANDS = new Set([
+    'eval', 'content', 'content.debug', 'find', 'frames', 'click', 'input', 'press', 'scroll',
+    'snapshot', 'screenshot', 'pdf', 'emulate',
+]);
+/** 端口被占时向后尝试的候选端口个数（配置端口 → +1 … +N）。 */
+const PORT_FALLBACK_COUNT = 9;
+/**
+ * 扩展端默认扫描的端口窗口（`background.js` 的 `PORT_SCAN_BASE/COUNT`）。
+ * 这里只用来**如实描述**回退后的可发现性：窗口外扩展扫不到，得在扩展高级里手填端口。
+ * （两处常量没法自动同步 —— 改扩展的窗口就要改这里，反之亦然。）
+ */
+const EXTENSION_PORT_SCAN_BASE = 9777;
+const EXTENSION_PORT_SCAN_COUNT = 10;
+/** 回退到 `port` 之后，扩展能否自己发现它。 */
+function extensionCanDiscoverPort(port) {
+    return port >= EXTENSION_PORT_SCAN_BASE && port < EXTENSION_PORT_SCAN_BASE + EXTENSION_PORT_SCAN_COUNT;
+}
+/** `shotsDir` 的 schema 默认值。等于它才说明用户没显式配过（见 `resolveShotsDir`）。 */
+const DEFAULT_SHOTS_DIR = 'dsh-browser-shots';
+/** 等 hello 时轮询的间隔。 */
+const HELLO_POLL_MS = 250;
+/** 极短的等待（只为让出事件循环，不用定时器语义）。 */
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
+ * 「自动拉起 / 握手即学习」这批配置的指纹。
+ *
+ * 它们**不动监听器**（不用重启桥），但必须让断线 watchdog 与学习定时器跟着换配置：
+ * 以前 `reconcileNow` 的早退只看 serverKey 与 policyKey，于是改完「自动拉起 / 断开容忍 /
+ * 拉起用哪个 profile」要等端口或策略也变了才生效，而设置页当时就把新值显示成"已保存"
+ * （2026-10-31 审计）。抽成纯函数是为了能直接钉住"哪些字段必须算进来"。
+ * @param config - 解析后的配置（只需要这批字段）。
+ * @returns 指纹串；禁用时为空串。
+ */
+export function autoLaunchFingerprint(config) {
+    if (!config.enabled)
+        return '';
+    return [
+        config.autoLaunchEnabled ? '1' : '0',
+        config.autoLaunchIdleSeconds,
+        config.autoLaunchBrowserExe,
+        config.autoLaunchProfileDir,
+        config.autoLaunchProfileName,
+        config.autoLaunchTempProfile ? '1' : '0',
+        config.autoLaunchExtensionDir,
+        config.autoLaunchOnToolUse ? '1' : '0',
+        config.autoLaunchWaitMs,
+    ].join('|');
+}
+/**
+ * 「握手即学习」失败后的退避时长（指数，封顶 10 分钟）。
+ *
+ * 学不成时 `learnedExtensionId` 不会被写入，于是 5 秒一次的定时器会**每轮全盘重扫**所有
+ * profile —— 一直连着一个学不到位置的扩展就是每 5 秒一次磁盘风暴（2026-10-31 审计）。
+ * @param attempts - 这个扩展 id 已经失败过几次（0 = 第一次失败）。
+ * @returns 下次允许重试前要等的毫秒数（15s 起，指数增长，第 6 次起封顶 10 分钟）。
+ */
+export function learnRetryDelayMs(attempts) {
+    const safe = Number.isFinite(attempts) ? Math.max(0, Math.trunc(attempts)) : 0;
+    // 指数封到 6（15s×64=16min）再与 10 分钟取小 —— 上限才真的落在 10 分钟。
+    // 只封到 5 的话 15s×32=480s，注释里那句"封顶 10 分钟"就永远对不上。
+    return Math.min(10 * 60_000, 15_000 * 2 ** Math.min(safe, 6));
+}
+/**
+ * Owns zero or one live {@link BridgeServer} and restarts it whenever the
+ * resolved settings change. Reconciles serialize through a promise chain so a
+ * burst of settings commits cannot interleave stop/start pairs.
+ */
+/** 拉起目标来源的中文说法（给人看的；诊断"这次为什么落在这个 profile"时很重要）。 */
+function launchSourceZh(source) {
+    switch (source) {
+        case 'config': return '设置里显式填的 profile';
+        case 'hello': return '扩展自报的 id 反查磁盘';
+        case 'hint': return '配置的扩展目录比对磁盘';
+        case 'record': return '上次配对记录';
+        default: return String(source);
+    }
+}
+/**
+ * 桥的控制器：配置 → 监听器 / 策略 / 命令收口的唯一持有者。
+ *
+ * 导出只为一件事：**访问控制的判据能在离线台子上被钉住**（`src/tests/http-face-access.mjs`
+ * 直接拿一个实例改状态、调两个入口，比较它们是否给出同一个拒绝）。不给别的模块用。
+ */
+export class BridgeController {
+    log;
+    server;
+    /** 实际绑定到的端口；端口被占时可能回退到 port+1..port+9。未启动时为 undefined。 */
+    boundPort;
+    /** 端口回退说明，供 browser_policy_status 展示。 */
+    portNote;
+    guarded;
+    policy;
+    serverKey = '';
+    policyKey = '';
+    /** 宿主推导的「本 DSH 控制页」地址（来自 webServer 服务）；用户登记列表之外的补充。 */
+    controlOrigins = [];
+    lastError;
+    chain = Promise.resolve();
+    current;
+    /** Per-session grants: hosts the user approved once in ask mode. Cleared when
+     *  policy inputs change or the plugin stops. */
+    tempAllow = new Set();
+    // de-013 auto-launch watchdog state.
+    watchdogTimer;
+    lastSpawnAt = 0;
+    droppedSince = 0;
+    /** 上次成功配对（学到的浏览器位置），懒加载自 {@link pairingFile}。 */
+    pairing;
+    /** 定位失败时到底扫了什么、为什么没命中 —— 状态工具要把这句话说出来。 */
+    locateNote;
+    /** 已经学过其位置的扩展 id（避免重复扫盘）。 */
+    learnedExtensionId;
+    /**
+     * 「握手即学习」失败时的退避状态。
+     *
+     * 为什么需要：学习失败（按扩展 id 反查不到装了它的 profile）时 `learnedExtensionId` 不会被写入，
+     * 于是 5 秒一次的定时器**每轮全盘重扫**一遍所有 profile —— 一直连着一个学习不了的扩展，
+     * 就是每 5 秒一次磁盘风暴。改成指数退避：同一个扩展 id 失败后按 15s → 30s → … → 10min 退避，
+     * 下次换 id 或配置变了（`refreshLearnTimer`）才立刻重试。
+     */
+    learnFailure;
+    /**
+     * 「握手即学习」的定时器。
+     *
+     * 为什么必须在**连着的**时候学：`hello` 只在扩展连着时存在（断开即清空），
+     * 而"需要拉起"恰恰发生在**断开**时 —— 等到那时再去读 id，读不到。所以一看到
+     * 新 id 就立刻反查磁盘并落盘，之后的冷启动才有依据。
+     */
+    learnTimer;
+    /** 上一次重建 watchdog / 学习定时器用的 autoLaunch* 快照（见 reconcileNow 里那个早退）。 */
+    autoLaunchKey = '';
+    /**
+     * L1：本桥写进占用表的那个浏览器（收尾时只删自己这条）。
+     * `key` 是 `userDataDir`，`startedAt` 跟着记录走，更新时保留首次写入时刻。
+     */
+    ownerWritten;
+    /**
+     * L1：这个浏览器**已经归别的桥**（写入被拒时留下那条现有记录）。
+     * 它说明「本桥不是主人」—— 拉起前会因此拒绝，状态面也会把它说出来。
+     */
+    ownerConflict;
+    /** 本桥的实例短名（`DSH_HOME` 的目录名）与 home，写进占用表供人认领。 */
+    instanceName;
+    dshHome;
+    /**
+     * 最近一次拉起动作（诊断用）。
+     *
+     * 为什么留在这里而不是只看状态面：`merged-into-running-instance` 这一支
+     * （2026-11-15 台机那次「唤起了但没用」）唯一的证据是「拉起的进程几乎立刻退出」，
+     * 而进程对象只在 spawn 那一刻有。
+     */
+    lastSpawn;
+    constructor(log) {
+        this.log = log;
+        const home = process.env['DSH_HOME'] !== undefined && process.env['DSH_HOME'] !== ''
+            ? process.env['DSH_HOME']
+            : path.join(homedir(), '.dsh');
+        this.dshHome = home;
+        this.instanceName = path.basename(home) || 'dsh';
+    }
+    /** Resolved directory screenshots land in; defined once any config arrived. */
+    get shotsDir() {
+        return this.current === undefined ? undefined : this.resolveShotsDir(this.current);
+    }
+    /**
+     * 截图目录。
+     *
+     * 用户显式配过就原样用；**用默认值时才按实例分一层**（2026-11-18）：桌面两个 DSH
+     * 实例共用一个工作区时，`dsh-browser-shots` 会是同一个目录，于是 `browser_cleanup`
+     * 在一边执行会把另一边的截图删掉（L1 里同一批「按实例分」的毛病）。
+     * @param config - 解析后的配置。
+     * @returns 绝对路径。
+     */
+    resolveShotsDir(config) {
+        const resolved = path.resolve(config.shotsDir);
+        if (config.shotsDir !== DEFAULT_SHOTS_DIR)
+            return resolved;
+        return path.join(resolved, this.instanceName);
+    }
+    /** 把一个目标系统形态的路径换成当前进程能访问的形态（WSL 下 `C:\…` → `/mnt/c/…`）。 */
+    localForm(p) {
+        return hostStyle() === 'wsl' ? toLinuxPath(p) : p;
+    }
+    /** 配对记录的落盘位置：`$DSH_HOME/browser-unified-pairing.json`（两个实例各自的 DSH_HOME 天然隔离）。 */
+    pairingFile() {
+        const home = process.env['DSH_HOME'] !== undefined && process.env['DSH_HOME'] !== ''
+            ? process.env['DSH_HOME']
+            : path.join(homedir(), '.dsh');
+        return path.join(home, 'browser-unified-pairing.json');
+    }
+    loadPairing() {
+        if (this.pairing !== undefined)
+            return this.pairing;
+        try {
+            const raw = JSON.parse(readFileSync(this.pairingFile(), 'utf8'));
+            if (typeof raw?.userDataDir === 'string' && raw.userDataDir !== '' && typeof raw?.profileDir === 'string') {
+                this.pairing = raw;
+            }
+        }
+        catch {
+            // 没有记录、或记录坏了：一律按"还没有"处理，绝不因此报错。
+        }
+        return this.pairing;
+    }
+    savePairing(record) {
+        this.pairing = record;
+        try {
+            mkdirSync(path.dirname(this.pairingFile()), { recursive: true });
+            writeFileSync(this.pairingFile(), `${JSON.stringify(record, undefined, '\t')}\n`, 'utf8');
+            this.log(`[browser-bridge] 已记下浏览器位置：${record.brandId} / ${record.profileDir}`
+                + `${record.profileName !== undefined ? `（${record.profileName}）` : ''} ← 命中方式 ${record.matchedBy}`);
+        }
+        catch (error) {
+            // 写不进去不影响本次拉起，只是下次冷启动还得重新定位一次。
+            this.log(`[browser-bridge] 配对记录写入失败：${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    /**
+     * 决定"这次拉起要落在哪个 profile"。
+     *
+     * 优先级（从可信到兜底）：用户显式配置 → 活着的 `hello`（扩展自报 id，最真实）→
+     * 配置里的扩展目录（路径比对）→ 上次配对的落盘记录。
+     *
+     * 全都不成立时**返回 undefined，并把"扫过什么"记进 {@link locateNote}** —— 不猜。
+     * 猜错的表现是"窗口起来了、扩展就是连不上"，比明确报错难查得多。
+     * @param config - 当前解析后的配置。
+     */
+    resolveLaunchTarget(config) {
+        const hello = this.server?.status.hello;
+        const extensionId = hello?.extensionId !== undefined && hello.extensionId !== '' ? hello.extensionId : undefined;
+        if (config.autoLaunchProfileDir.length > 0) {
+            const split = splitProfilePath(config.autoLaunchProfileDir, config.autoLaunchProfileName);
+            if (split !== undefined) {
+                // 用户显式填了就以他为准 —— 但**能查就查一下**：填错 profile 的表现是
+                // "窗口起来了、扩展就是连不上"，事后极难查。判"确实是这个扩展"才记进配对
+                // 记录；判"这个 profile 里没有它"就继续往下走磁盘定位，不盲信。
+                const verdict = extensionId === undefined
+                    ? undefined
+                    : profileHasExtension(this.localForm(split.userDataDir), split.profileDir, extensionId);
+                if (verdict !== false) {
+                    if (verdict === true && extensionId !== undefined) {
+                        // 显示名只在"用户没自己填"时去磁盘捞一下，纯展示用。
+                        const shown = config.autoLaunchProfileName !== ''
+                            ? config.autoLaunchProfileName
+                            : profileDisplayName(this.localForm(split.userDataDir), split.profileDir);
+                        this.savePairing({
+                            brandId: brandIdFromHelloName(hello?.browser?.name ?? '') ?? 'unknown',
+                            userDataDir: split.userDataDir,
+                            profileDir: split.profileDir,
+                            ...(shown !== undefined ? { profileName: shown } : {}),
+                            extensionId,
+                            matchedBy: 'config-verified',
+                            resolvedAt: new Date().toISOString(),
+                        });
+                    }
+                    return {
+                        ...split,
+                        ...(config.autoLaunchProfileName !== '' ? { profileName: config.autoLaunchProfileName } : {}),
+                        source: 'config',
+                    };
+                }
+                this.locateNote = `设置里填的 profile（${split.profileDir}）里没有这个扩展，改用磁盘定位`;
+                this.log(`[browser-bridge] ${this.locateNote}`);
+            }
+        }
+        const hint = config.autoLaunchExtensionDir.length > 0 ? config.autoLaunchExtensionDir : undefined;
+        if (extensionId !== undefined || hint !== undefined) {
+            const brandId = brandIdFromHelloName(hello?.browser?.name ?? '');
+            const found = locateExtensionProfile({ brandId, extensionId, extensionPathHint: hint });
+            const location = found.location;
+            if (location !== undefined) {
+                this.savePairing({
+                    brandId: location.brandId,
+                    userDataDir: location.userDataDir,
+                    profileDir: location.profileDir,
+                    ...(location.profileName !== undefined ? { profileName: location.profileName } : {}),
+                    ...(extensionId !== undefined ? { extensionId } : {}),
+                    ...(location.extensionPath !== undefined ? { extensionPath: location.extensionPath } : {}),
+                    matchedBy: location.matchedBy,
+                    resolvedAt: new Date().toISOString(),
+                });
+                this.locateNote = undefined;
+                return {
+                    userDataDir: location.userDataDir,
+                    profileDir: location.profileDir,
+                    ...(location.profileName !== undefined ? { profileName: location.profileName } : {}),
+                    brandId: location.brandId,
+                    source: extensionId !== undefined ? 'hello' : 'hint',
+                };
+            }
+            this.locateNote = `按${extensionId !== undefined ? `扩展 id ${extensionId}` : `扩展目录 ${hint ?? ''}`}没找到装了它的 profile`
+                + `（扫过 ${found.profilesScanned.length} 个 profile）`
+                + (found.notes.length > 0 ? `；${found.notes.slice(0, 3).join('；')}` : '');
+        }
+        const saved = this.loadPairing();
+        if (saved !== undefined) {
+            const local = hostStyle() === 'wsl' ? toLinuxPath(saved.userDataDir) : saved.userDataDir;
+            if (existsSync(local)) {
+                return {
+                    userDataDir: saved.userDataDir,
+                    profileDir: saved.profileDir,
+                    ...(saved.profileName !== undefined ? { profileName: saved.profileName } : {}),
+                    brandId: saved.brandId,
+                    source: 'record',
+                };
+            }
+            this.locateNote = `上次配对记录里的目录已不存在：${saved.userDataDir}`;
+        }
+        return undefined;
+    }
+    /* -------------------------------------------- L1 身份与占用（2026-11-18 加） */
+    /**
+     * 找这个 `userDataDir` 上**别人**的活占用记录。
+     *
+     * 「别人」＝ pid/port 与本桥不同。读不出来（表坏了/没权限）一律当作没有占用者继续 ——
+     * L1 是保护，不是前置条件；把读不到说成「被占用」会拦掉本来能用的拉起。
+     * @param userDataDir - 浏览器 user-data-dir（目标系统形态）。
+     */
+    liveOwnerFor(userDataDir) {
+        try {
+            const found = findLiveOwner(userDataDir, { exclude: { pid: process.pid, port: this.boundPort ?? 0 } });
+            for (const dead of found.removedDead)
+                this.log(`[browser-bridge] L1：清掉一条死占用记录 ${dead}`);
+            return found.record;
+        }
+        catch (error) {
+            this.log(`[browser-bridge] L1：读占用表失败（当作没有占用者继续）：${errorMessage(error)}`);
+            return undefined;
+        }
+    }
+    /** 删自己写的那条记录（`pid` + `port` 都对得上才删；别人的不动）。 */
+    removeOwnerFor(userDataDir) {
+        try {
+            removeOwnRecord(userDataDir, { pid: process.pid, port: this.boundPort ?? 0 });
+        }
+        catch (error) {
+            this.log(`[browser-bridge] L1：删占用记录失败（无害）：${errorMessage(error)}`);
+        }
+    }
+    /**
+     * 把「本桥占着这个浏览器」写进 L1 表（幂等）。
+     *
+     * 调用点：`reconcileNow` 起桥后、`learnFromHello` 学到位置后、拉起后。
+     * 写失败只记日志 —— 表坏不能让桥不能用。
+     * @param config - 当前解析后的配置。
+     */
+    syncOwnerRecord(config) {
+        if (!config.enabled) {
+            this.releaseOwnerRecord();
+            return;
+        }
+        const port = this.boundPort;
+        if (this.server === undefined || port === undefined)
+            return;
+        if (config.autoLaunchTempProfile)
+            return;
+        const target = this.resolveLaunchTarget(config);
+        if (target === undefined)
+            return;
+        const hello = this.server.status.hello;
+        const extensionId = hello?.extensionId !== undefined && hello.extensionId !== ''
+            ? hello.extensionId
+            : this.loadPairing()?.extensionId;
+        const now = new Date().toISOString();
+        const previous = this.ownerWritten;
+        const startedAt = previous !== undefined && previous.userDataDir === target.userDataDir ? previous.startedAt : now;
+        const pluginVersion = pluginVersionSync();
+        try {
+            const outcome = writeOwnerRecord({
+                schema: 1,
+                userDataDir: target.userDataDir,
+                ...(target.profileDir === '' ? {} : { profileDir: target.profileDir }),
+                port,
+                pid: process.pid,
+                dshHome: this.dshHome,
+                instanceName: this.instanceName,
+                ...(pluginVersion === undefined ? {} : { pluginVersion }),
+                ...(extensionId === undefined || extensionId === '' ? {} : { extensionId }),
+                ...(hello === undefined ? {} : { extensionVersion: hello.version }),
+                startedAt,
+                updatedAt: now,
+            });
+            if (!outcome.written) {
+                // 这个浏览器已经有主（另一个桥在服务它）：不覆盖、也不假装自己占着。
+                const holder = outcome.existing;
+                const wasConflict = this.ownerConflict !== undefined;
+                this.ownerConflict = holder;
+                if (!wasConflict && holder !== undefined) {
+                    this.log(`[browser-bridge] L1：${target.userDataDir} 已归另一个桥（端口 ${holder.port} / pid ${holder.pid}`
+                        + ` / DSH_HOME ${holder.dshHome || '未知'}）—— 本桥不写占用记录，拉起前会直接拒绝`);
+                }
+                return;
+            }
+            this.ownerConflict = undefined;
+            // 换了浏览器（配置改 / 学到新位置）⇒ 旧那条要删，否则会留下一条指向本 pid 的假占用。
+            if (previous !== undefined && previous.userDataDir !== target.userDataDir)
+                this.removeOwnerFor(previous.userDataDir);
+            this.ownerWritten = { userDataDir: target.userDataDir, startedAt };
+        }
+        catch (error) {
+            this.log(`[browser-bridge] L1：写占用记录失败（不影响桥）：${errorMessage(error)}`);
+        }
+    }
+    /** 收尾：删掉本桥写的那条记录。 */
+    releaseOwnerRecord() {
+        const previous = this.ownerWritten;
+        this.ownerWritten = undefined;
+        if (previous !== undefined)
+            this.removeOwnerFor(previous.userDataDir);
+    }
+    /** 目标 profile 里扩展的存在性 + 启用状态（读不出就是 `unknown`，不当成「没装」）。 */
+    extensionPresenceFor(target) {
+        const hello = this.server?.status.hello;
+        const extensionId = hello?.extensionId !== undefined && hello.extensionId !== ''
+            ? hello.extensionId
+            : this.loadPairing()?.extensionId;
+        if (extensionId === undefined || extensionId === '')
+            return 'unknown';
+        try {
+            return extensionPresenceInProfile(this.localForm(target.userDataDir), target.profileDir, extensionId);
+        }
+        catch {
+            return 'unknown';
+        }
+    }
+    /**
+     * 收集诊断证据。字段省略 ＝ 这一条没核过（不是「没有」）。
+     * @param extra - 覆盖/补充（拉起路径会塞 `spawn`）。
+     */
+    offlineEvidence(extra = {}) {
+        const status = this.server?.status;
+        const config = this.current;
+        const target = config === undefined || config.autoLaunchTempProfile ? undefined : this.resolveLaunchTarget(config);
+        // 「这个浏览器已经有主」有两条来路：现读表（别人刚写）与写入被拒（`ownerConflict`）。
+        // 后者说明本桥**当时**就没抢到，比现读更不容易漏。
+        const ownerRecord = (target === undefined ? undefined : this.liveOwnerFor(target.userDataDir)) ?? this.ownerConflict;
+        const lastHello = status?.lastHello;
+        const spawn = this.lastSpawn;
+        return {
+            port: this.boundPort,
+            scanWindow: { base: EXTENSION_PORT_SCAN_BASE, count: EXTENSION_PORT_SCAN_COUNT },
+            handshakeRejects: status?.handshakeRejects,
+            lastHello: lastHello === undefined
+                ? undefined
+                : { version: lastHello.version, at: lastHello.at, extensionId: lastHello.extensionId },
+            lastDisconnectAt: status?.lastDisconnectAt,
+            target: target === undefined
+                ? undefined
+                : { userDataDir: target.userDataDir, profileDir: target.profileDir, profileName: target.profileName },
+            extension: target === undefined ? undefined : this.extensionPresenceFor(target),
+            extensionId: status?.hello?.extensionId ?? this.loadPairing()?.extensionId,
+            otherOwner: ownerRecord === undefined
+                ? undefined
+                : {
+                    port: ownerRecord.port,
+                    pid: ownerRecord.pid,
+                    dshHome: ownerRecord.dshHome,
+                    instanceName: ownerRecord.instanceName,
+                    startedAt: ownerRecord.startedAt,
+                },
+            spawn: spawn === undefined
+                ? undefined
+                : {
+                    pid: spawn.pid,
+                    spawnedAt: spawn.at,
+                    exitedAt: spawn.exitedAt,
+                    exitCode: spawn.exitCode,
+                    waitedMs: spawn.waitedMs,
+                },
+            ...extra,
+        };
+    }
+    /** 一句话诊断（给 `extension_offline` 与拉起失败用）。 */
+    diagnoseNow(extra = {}) {
+        return diagnoseOffline(this.offlineEvidence(extra)).text;
+    }
+    /** 扩展此刻连上了吗（抽成方法：绕开 TS 对属性链的过度收窄）。 */
+    isExtensionConnected() {
+        return this.server?.status.extensionConnected === true;
+    }
+    /**
+     * 等 hello 到达。
+     *
+     * `stopWaiting` 是**提前止损**口：拉起的进程已经退出、或根本没起来时，再等满预算只是让
+     * 调用方干等（2026-11-18 把默认预算从 8 s 调到 4 s 之后这条更关键 —— 预算短了，
+     * 浪费在死进程上就更没道理）。
+     * @param timeoutMs - 上限；0 表示只看当下。
+     * @param stopWaiting - 返回非空字符串＝不必再等，那个字符串就是原因。
+     * @returns 连上了没有；没连上且是提前放弃的，带上原因。
+     */
+    async awaitHello(timeoutMs, stopWaiting) {
+        if (this.isExtensionConnected())
+            return { connected: true };
+        const deadline = Date.now() + Math.max(0, timeoutMs);
+        while (Date.now() < deadline) {
+            await delay(Math.min(HELLO_POLL_MS, Math.max(1, deadline - Date.now())));
+            if (this.isExtensionConnected())
+                return { connected: true };
+            const why = stopWaiting?.();
+            if (why !== undefined)
+                return { connected: false, gaveUpBecause: why };
+        }
+        return { connected: this.isExtensionConnected() };
+    }
+    /** 在 `refreshWatchdog` 的每个出口旁调用：只在桥启用时做"握手即学习"。 */
+    refreshLearnTimer(config) {
+        if (this.learnTimer !== undefined) {
+            clearInterval(this.learnTimer);
+            this.learnTimer = undefined;
+        }
+        if (!config.enabled)
+            return;
+        // 配置变了 = 失败原因可能已经消失（用户填了 profile 目录/扩展目录），别等退避到期。
+        this.learnFailure = undefined;
+        this.learnTimer = setInterval(() => {
+            this.learnFromHello(config);
+        }, 5_000);
+        this.learnFromHello(config);
+    }
+    /**
+     * 看 `hello` 学一次位置（幂等）。学成了就不再重复扫盘，直到换了一个扩展 id。
+     *
+     * 扫盘本身很贵（每个 profile 都要读磁盘），所以**失败也要退避**：
+     * 见 {@link learnFailure}。`loadPairing()` 只在真需要判断时读一次，不进 5 秒热路径。
+     * @param config - 当前解析后的配置。
+     */
+    learnFromHello(config) {
+        const extensionId = this.server?.status.hello?.extensionId;
+        if (extensionId === undefined || extensionId === '')
+            return;
+        if (extensionId === this.learnedExtensionId && this.loadPairing() !== undefined)
+            return;
+        const failed = this.learnFailure;
+        if (failed !== undefined && failed.extensionId === extensionId) {
+            if (Date.now() - failed.at < learnRetryDelayMs(failed.attempts))
+                return;
+        }
+        const target = this.resolveLaunchTarget(config);
+        if (target === undefined) {
+            const attempts = failed !== undefined && failed.extensionId === extensionId ? failed.attempts + 1 : 0;
+            this.learnFailure = { extensionId, at: Date.now(), attempts };
+            // 只在前两次说一声：之后静默退避，别把日志刷成一堵墙。
+            if (attempts <= 1) {
+                this.log(`[browser-bridge] 从 hello 学习浏览器位置失败（ext=${extensionId}，${this.locateNote ?? '没有可用的定位依据'}）：`
+                    + `改成退避重试，不再每 5 秒扫一遍磁盘`);
+            }
+            return;
+        }
+        this.learnFailure = undefined;
+        this.learnedExtensionId = extensionId;
+        this.log(`[browser-bridge] 已从 hello 学到浏览器位置（ext=${extensionId} → ${target.brandId ?? '?'} / ${target.profileDir}`
+            + `${target.profileName !== undefined ? `（${target.profileName}）` : ''}）`);
+        // 学到位置 = 知道"本桥占着哪个浏览器"了 ⇒ 写 L1（见 syncOwnerRecord）。
+        this.syncOwnerRecord(config);
+    }
+    /**
+     * 找浏览器可执行文件。
+     *
+     * **只返回真实存在的路径**（posix 上允许裸名交给 PATH 解析）。绝不返回"可能的名字"：
+     * WSL 下 `spawn('msedge')` 会 ENOENT，而那个错误是**异步**的、会被 `child.on('error')`
+     * 吞掉，函数照旧返回"已拉起" —— 实测就是这个假成功让自动拉起一直静默失效。
+     * @param configured - 用户显式填的 exe（非空则以它为准）。
+     * @param brandId - 限定品牌（来自 `hello`）；省略=按登记表找全部。
+     */
+    resolveBrowserCandidates(configured, brandId) {
+        if (configured.length > 0)
+            return [configured];
+        return exeCandidates(hostStyle(), brandId !== undefined && brandId !== '' ? [brandId] : undefined);
+    }
+    /** Snapshot for the read-only policy-status tool. */
+    describePolicy() {
+        const c = this.current;
+        const hello = this.server?.status.hello;
+        const pairing = this.loadPairing();
+        return {
+            enabled: c?.enabled ?? false,
+            holdMode: c?.holdMode,
+            holdEnabled: c?.holdEnabled !== false,
+            evalNavGuard: c?.evalNavGuard !== false,
+            focusMode: c?.focusMode,
+            restoreWhenMinimized: c?.restoreWhenMinimized === true,
+            permissionDecider: c?.permissionDecider,
+            holdSyncNote: this.holdSyncNote,
+            urlMode: c?.urlMode,
+            internetAccess: c?.internetAccess,
+            lanAccess: c?.lanAccess,
+            localAccess: c?.localAccess,
+            internetTemp: c?.internetTemp,
+            lanTemp: c?.lanTemp,
+            localTemp: c?.localTemp,
+            askMode: c?.askMode,
+            autoLaunchEnabled: c?.autoLaunchEnabled,
+            autoLaunchIdleSeconds: c?.autoLaunchIdleSeconds,
+            autoLaunchProfileDir: c?.autoLaunchProfileDir,
+            autoLaunchProfileName: c?.autoLaunchProfileName,
+            dshAccessEnabled: c?.dshAccessEnabled,
+            dshOrigins: c === undefined ? undefined : mergeDshOrigins(c, this.controlOrigins),
+            allowHosts: c?.allowHosts,
+            denyHosts: c?.denyHosts,
+            // 状态面必须能说出"这份名单此刻到底生不生效"（X14）：askMode=allow 时空数组才是生效值。
+            denyHostsIgnored: c?.askMode === 'allow',
+            blockMetadata: c?.blockMetadata,
+            metadataHostnames: c?.metadataHostnames,
+            metadataIps: c?.metadataIps,
+            tempGrants: [...this.tempAllow],
+            ready: this.guarded !== undefined,
+            boundPort: this.boundPort,
+            requestedPort: c?.port,
+            portNote: this.portNote,
+            extensionId: hello?.extensionId,
+            browserName: hello?.browser?.name,
+            // 协议协商（core 0.1.5 起随上游 v1.0.9 的口径）：不匹配时 status 里带原因，
+            // browser_info 直接把它交给模型 —— 否则"新命令报未知命令"没人解释得清。
+            bridgeProtocol: this.server?.status.bridgeProtocol,
+            extensionProtocol: this.server?.status.extensionProtocol,
+            protocolCompatible: this.server?.status.protocolCompatible,
+            protocolNote: this.server?.status.protocolNote ?? null,
+            pairing: pairing === undefined ? undefined : {
+                brandId: pairing.brandId,
+                profileDir: pairing.profileDir,
+                profileName: pairing.profileName,
+                userDataDir: pairing.userDataDir,
+                matchedBy: pairing.matchedBy,
+                resolvedAt: pairing.resolvedAt,
+            },
+            launchNote: this.locateNote,
+            // 2026-11-18：把「扩展为什么没连上」的第一手证据也放进状态面。
+            // 以前这些只在日志里，模型与设置页都看不到，于是只能猜「是不是没装」。
+            handshakeRejects: this.server?.status.handshakeRejects,
+            lastHelloVersion: this.server?.status.lastHello?.version,
+            lastHelloAt: this.server?.status.lastHello?.at,
+            lastDisconnectAt: this.server?.status.lastDisconnectAt,
+            ownerRecord: this.ownerWritten === undefined ? undefined : { userDataDir: this.ownerWritten.userDataDir, startedAt: this.ownerWritten.startedAt },
+            ownerConflict: this.ownerConflict === undefined ? undefined : {
+                port: this.ownerConflict.port,
+                pid: this.ownerConflict.pid,
+                dshHome: this.ownerConflict.dshHome,
+                instanceName: this.ownerConflict.instanceName,
+                startedAt: this.ownerConflict.startedAt,
+            },
+        };
+    }
+    // --- de-013 auto-launch watchdog -------------------------------------
+    /** (Re)arm the watchdog from the resolved config; clears it when disabled. */
+    refreshWatchdog(config) {
+        if (this.watchdogTimer !== undefined) {
+            clearInterval(this.watchdogTimer);
+            this.watchdogTimer = undefined;
+        }
+        this.droppedSince = 0;
+        if (!config.enabled || !config.autoLaunchEnabled)
+            return;
+        const idleMs = Math.max(3, Math.min(3600, config.autoLaunchIdleSeconds ?? 15)) * 1000;
+        this.watchdogTimer = setInterval(() => {
+            void this.watchdogTick(idleMs, config);
+        }, Math.min(5000, Math.max(1000, idleMs)));
+    }
+    async watchdogTick(idleMs, config) {
+        const status = this.server?.status;
+        if (status === undefined || !status.listening)
+            return;
+        if (status.extensionConnected) {
+            this.droppedSince = 0;
+            return;
+        }
+        const now = Date.now();
+        if (this.droppedSince === 0)
+            this.droppedSince = now;
+        if (now - this.droppedSince < idleMs)
+            return;
+        const cooldown = Math.max(30_000, idleMs * 2);
+        if (now - this.lastSpawnAt < cooldown)
+            return;
+        this.lastSpawnAt = now;
+        // watchdog 是后台动作：没人接它的返回文案，但也不能让异常变成未处理拒绝（DSH 会 exit）。
+        void this.launchAndAwaitHello(config).catch((error) => {
+            this.log(`[browser-bridge] autoLaunch（watchdog）失败：${errorMessage(error)}`);
+        });
+    }
+    /**
+     * de-013 model-invoked launch: bring the extension's browser back up on
+     * demand. Unlike the disconnect watchdog this does not require
+     * `autoLaunchEnabled` — the model asks, the browser starts. Spawn
+     * parameters come from the same autoLaunch* settings the watchdog uses.
+     * A short cooldown prevents the model from spawning a window per call.
+     *
+     * **等到 hello 才回答**（2026-11-18）：以前这里回一句「已发起，等几秒再看」，
+     * 于是「唤起了但没用」只能靠人去发现 —— 2026-11-15 台机那次就卡在这里。
+     * 现在最多等 `autoLaunchWaitMs`，等不到就按证据**指名**原因。
+     * @returns a human-readable outcome for the tool layer.
+     */
+    async launchBrowser(landingUrl) {
+        const status = this.server?.status;
+        if (status?.extensionConnected)
+            return '扩展已连接，无需拉起';
+        const config = this.current;
+        if (config === undefined)
+            return '浏览器控制尚未加载配置，无法拉起';
+        if (!config.enabled)
+            return '浏览器控制未启用，无法拉起（请先打开开关）';
+        // 以前这里硬性要求填过 autoLaunchProfileDir / autoLaunchBrowserExe。现在
+        // "哪个 profile"可以由**扩展自报 id + 磁盘反查**得到，所以只在真的没有任何
+        // 判据时才拦 —— 否则就是"明明能学会，却先怪用户没配置"。
+        const hasJudgement = config.autoLaunchProfileDir.length > 0
+            || config.autoLaunchBrowserExe.length > 0
+            || config.autoLaunchExtensionDir.length > 0
+            || this.loadPairing() !== undefined;
+        if (!hasJudgement) {
+            return '定位不到浏览器 profile：既没配过（autoLaunchProfileDir / autoLaunchExtensionDir），也还没有过成功配对。'
+                + '先手动打开一次装了扩展的那个 profile，让扩展连上过一回，桥会记住位置'
+                + (this.locateNote !== undefined ? `；上次定位失败原因：${this.locateNote}` : '');
+        }
+        const now = Date.now();
+        if (now - this.lastSpawnAt < 10_000)
+            return '刚刚已尝试拉起，请稍候几秒让浏览器/扩展连上';
+        this.lastSpawnAt = now;
+        return this.launchAndAwaitHello(config, landingUrl);
+    }
+    /**
+     * 唤起可用的浏览器。
+     *
+     * **"进程活着但没有窗口"与"扩展没连上"是两件不同的事**，混在一起会形成死局：
+     * Edge 关掉所有窗口后仍在后台驻留（启动增强/后台扩展），扩展照样连着桥，于是
+     * `launchBrowser()` 回答"扩展已连接，无需拉起"，但 `tabs.list` 回 0 个标签页、
+     * 所有"当前标签页"类命令全部失败（实测 Windows 侧就是这么卡住的）。
+     *
+     * - 扩展已连接但没有窗口 → 让扩展自己新建窗口（`window.ensure`），**不再起进程**；
+     * - 扩展未连接 → 沿用原来的 spawn 逻辑。
+     * @returns 给人/模型看的结果说明。
+     */
+    async wakeBrowser(options = {}) {
+        const status = this.server?.status;
+        const reason = typeof options.reason === 'string' && options.reason.length > 0 ? options.reason : 'browser_launch';
+        // 落地页：只有"当前策略**直接放行**"的 http(s) 网址才会被采用。唤醒发生在
+        // buddy 的 pre-execute（也就是工具自身授权门**之前**），把未授权/被拦的 URL
+        // 交给浏览器等于绕过 UrlPolicy（元数据端点、deny 名单全会漏）。判定不过就退回 about:blank。
+        const landingUrl = await this.wakeLandingUrl(options.url);
+        if (status?.extensionConnected === true) {
+            try {
+                const info = (await this.execute('window.ensure', { reason, ...(landingUrl === undefined ? {} : { url: landingUrl }) }, new AbortController().signal));
+                if (info.created === true) {
+                    return `扩展已连接，但浏览器里没有任何窗口 —— 已让扩展新建一个窗口（tabId=${String(info.tabId)}`
+                        + `${landingUrl === undefined ? '' : `，落在 ${landingUrl}`}），可以继续操作了`;
+                }
+                return `扩展已连接，当前有 ${String(info.windowsBefore)} 个窗口，无需唤起`;
+            }
+            catch (error) {
+                return `扩展已连接，但请求它新建窗口失败：${errorMessage(error)}（可手动打开一次浏览器窗口）`;
+            }
+        }
+        return this.launchBrowser(landingUrl);
+    }
+    /**
+     * 校验候选项能否当"唤醒落地页"：必须 http(s)，且当前策略**直接放行**（allow）——
+     * `ask`/`block`/`unavailable` 一律不用（唤醒不该成为绕过审批的通道）。
+     * @returns 可用则返回归一化后的 URL，否则 undefined（调用方退回 about:blank）。
+     */
+    async wakeLandingUrl(candidate) {
+        if (typeof candidate !== 'string')
+            return undefined;
+        const url = candidate.trim();
+        if (!/^https?:\/\//i.test(url))
+            return undefined;
+        try {
+            const verdict = await this.authorizeUrl(url);
+            return verdict.decision === 'allow' ? url : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    }
+    /**
+     * 拉起，然后**等 hello**，最后按证据回答。
+     *
+     * 三个动作按顺序，每一步都在下面有出处：
+     *  1. 拉起前查 L1 占用：这个浏览器已经有桥在管就别再拉一个（2026-11-14 台机故障）；
+     *  2. spawn，并记住 pid / 退出时刻（`merged-into-running-instance` 的唯一证据）；
+     *  3. 等 `autoLaunchWaitMs`，等不到就用 `diagnoseOffline` 指名原因（2026-11-15 故障）。
+     * @param config - 当前解析后的配置。
+     * @param landingUrl - 落地页（已在 `wakeLandingUrl` 过策略）。
+     */
+    async launchAndAwaitHello(config, landingUrl) {
+        const target = config.autoLaunchTempProfile ? undefined : this.resolveLaunchTarget(config);
+        if (target !== undefined) {
+            const owner = this.liveOwnerFor(target.userDataDir);
+            if (owner !== undefined) {
+                const text = `[browser-launch-refused] ${target.userDataDir} 已被另一个桥占用：端口 ${owner.port}`
+                    + ` / pid ${owner.pid} / DSH_HOME ${owner.dshHome || '未知'}`
+                    + `${owner.instanceName === '' ? '' : `（${owner.instanceName}）`} / 起始 ${owner.startedAt}。`
+                    + '要么用那个桥（它已经在服务这个浏览器），要么先把那个 dsh 关掉，再让我拉起。';
+                this.log(`[browser-bridge] L1：${text}`);
+                return text;
+            }
+        }
+        const before = this.lastSpawn;
+        const spawnedText = this.spawnBrowser(config, landingUrl);
+        const spawned = this.lastSpawn;
+        if (spawned === undefined || spawned === before) {
+            // 没真的起进程（定位不到 profile / 找不到 exe）：原话已经能指名原因了。
+            return spawnedText;
+        }
+        const waitMs = Math.max(0, Math.min(60_000, config.autoLaunchWaitMs ?? 4_000));
+        // 先写"打算等多久"（中途被 `describePolicy` 读到时是这个），等完再换成**实际**等了多久。
+        spawned.waitedMs = waitMs;
+        const waitingSince = Date.now();
+        const outcome = await this.awaitHello(waitMs, () => {
+            if (spawned.spawnError !== undefined)
+                return `拉起的进程没能启动（${spawned.spawnError}）`;
+            if (spawned.exitedAt !== undefined) {
+                return `拉起的进程在 ${spawned.exitedAt - spawned.at} ms 后就退出了（exit ${String(spawned.exitCode)}）`;
+            }
+            return undefined;
+        });
+        spawned.waitedMs = Date.now() - waitingSince;
+        if (outcome.connected) {
+            this.syncOwnerRecord(this.current ?? config);
+            const hello = this.server?.status.hello;
+            return `${spawnedText}；hello 已到达（${hello?.version ?? '?'}），扩展已连上`;
+        }
+        const diagnosis = this.diagnoseNow({ spawn: {
+                pid: spawned.pid,
+                spawnedAt: spawned.at,
+                exitedAt: spawned.exitedAt,
+                exitCode: spawned.exitCode,
+                spawnError: spawned.spawnError,
+                waitedMs: spawned.waitedMs,
+            } });
+        this.log(`[browser-bridge] autoLaunch：拉起后 ${spawned.waitedMs} ms 没等到 hello`
+            + `${outcome.gaveUpBecause === undefined ? '' : `（提前放弃：${outcome.gaveUpBecause}）`} —— ${diagnosis}`);
+        return `${spawnedText}；等 ${spawned.waitedMs} ms 没有等到 hello`
+            + `${outcome.gaveUpBecause === undefined ? '' : `（${outcome.gaveUpBecause}，没继续等满 ${waitMs} ms）`}。${diagnosis}`;
+    }
+    spawnBrowser(config, landingUrl) {
+        // 拉起目标**先由学习/配置得出**（见 resolveLaunchTarget），不再自己
+        // `path.resolve` —— 那正是 Windows 路径被 Linux 口径拆坏的来源（缺陷③）。
+        const target = config.autoLaunchTempProfile ? undefined : this.resolveLaunchTarget(config);
+        let userDataDir = '';
+        let profileName = '';
+        if (config.autoLaunchTempProfile) {
+            if (!config.autoLaunchExtensionDir) {
+                this.log('[browser-bridge] autoLaunch: 临时干净实例需要 autoLaunchExtensionDir（未打包扩展目录）才能 sideload；改用已装扩展的 profile 目录');
+                return '临时干净实例需要 autoLaunchExtensionDir（未打包扩展目录）才能 sideload；请改配已装扩展的 profile 目录或填扩展目录';
+            }
+            userDataDir = mkdtempSync(path.join(tmpdir(), 'dsh-browser-'));
+        }
+        else if (target !== undefined) {
+            userDataDir = target.userDataDir;
+            profileName = target.profileDir;
+        }
+        else if (config.autoLaunchBrowserExe.length === 0) {
+            // 定位不到"装了扩展的那个 profile"。此时用默认 profile 拉一个窗口出来，
+            // 表现就是历史上那个「唤起了但没用」：窗口起来了、扩展永远连不上。
+            // 与其开一个没用的窗口，不如把话说明白。
+            // （用户显式填了 autoLaunchBrowserExe 的按他自己的选择走，不拦。）
+            const why = this.locateNote !== undefined ? `；${this.locateNote}` : '';
+            this.log(`[browser-bridge] autoLaunch: 跳过拉起 —— 定位不到装了扩展的 profile${why}`);
+            return '定位不到装了扩展的 profile，因此没有拉起（用默认 profile 起了也连不上）'
+                + `${why}。先手动打开一次装了扩展的那个 profile，让扩展连上过一回，桥会自己记住位置`;
+        }
+        const extra = config.autoLaunchTempProfile && config.autoLaunchExtensionDir
+            ? ['--load-extension=' + path.resolve(config.autoLaunchExtensionDir)]
+            : [];
+        const args = ['--no-first-run', '--no-default-browser-check'];
+        if (userDataDir)
+            args.push('--user-data-dir=' + userDataDir);
+        if (profileName)
+            args.push('--profile-directory=' + profileName);
+        args.push(...extra);
+        // 落地页：有"本次调用要去的网址"就直接落在那里（2026-10-10 用户反馈：以前一律
+        // about:blank，每唤起一次就多一张空白垃圾页，而且模型还得再导航一次）。
+        args.push(landingUrl === undefined ? 'about:blank' : landingUrl);
+        const candidates = this.resolveBrowserCandidates(config.autoLaunchBrowserExe, target?.brandId);
+        if (candidates.length === 0) {
+            const why = this.locateNote !== undefined ? `；${this.locateNote}` : '';
+            this.log(`[browser-bridge] autoLaunch: 找不到可用的浏览器可执行文件${why}`);
+            return `找不到浏览器可执行文件（登记表里的常见安装位置都没命中）${why}`;
+        }
+        if (target !== undefined) {
+            this.log(`[browser-bridge] autoLaunch: 拉起目标来自 ${target.source}（${target.brandId ?? '未知品牌'} / ${target.profileDir}`
+                + `${target.profileName !== undefined ? `（${target.profileName}）` : ''}）`);
+        }
+        const where = `user-data-dir=${userDataDir || '默认'}${profileName ? `, profile=${profileName}` : ''}`;
+        for (const exe of candidates) {
+            const looksLikePath = exe.includes('/') || exe.includes('\\');
+            if (looksLikePath && !existsSync(exe)) {
+                this.log(`[browser-bridge] autoLaunch: 跳过不存在的可执行文件 ${exe}`);
+                continue;
+            }
+            try {
+                const spawnedAt = Date.now();
+                const child = spawn(exe, args, { detached: true, stdio: 'ignore' });
+                // 拉起的进程**几乎立刻退出**是「启动被合并进已运行实例」的唯一证据
+                // （2026-11-15 台机：Profile 4 的窗口没加载，用户看到「唤起了但没用」）。
+                // 这里只记事实，怎么解释交给 `offline-diagnosis`。
+                const record = {
+                    at: spawnedAt,
+                    ...(child.pid === undefined ? {} : { pid: child.pid }),
+                    ...(target === undefined ? {} : { target }),
+                    waitedMs: 0,
+                };
+                child.on('exit', (code) => {
+                    record.exitedAt = Date.now();
+                    record.exitCode = code;
+                    this.log(`[browser-bridge] autoLaunch：拉起进程 ${String(child.pid)} 在 ${record.exitedAt - spawnedAt} ms 后退出（code ${String(code)}）`);
+                });
+                this.lastSpawn = record;
+                // ⚠️ ENOENT / EACCES 走的是**异步** `'error'` 事件，try/catch 抓不到。
+                // 所以这里只能说"已发起"，成不成功由 `hello` 到达来判定 —— 过去正是在
+                // 这里谎报"已拉起"，才让"调用即自动拉起"静默失效。
+                child.on('error', (error) => {
+                    // 记下来：`launchAndAwaitHello` 靠它提前停止等待、`offline-diagnosis` 靠它指名。
+                    // 故意**不**写 `exitedAt` —— 那是「进程起来过又退出」的判据，写错会把人引去关浏览器。
+                    record.spawnError = error.message;
+                    this.log(`[browser-bridge] autoLaunch ${exe} 启动失败：${error.message}（若配置了可执行文件请给完整路径）`);
+                });
+                child.unref();
+                this.log(`[browser-bridge] autoLaunch: 已发起 ${exe}（${where}）`);
+                return `已发起 ${exe}（${where}）${target !== undefined ? `，目标来自${launchSourceZh(target.source)}` : ''}`;
+            }
+            catch (error) {
+                this.log(`[browser-bridge] autoLaunch ${exe} 失败：${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+        this.log('[browser-bridge] autoLaunch: 候选可执行文件都起不来');
+        return `候选浏览器都起不来（试过 ${candidates.join(', ')}）`;
+    }
+    /**
+     * Converge the live server onto `config`. With `throwOnError`, an initial
+     * start failure rejects (fail-loud activation); later changes record the
+     * failure instead, so a bad port cannot tear down an otherwise running session.
+     * @param config - the freshly resolved settings snapshot.
+     * @param options - set `throwOnError` only for the activation-time call.
+     * @returns a promise settling once the convergence attempt finished.
+     */
+    /**
+     * 记录由宿主推导的「本 DSH 控制页」地址（`webServer.port`），并在变化时重建策略：
+     * DSH 页面红线要跟着**真实的控制页**走，而不是跟着用户登记的旧地址走。
+     * @param origins - 归一化的 origin 列表（如 `http://127.0.0.1:3080`）。
+     */
+    setControlOrigins(origins) {
+        const next = [...origins];
+        if (next.join('\u0001') === this.controlOrigins.join('\u0001'))
+            return;
+        this.controlOrigins = next;
+        this.policyKey = '';
+        const config = this.current;
+        if (config !== undefined)
+            void this.reconcile(config);
+    }
+    reconcile(config, options = {}) {
+        this.current = config;
+        const run = this.chain.then(() => this.reconcileNow(config));
+        this.chain = run.catch(() => { });
+        if (options.throwOnError === true) {
+            return run.catch((error) => {
+                throw error instanceof Error ? error : new Error(String(error));
+            });
+        }
+        return Promise.resolve();
+    }
+    async reconcileNow(config) {
+        // 默认值按实例分一层（见 resolveShotsDir）：两个 DSH 实例共用一个工作区时，
+        // 一边的 browser_cleanup 不该删掉另一边的截图。
+        const shotsDir = this.resolveShotsDir(config);
+        // The listener only restarts when transport-affecting values change.
+        const serverKey = config.enabled ? `${config.port}|${config.token}|${shotsDir}` : '';
+        // URL policy is rebuilt in place (no listener restart) when the policy
+        // inputs change, so editing the lists / modes in Settings applies live
+        // without ever dropping an in-flight browser command.
+        const policyKey = config.enabled
+            ? `${config.urlMode}|${config.blockMetadata ? '1' : '0'}|${config.askMode}|${config.internetAccess}|${config.lanAccess}|${config.localAccess}|`
+                + `${config.internetTemp ? '1' : '0'}|${config.lanTemp ? '1' : '0'}|${config.localTemp ? '1' : '0'}|`
+                + `${config.dshAccessEnabled ? '1' : '0'}|${mergeDshOrigins(config, this.controlOrigins).join('\u0001')}|`
+                + `${(config.metadataHostnames ?? []).join('\u0001')}|${(config.metadataIps ?? []).join('\u0001')}|`
+                + `${(config.allowHosts ?? []).join('\u0001')}|${(config.denyHosts ?? []).join('\u0001')}`
+            : '';
+        // autoLaunch* 不动监听器，但**必须**让断线 watchdog 与「握手即学习」跟着换配置。
+        // 以前这个早退只看上面两个 key ⇒ 改完「自动拉起/断开容忍/拉起用哪个 profile」要等端口或策略
+        // 也变了（或者重启 dsh）才生效，而设置页当时就把新值显示成"已保存"（2026-10-31 审计）。
+        const autoLaunchKey = autoLaunchFingerprint(config);
+        if (serverKey === this.serverKey && policyKey === this.policyKey && autoLaunchKey === this.autoLaunchKey)
+            return;
+        this.autoLaunchKey = autoLaunchKey;
+        if (serverKey !== this.serverKey) {
+            const previous = this.server;
+            this.server = undefined;
+            this.guarded = undefined;
+            this.policy = undefined;
+            this.tempAllow.clear();
+            this.serverKey = '';
+            this.policyKey = '';
+            await previous?.stop();
+            if (!config.enabled) {
+                this.lastError = undefined;
+                return;
+            }
+            // 端口被占时**依次尝试候选端口**（配置端口 → +1 … +9），全不可用则降级记录错误。
+            // 历史行为是这里直接 throw → 变成未处理拒绝 → DSH `exit(1)`（P0 取证：端口被占时
+            // `dsh web` 起不来）。现在任何启动失败都不再拖垮 DSH；扩展端会按候选序列自动发现端口。
+            const candidates = [config.port, ...Array.from({ length: PORT_FALLBACK_COUNT }, (_, i) => config.port + i + 1)];
+            let started;
+            let lastStartError;
+            for (const candidate of candidates) {
+                const attempt = new BridgeServer({
+                    port: candidate,
+                    token: config.token,
+                    shotsDir,
+                    log: this.log,
+                    // X18：HTTP 命令面（`POST /api/command`）过去完全不过策略，同伴件的 frames/eval
+                    // 就走它 —— 等于"带 token 就能对任意标签页 eval/nav"。这里把策略接回去。
+                    guardCommand: (command, params) => this.guardHttpCommand(command, params),
+                    // 设置页要用「存下来的值 vs 正在生效的值」把"改动需重启"显出来（2026-10-17：
+                    // 用户开了「允许访问本 DSH 页面」、页面显示已保存，实际仍被 `WEB_DSH_DISABLED` 拒）。
+                    // 读 `this.current`（reconcile 里更新）而不是 reconcile 的参数：策略变更时监听器
+                    // 不重建，闭包捕获的旧 config 会过期。只放只读、非机密字段；dshOrigins 不放 ——
+                    // 生效值里含宿主推导出来的控制页地址，与用户列表天然不同，比了会误报。
+                    pluginVersion: pluginVersionSync(),
+                    describePolicy: () => {
+                        const c = this.current;
+                        if (c === undefined)
+                            return undefined;
+                        return {
+                            enabled: c.enabled !== false,
+                            readOnly: c.readOnly === true,
+                            allowScript: c.allowScript !== false,
+                            dshAccessEnabled: c.dshAccessEnabled === true,
+                            internetAccess: c.internetAccess,
+                            lanAccess: c.lanAccess,
+                            localAccess: c.localAccess,
+                            askMode: c.askMode,
+                            blockMetadata: c.blockMetadata !== false,
+                            allowHosts: [...(c.allowHosts ?? [])],
+                            denyHosts: [...(c.denyHosts ?? [])],
+                        };
+                    },
+                });
+                try {
+                    await attempt.start();
+                    started = attempt;
+                    this.boundPort = candidate;
+                    if (candidate === config.port) {
+                        this.portNote = undefined;
+                    }
+                    else {
+                        // X15（另一半）：回退到扩展扫描窗口**之外**时，"扩展会自动发现"是句假承诺
+                        // （扩展只扫 9777..9786，外加它自己 popup 里填过的端口/lastKnownPort）。
+                        this.portNote = extensionCanDiscoverPort(candidate)
+                            ? `配置端口 ${config.port} 被占用，已回退到 ${candidate}（在扩展的扫描窗口 ${EXTENSION_PORT_SCAN_BASE}..${EXTENSION_PORT_SCAN_BASE + EXTENSION_PORT_SCAN_COUNT - 1} 内，扩展会自己发现）`
+                            : `配置端口 ${config.port} 被占用，已回退到 ${candidate} —— ⚠️ 该端口**不在扩展的默认扫描窗口 ${EXTENSION_PORT_SCAN_BASE}..${EXTENSION_PORT_SCAN_BASE + EXTENSION_PORT_SCAN_COUNT - 1} 内**：请到扩展的高级里把「桥接端口」填成 ${candidate}，否则扩展连不上这个桥`;
+                        this.log(`[browser-bridge] ${this.portNote}`);
+                    }
+                    break;
+                }
+                catch (error) {
+                    lastStartError = error;
+                    const code = error?.code;
+                    // 只有"端口被占"值得换端口；其它错误（无权限 / 非法端口）立即停手。
+                    if (code !== 'EADDRINUSE')
+                        break;
+                    this.log(`[browser-bridge] 端口 ${candidate} 被占用，尝试下一个候选`);
+                }
+            }
+            if (started === undefined) {
+                this.boundPort = undefined;
+                this.portNote = undefined;
+                const message = lastStartError instanceof Error ? lastStartError.message : String(lastStartError);
+                this.lastError = `桥接启动失败（候选端口 ${candidates[0]}..${candidates[candidates.length - 1]} 均不可用）: ${message}`;
+                this.log(this.lastError);
+                this.refreshWatchdog(config);
+                this.refreshLearnTimer(config);
+                return;
+            }
+            this.server = started;
+            this.serverKey = serverKey;
+        }
+        if (!config.enabled) {
+            // 关掉桥 / 配置换成别的浏览器：本桥不再是这个浏览器的占用者。
+            this.releaseOwnerRecord();
+            this.refreshWatchdog(config);
+            this.refreshLearnTimer(config);
+            return;
+        }
+        // Unified URL policy in front of every navigation command: public mode
+        // blocks private/loopback/metadata targets before they reach the
+        // extension; intranet mode allows local/LAN but still blocks metadata.
+        // Rebuild whenever the policy inputs change (mode, realm access, temps,
+        // full access, metadata and allow/deny lists). Session grants reset with
+        // the policy.
+        if (policyKey !== this.policyKey && this.server !== undefined) {
+            this.policy = new UrlPolicy(policyOptionsFor(config, this.controlOrigins));
+            this.guarded = new GuardedBridge(this.server, this.policy);
+            this.tempAllow.clear();
+            this.policyKey = policyKey;
+            this.lastError = undefined;
+        }
+        this.refreshWatchdog(config);
+        this.refreshLearnTimer(config);
+        // 桥起来了 = 可以记账了。写在最后：此时 boundPort 与服务都在，记录里不会出现空端口。
+        this.syncOwnerRecord(config);
+    }
+    /**
+     * Run one extension command over the live, policy-guarded link.
+     * @param command - extension command name (`nav`, `click`, …).
+     * @param params - wire params passed through to the extension.
+     * @param signal - tool-execution cancellation propagated to the pending command.
+     * @returns the extension's result payload verbatim.
+     */
+    /**
+     * **只读档**下仍然放行的命令（其余一律拒绝）。判定放在 `execute` 这个单一收口上 ——
+     * 工具面隐藏（buddy）只是"模型不知道有它"，真边界在这里：即使注入猜中名字也会被拒。
+     */
+    /**
+     * 哪些命令属于"执行任意脚本"这一类（等价于 devtools 控制台）。
+     * 主人 2026-10-17：「模型权限我觉得可以细化，比如让不让调用类似 devtools 这类」——
+     * 先把最危险的一类单独拎出来做成开关；其余按 read-only 那档兜。
+     */
+    // `content` 是**读**：扩展里 cmdContent 只注入脚本取 title/url/正文，不执行模型给的代码。
+    // 以前把它划进"脚本类"，于是关掉「允许执行任意脚本」或打开只读档时 browser_read 直接失败，
+    // 而这两处的文案都在保证"读取不受影响"（2026-10-31 审计发现）。
+    static SCRIPT_COMMANDS = new Set(['eval', 'content.debug']);
+    /** 会让扩展"自动补浮层"的命令 + 浮层自身的命令：执行前把当前模式推下去。 */
+    static HOLD_MODE_COMMANDS = new Set([
+        'click', 'input', 'press', 'scroll', 'nav', 'eval',
+        'hold.on', 'hold.off', 'hold.status', 'hold.config',
+    ]);
+    static READ_ONLY_ALLOWED = new Set([
+        'ping', 'browser.info', 'tabs.list', 'snapshot', 'screenshot', 'find', 'frames',
+        'console.log', 'network.log', 'wait', 'hold.status', 'lock.status', 'pdf',
+        // 读页面正文也是只读操作（同上，以前漏了它就等于只读档下 browser_read 不可用）。
+        'content',
+    ]);
+    /**
+     * 已经推给扩展的浮层模式（`mode|扩展id|连接状态`）。扩展重连或配置变更后戳记不同 ⇒ 重推一次。
+     * 旧扩展不认识 `hold.config`：推送失败就保持在白名单行为，不影响任何调用。
+     */
+    holdModeStamp;
+    /** 上一次把浮层模式推给扩展的结果（诊断用；undefined = 还没推过）。 */
+    holdSyncNote;
+    /** 当前是否只读档（`accessLevel: 'read-only'`）。 */
+    isReadOnly() {
+        return this.current?.readOnly === true;
+    }
+    /**
+     * 访问控制的两道闸（只读档 / 关掉「允许执行任意脚本」）。
+     *
+     * **工具面与 HTTP 命令面共用这一份判据**：以前只有 `execute` 里写了这两道，
+     * 而 `POST /api/command` 走的是 core 的 `guardCommand` 钩子、根本不过 `execute`
+     * ⇒ 同一个只读档，模型调不动 `browser_click`，同伴件带 token 一次 POST 就能点
+     * （2026-11-01 审计第 2 条）。判据抽出来以后，两个入口谁都不能单方面漏掉。
+     * @param command - 扩展命令名。
+     * @returns 拒绝原因（给模型/调用方看）；undefined = 放行。
+     */
+    accessDenial(command) {
+        if (BridgeController.SCRIPT_COMMANDS.has(command) && this.current?.allowScript === false) {
+            return `脚本执行已关闭：命令 ${command} 被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型执行任意脚本 关着）。`
+                + '读取、点击、输入、导航都不受影响；要放开请让主人打开那一项。';
+        }
+        if (this.isReadOnly() && !BridgeController.READ_ONLY_ALLOWED.has(command)) {
+            return `只读模式：命令 ${command} 已被拒绝（设置 →「浏览器」→ 访问控制 → 允许模型操作页面 关着）。`
+                + '要放开请让主人在设置里打开那一项；读取类工具（read/snapshot/screenshot/find 等）照常可用。';
+        }
+        return undefined;
+    }
+    /**
+     * 最近一条对话框记录所在的标签页 —— `dialog` 的 `answer` 默认就作用于它（扩展侧
+     * `dialogLog[dialogLog.length - 1].tabId`）。授权必须判**那个**页面，不能拿当前激活页顶包。
+     * 读不到（没有记录 / 桥没起 / 扩展没连）返回 undefined：调用方据此 fail-closed。
+     */
+    async lastDialogTabId() {
+        const server = this.server;
+        if (server === undefined)
+            return undefined;
+        try {
+            const raw = await server.execute('dialog', {});
+            const rows = Array.isArray(raw?.recent) ? raw.recent : [];
+            const last = rows.length > 0 ? rows[rows.length - 1] : undefined;
+            return typeof last?.tabId === 'number' ? last.tabId : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    }
+    async execute(command, params, signal, timeoutMs) {
+        const denied = this.accessDenial(command);
+        if (denied !== undefined)
+            throw classify(command, new Error(denied));
+        const guarded = this.guarded;
+        if (guarded === undefined) {
+            throw classify(command, new Error(this.lastError ?? '浏览器控制未启用 —— 到 dsh 设置 →「浏览器」分区打开开关'));
+        }
+        if (BridgeController.HOLD_MODE_COMMANDS.has(command))
+            await this.syncHoldMode(guarded, signal);
+        try {
+            return await this.executeRetryingOffline(guarded, command, params, signal, timeoutMs);
+        }
+        catch (error) {
+            // 第二道收口（core 的桥是第一道）：把失败翻译成模型能读的"该不该重试"。
+            // classify 幂等，已被分类过的原样返回；策略错误（UrlPolicyError）单独归类成
+            // policy_blocked + not_started —— 它发生在命令发出之前，不是"结果未知"。
+            const classified = classify(command, error);
+            // `extension_offline` 是把四件不同的事压成一句话的报错（端口/令牌/没装/被禁用）。
+            // 在这里补一句指名诊断：修法各不相同，而模型只有这一条线索。
+            if (classified.code === 'extension_offline') {
+                const diagnosis = this.diagnoseNow();
+                throw new BridgeError(command, 'extension_offline', 'not_started', `${classified.detail}。${diagnosis}`);
+            }
+            throw classified;
+        }
+    }
+    /**
+     * 发一条命令；**只在「扩展还没连上」时**多试几轮。
+     *
+     * 为什么是重试而不是把 `autoLaunchWaitMs` 调长：那个预算只在"等不到"时被整个花掉，
+     * 调长等于让每次失败都多等那么久，而实测冷启到 hello 只要约 0.5 s（见 NOTE 21:23）。
+     * 重试是"差一点点"那类时序竞态的对症解法，而且它同时覆盖**不是拉起引起**的重连
+     * （用户点了扩展图标、SW 被别的事件叫醒）。
+     *
+     * 为什么只认 `extension_offline`：那条错误码只在 core **发送前**发现没连接时产生
+     * （`server.ts:358`，一个字节都没出去），所以重试幂等。命令在途中掉线归 `link_lost`，
+     * 写操作的 `effectState` 是 `unknown` —— 那种情况重试就是点两次，见 `offline-retry.ts`。
+     * @param guarded - 过完策略的桥。
+     * @param command - 命令名。
+     * @param params - 命令参数。
+     * @param signal - 调用方中止信号。
+     * @param timeoutMs - 只在显式给时才覆盖桥默认值（导航要用：见 `nav-budget.ts`）。
+     * @returns 扩展的原始返回值。
+     */
+    async executeRetryingOffline(guarded, command, params, signal, timeoutMs) {
+        // timeoutMs 只在调用方显式给时才覆盖桥默认值（导航要用：见 nav-budget.ts）
+        const options = timeoutMs === undefined ? { signal } : { signal, timeoutMs };
+        for (let round = 1;; round += 1) {
+            try {
+                return await guarded.execute(command, params, options);
+            }
+            catch (error) {
+                const classified = classify(command, error);
+                if (!shouldRetryOffline({ code: classified.code, round, aborted: signal.aborted }))
+                    throw error;
+                this.log(`[browser-bridge] ${command}：扩展还没连上，${OFFLINE_RETRY_DELAY_MS} ms 后重试（第 ${round} 轮，共 ${round + 1} 轮）`);
+                await delay(OFFLINE_RETRY_DELAY_MS);
+            }
+        }
+    }
+    /**
+     * 把「浮层出现方式」推给扩展（只在变更/重连后推一次）。
+     * 推不动（旧扩展不认识这条命令、或桥刚断）就保持白名单行为 —— 浮层是附加保护，不该让调用失败。
+     */
+    async syncHoldMode(guarded, signal) {
+        const mode = this.current?.holdMode === 'white' ? 'white' : 'black';
+        const focus = focusModeOf(this.current?.focusMode);
+        const restore = this.current?.restoreWhenMinimized === true;
+        const hello = this.server?.status.hello;
+        const stamp = `${mode}|${focus}|${restore}|${hello?.extensionId ?? ''}|${hello ? 'up' : 'down'}`;
+        if (this.holdModeStamp === stamp)
+            return;
+        if (!hello) {
+            this.holdSyncNote = `未推送（扩展还没 hello）：mode=${mode}`;
+            return;
+        }
+        try {
+            await guarded.execute('hold.config', { mode }, { signal });
+            // 焦点策略同一次推下去；旧扩展不认识 focus.config 时会落到 catch ——
+            // 那只会退回老行为（抢焦点），不影响命令本身。
+            await guarded.execute('focus.config', { mode: focus, restoreMinimized: restore }, { signal });
+            this.holdModeStamp = stamp;
+            this.holdSyncNote = `已推送 ${mode} / 焦点=${focus}${restore ? ' / 最小化即恢复' : ''}`;
+        }
+        catch (error) {
+            // 旧扩展（不认识 hold.config / focus.config）会走到这里：按白名单行为，不打扰调用方。
+            this.holdSyncNote = `推送失败：${error instanceof Error ? error.message : String(error)}`;
+        }
+    }
+    /**
+     * Authorize one navigation target against the live policy, honoring
+     * per-session grants. Returns `unavailable` while the bridge is stopped.
+     */
+    /**
+     * X18：HTTP 命令面（`POST /api/command`）的策略守卫，由 core 的 `guardCommand` 钩子调用。
+     *
+     * 覆盖两类：
+     *  1. **带 URL 的命令**（`nav` / `tabs.open`）：与工具路径同源，但这里没有审批通道 ⇒
+     *     只有 `allow` 才放行，`ask` 一律拒（并指路「用 browser_navigate 工具」或加 allowHosts）。
+     *  2. **页面内容命令**（`eval` / `frames` / `click` …）：判**目标标签页当前 URL**是否踩红线 ——
+     *     这正是以前缺的那一层（同伴件走 HTTP 面，绕过了工具层的 `authorizeExistingTab`）。
+     *
+     * 扩展未连接时不在这里拦（交给 `execute` 报 503「no browser extension」，别把连接问题说成策略拒绝）。
+     * @returns 拒绝原因（非空即 403）；undefined = 放行。
+     */
+    async guardHttpCommand(command, params) {
+        // 访问控制（只读档 / 关掉脚本执行）先过 —— 与工具面同一份判据，见 `accessDenial`。
+        // 漏了这一行 = 只读档下带 token 的 `POST /api/command` 仍能点击/输入/求值。
+        const denied = this.accessDenial(command);
+        if (denied !== undefined)
+            return denied;
+        const url = params.url;
+        if (typeof url === 'string' && url.length > 0 && HTTP_URL_COMMANDS.has(command)) {
+            const verdict = await this.authorizeUrl(url);
+            if (verdict.decision === 'unavailable')
+                return controllerDescribeUnavailable();
+            if (verdict.decision !== 'allow') {
+                const code = verdict.decision === 'block' ? (verdict.code ?? 'WEB_BLOCKED_URL') : 'NEED_AUTHORIZATION';
+                return `${code}: ${verdict.reason}（HTTP 命令面没有审批通道：要访问该目标请改用 browser_navigate 工具，或把它加入 allowHosts）`;
+            }
+        }
+        if (HTTP_PAGE_COMMANDS.has(command)) {
+            if (this.server?.status.extensionConnected !== true)
+                return undefined;
+            const tabId = typeof params.tabId === 'number' ? params.tabId : undefined;
+            try {
+                await authorizeExistingTab(this, tabId, new AbortController().signal);
+            }
+            catch (error) {
+                return errorMessage(error);
+            }
+        }
+        // `dialog` 只有带 `answer` 才真动页面（读/改策略不碰任何页面，所以它不在上面那个集合里）。
+        // 它命中的标签页可以不给 tabId（默认=最近一条对话框记录），所以先定目标页再判红线 ——
+        // 不这样做的话，带 token 的 POST 能把任意标签页从对话框里放出来。
+        if (command === 'dialog' && params.answer !== undefined) {
+            if (this.server?.status.extensionConnected !== true)
+                return undefined;
+            const tabId = typeof params.tabId === 'number' ? params.tabId : await this.lastDialogTabId();
+            if (tabId === undefined) {
+                return 'HTTP 命令面回答对话框必须给出 tabId：记录里找不到可用的目标标签页，无法判断该页面是否允许操作';
+            }
+            try {
+                await authorizeExistingTab(this, tabId, new AbortController().signal);
+            }
+            catch (error) {
+                return errorMessage(error);
+            }
+        }
+        return undefined;
+    }
+    async authorizeUrl(raw) {
+        const policy = this.policy;
+        if (policy === undefined) {
+            return { decision: 'unavailable' };
+        }
+        const verdict = await policy.authorizeUrl(raw);
+        if (verdict.decision === 'ask' && verdict.host.length > 0 && this.tempAllow.has(verdict.host)) {
+            return { decision: 'allow', reason: '', host: verdict.host };
+        }
+        return verdict;
+    }
+    /** Remember one host for the rest of this session (ask-mode grant). */
+    grantTemporary(host) {
+        if (host.length > 0)
+            this.tempAllow.add(host);
+    }
+    /**
+     * Delete generated artifacts using the currently resolved directories;
+     * works while the bridge is stopped because it never touches the socket.
+     * @returns counts and names of what was removed.
+     */
+    async cleanup() {
+        const dir = this.shotsDir;
+        if (dir === undefined)
+            throw new Error('浏览器控制尚未加载配置，无法确定清理目录');
+        return cleanupArtifacts({ shotsDir: dir });
+    }
+    /** Stop the listener; safe to call repeatedly and during teardown. */
+    stop() {
+        if (this.watchdogTimer !== undefined) {
+            clearInterval(this.watchdogTimer);
+            this.watchdogTimer = undefined;
+        }
+        if (this.learnTimer !== undefined) {
+            clearInterval(this.learnTimer);
+            this.learnTimer = undefined;
+        }
+        this.droppedSince = 0;
+        const previous = this.server;
+        this.server = undefined;
+        this.guarded = undefined;
+        this.policy = undefined;
+        this.tempAllow.clear();
+        this.serverKey = '';
+        this.policyKey = '';
+        // 本桥不再伺候这个浏览器了：删掉 L1 里自己那条（别人的不动）。
+        this.releaseOwnerRecord();
+        return previous?.stop() ?? Promise.resolve();
+    }
+}
+function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+/**
+ * Authorization gate in front of navigation tools. Blocks carry a stable code;
+ * `ask` verdicts raise a host approval request through the host approval
+ * service and remember an approved host for the rest of the session, so the
+ * model never loops on a target the user already granted.
+ */
+async function authorizeNavigation(ctx, controller, url, exec, toolName) {
+    const verdict = await controller.authorizeUrl(url);
+    if (verdict.decision === 'unavailable') {
+        throw new Error(controllerDescribeUnavailable());
+    }
+    if (verdict.decision === 'block') {
+        throw new Error(`${verdict.code ?? 'WEB_BLOCKED_URL'}: ${verdict.reason}`);
+    }
+    if (verdict.decision === 'ask') {
+        const s = controller.describePolicy();
+        const realm = verdict.host.length > 0 ? realmOf(verdict.host) : 'internet';
+        const agent = exec.agent;
+        const session = agent?.session;
+        const approval = ctx.get('approval');
+        // de-016: can a host approval actually be requested right now? The
+        // restricted-state askMode only applies when it cannot.
+        let askable = false;
+        if (approval && typeof agent === 'object' && agent !== null && session !== undefined && typeof approval.overrideOf === 'function') {
+            try {
+                const override = approval.overrideOf(session);
+                const effective = override ?? approval.config?.policy ?? 'ask';
+                askable = effective === 'ask';
+            }
+            catch {
+                askable = true; // unknown → assume ask is usable (safe default: prompt)
+            }
+        }
+        if (askable) {
+            // Approvals are usable: always show the host approval; askMode
+            // (restricted-state policy) deliberately does not apply here.
+            const realmTemp = realm === 'internet' ? (s.internetTemp ?? true) : realm === 'lan' ? (s.lanTemp ?? true) : (s.localTemp ?? true);
+            if (!realmTemp) {
+                throw new Error(`NEED_AUTHORIZATION: ${verdict.reason} — 该网络（${realmLabelZh(realm)}）不允许临时授权；请把主机 ${verdict.host} 加入 allowHosts 白名单后再试`);
+            }
+            if (!approval || !agent || !session) {
+                throw new Error(`NEED_AUTHORIZATION: ${verdict.reason} — no approval service or agent/session context available; add the host to allowHosts or set the realm access back to allow`);
+            }
+            const outcome = await approval.request({
+                agent: agent,
+                toolName,
+                reason: `【浏览器访问授权】目标 ${url}（主机 ${verdict.host}，${realmLabelZh(realm)}域）：该域为 ask 模式且主机不在 allowHosts。批准后本次会话内访问此主机不再重复询问。`,
+                signal: exec.signal,
+            });
+            if (outcome !== 'allowed-once') {
+                throw new Error(`NEED_AUTHORIZATION: 用户未批准访问 ${verdict.host}（${outcome}）。请勿自动重试该目标；如需继续，请向用户请求授权或把主机加入 allowHosts 白名单。`);
+            }
+            controller.grantTemporary(verdict.host);
+            return;
+        }
+        // Approvals unavailable (policy never / Full Access / no service):
+        // apply the restricted-state askMode.
+        const askMode = s.askMode ?? 'inherit';
+        if (askMode === 'deny') {
+            throw new Error(`WEB_REALM_DENIED: ${verdict.reason} — ask 域被配置为直接禁止（受限态策略=禁止）`);
+        }
+        // 'inherit'（忽略）与 'allow'（放行）都让目标通过：ask 失效。
+        controller.grantTemporary(verdict.host);
+    }
+}
+function controllerDescribeUnavailable() {
+    return '浏览器控制未启用 —— 到 dsh 设置 → 插件 → DSH 浏览器控制 打开开关';
+}
+function realmLabelZh(realm) {
+    return realm === 'lan' ? '局域网' : realm === 'local' ? '本机' : '外网';
+}
+function askModeZh(mode) {
+    return mode === 'allow' ? '放行' : mode === 'deny' ? '禁止' : '忽略';
+}
+/** Resolve the current URL of a tab (by id, or the active tab) through tabs.list. */
+async function currentTabUrl(controller, tabId, signal) {
+    const raw = await controller.execute('tabs.list', {}, signal);
+    const tabs = Array.isArray(raw.tabs) ? raw.tabs : [];
+    let pick = undefined;
+    if (typeof tabId === 'number') {
+        pick = tabs.find((t) => t.id === tabId);
+        if (pick === undefined) {
+            // 以前这里静默退回 tabs[0]：授权判在了**另一个**标签页上，命令本身再由扩展回一句
+            // "No tab with id: …"（调用方还得多跑一次 browser_tabs 才知道有哪些 id）。
+            const available = tabs.map((t) => `${t.id}${t.active === true ? '(active)' : ''}`);
+            throw new Error(`没有 id=${tabId} 的标签页`
+                + (available.length > 0 ? `；现有：${available.join(', ')}` : '（当前没有标签页）'));
+        }
+    }
+    else {
+        pick = tabs.find((t) => t.active === true);
+        if (pick === undefined && typeof raw.activeTabId === 'number')
+            pick = tabs.find((t) => t.id === raw.activeTabId);
+    }
+    if (pick === undefined)
+        pick = tabs[0];
+    return typeof pick?.url === 'string' && pick.url.length > 0 ? pick.url : undefined;
+}
+/**
+ * Red-line gate for operating on an ALREADY-OPEN tab: refuse any page-affecting
+ * command whose current URL the live policy forbids (metadata endpoints, the
+ * disabled DSH control page, deny/deny-listed hosts, realm denial). Red lines
+ * are absolute — they refuse even where a user approval would otherwise be
+ * possible (approvals never apply to red-line verdicts). Non-http(s) pages are
+ * skipped. Every browser_* tool that reads, evaluates, interacts with or
+ * captures a page goes through this gate, so there is no tool that silently
+ * bypasses the policy.
+ */
+async function authorizeExistingTab(controller, tabId, signal) {
+    const url = await currentTabUrl(controller, tabId, signal);
+    if (!url)
+        return undefined;
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+            return url;
+    }
+    catch {
+        return url;
+    }
+    const verdict = await controller.authorizeUrl(url);
+    if (verdict.decision === 'unavailable') {
+        throw new Error(controllerDescribeUnavailable());
+    }
+    if (verdict.decision === 'block') {
+        throw new Error(`${verdict.code ?? 'WEB_BLOCKED_URL'}: ${verdict.reason} — operating on this open tab is refused`);
+    }
+    if (verdict.decision === 'ask') {
+        throw new Error(`NEED_AUTHORIZATION: 当前标签页 ${url}（主机 ${verdict.host}）未获授权访问。请先让用户批准该主机，或把它加入 allowHosts 白名单后再操作。`);
+    }
+    return url;
+}
+/** Cap long page reads and mark the cut, so token cost stays bounded. */
+function clampText(value, maxChars) {
+    return value.length <= maxChars
+        ? { content: value, truncated: false }
+        : { content: value.slice(0, maxChars), truncated: true };
+}
+/**
+ * Resolve the element target a click/type tool received.
+ * @param args - validated tool arguments carrying at most one targeting field.
+ * @returns the CSS selector to send on the wire, refs translated to their attribute form.
+ */
+function targetSelector(args) {
+    const hasSelector = typeof args.selector === 'string' && args.selector.length > 0;
+    const hasRef = typeof args.ref === 'string' && args.ref.length > 0;
+    if (hasSelector === hasRef) {
+        throw new Error('provide exactly one of selector or ref (ref comes from browser_snapshot)');
+    }
+    if (hasRef) {
+        const ref = args.ref;
+        if (!SNAPSHOT_REF_SELECTOR_PATTERN.test(ref))
+            throw new Error(`invalid ref: ${ref}`);
+        return `[data-dsh-ref="${ref}"]`;
+    }
+    return args.selector;
+}
+function requireTabId(args, action) {
+    if (typeof args.tabId !== 'number')
+        throw new Error(`${action} requires tabId`);
+    return args.tabId;
+}
+/** Write one screenshot payload to the shots directory and return its durable location. */
+async function saveScreenshot(controller, payload) {
+    const dir = controller.shotsDir;
+    if (dir === undefined)
+        throw new Error('browser-bridge is not configured yet');
+    await mkdir(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const random = Math.random().toString(36).slice(2, 6);
+    const file = path.join(dir, `${stamp}-${random}.${payload.format === 'jpeg' ? 'jpg' : 'png'}`);
+    const buffer = Buffer.from(payload.base64, 'base64');
+    await writeFile(file, buffer);
+    return {
+        file,
+        bytes: buffer.length,
+        tabId: payload.tabId,
+        title: payload.tabTitle,
+        url: payload.tabUrl,
+    };
+}
+/** Write one PDF payload to `path` (absolute or relative to `controller.shotsDir`)
+ *  and return the absolute path + size. Mirrors saveScreenshot's contract. */
+async function savePdf(controller, payload, requestedPath) {
+    const dir = controller.shotsDir;
+    if (dir === undefined)
+        throw new Error('browser-bridge is not configured yet');
+    let file;
+    if (requestedPath && path.isAbsolute(requestedPath)) {
+        file = requestedPath;
+        await mkdir(path.dirname(file), { recursive: true });
+    }
+    else {
+        await mkdir(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const random = Math.random().toString(36).slice(2, 6);
+        const name = requestedPath ? path.basename(requestedPath) : `${stamp}-${random}.pdf`;
+        file = path.join(dir, name);
+    }
+    const buffer = Buffer.from(payload.base64, 'base64');
+    await writeFile(file, buffer);
+    return {
+        file,
+        bytes: buffer.length,
+        tabId: payload.tabId,
+        ...(payload.tabTitle === undefined ? {} : { title: payload.tabTitle }),
+        ...(payload.tabUrl === undefined ? {} : { url: payload.tabUrl }),
+    };
+}
+/** Register every `browser_*` tool; each is a thin adapter over one extension command. */
+/**
+ * 权限现状 → 给模型看的文本（`browser_permissions` 的全部载荷都拼在这里）。
+ *
+ * 措辞原则：**说清"谁能点"**。浏览器 chrome 自己的权限气泡（LNA 等）扩展既看不见也答不了，
+ * 唯一能做的是把它读出来、并明确「需要用户本人处理」，避免模型把"有人在等人点"误诊成"页面卡了"。
+ */
+/**
+ * `denyHosts` 的状态行（X14）。抽成纯函数是为了能被离线测试钉住 —— 关键点：
+ * **名单存在 ≠ 名单生效**，`askMode=allow` 时它对策略没有作用（允许名单也一样被忽略），
+ * 只有硬红线仍然生效。状态面藏着这件事，模型与用户就会按一份"其实不生效"的名单推理。
+ * @param shown 已经截断/格式化好的名单文本（空时传 '（空）'）。
+ * @param ignored 生效策略是否忽略了这份名单（askMode=allow）。
+ */
+/**
+ * `browser_snapshot` 的模式判定：请求了 ax，扩展到底有没有真的给 ax？
+ *
+ * 三种情形必须分清（上游 v1.0.15 的教训）：
+ *   ① 扩展回了 `mode:'ax'`         → 真 AX；
+ *   ② 扩展回了 `axFallback`        → 它试过、落回 dom，把原因原样带出去；
+ *   ③ 两者都没有（`mode` 字段也不存在）→ **旧扩展静默忽略**了 `mode:"ax"`，照样回 DOM 结果。
+ *      这时必须由插件把"降级了"说出来 —— 否则模型以为自己拿的是无障碍名，实际是标签名。
+ *
+ * @param rawMode 扩展回包里的 `mode`（老扩展可能完全没有这个字段）
+ * @param rawFallback 扩展回包里的 `axFallback`
+ * @param wantAx 本次调用是否请求了 ax
+ */
+export function snapshotModeOf(rawMode, rawFallback, wantAx) {
+    if (rawMode === 'ax')
+        return { mode: 'ax' };
+    if (rawFallback !== undefined && rawFallback.length > 0)
+        return { mode: 'dom', axFallback: rawFallback };
+    if (wantAx && rawMode === undefined) {
+        return {
+            mode: 'dom',
+            axFallback: 'this extension ignored mode:"ax" and returned CSS-DOM matches (AX 模式需要 DSH Browser Control 扩展 ≥1.0.11) —— 下面的名字是标签名，不是可访问名',
+        };
+    }
+    return { mode: 'dom' };
+}
+export function denyHostsStatusLine(shown, ignored) {
+    const base = `denyHosts: ${shown.length > 0 ? shown : '（空）'}`;
+    return ignored
+        ? `${base}  ⚠️ askMode=放行 ⇒ **本名单当前不生效**（该档连黑白名单一起忽略；硬红线仍生效）`
+        : base;
+}
+/**
+ * 把扩展端 `emulate` 的回包按 `output.schema` 收口。
+ *
+ * 为什么必须有这一步：扩展在无 UA 覆盖时回的是**显式** `userAgent: null`
+ * （`extension/background.js` 的 `userAgent: userAgent || null`），而宿主的输出校验器
+ * 对 `null` **会下钻判类型**（只跳过 `undefined`）。原样透传时，`device:"desktop"`
+ * 或只给宽高的自定义视口**每次调用**都会抛 `ToolOutputError` —— 即 `browser_emulate`
+ * 从 v0.7 起对这两类调用全是坏的，只有带真 UA 的预设（mobile/tablet）能过，所以一直没暴露。
+ */
+export function normalizeEmulateValue(raw) {
+    return {
+        tabId: raw.tabId,
+        ...(raw.reset === true ? { reset: true } : {}),
+        ...(typeof raw.width === 'number' ? { width: raw.width } : {}),
+        ...(typeof raw.height === 'number' ? { height: raw.height } : {}),
+        ...(typeof raw.deviceScaleFactor === 'number' ? { deviceScaleFactor: raw.deviceScaleFactor } : {}),
+        ...(typeof raw.isMobile === 'boolean' ? { isMobile: raw.isMobile } : {}),
+        ...(typeof raw.hasTouch === 'boolean' ? { hasTouch: raw.hasTouch } : {}),
+        ...(typeof raw.userAgent === 'string' ? { userAgent: raw.userAgent } : {}),
+    };
+}
+export function permissionReport(input) {
+    const lines = [];
+    lines.push(`origin = ${input.origin}${input.tabId === undefined ? '' : `（tab ${input.tabId}）`}`);
+    lines.push(`权限存储 = ${input.store.file}`);
+    if (input.storeNote !== undefined && input.storeNote.length > 0)
+        lines.push(`          ${input.storeNote}`);
+    lines.push(`          改于 ${input.store.modifiedAt.toLocaleString('sv-SE')}；本机共 ${input.store.classNames.length} 个权限类`);
+    const detail = (reading) => {
+        const e = reading.exception;
+        if (e === undefined)
+            return `- ${reading.label} [${reading.pref}]｜触发：${reading.trigger}`;
+        const when = e.lastModified === undefined ? '' : `，${chromiumTime(e.lastModified)}`;
+        return `- ${reading.label} [${reading.pref}] = **${e.label}**${when}｜触发：${reading.trigger}`;
+    };
+    const ask = input.readings.filter((r) => r.exception?.setting === CONTENT_SETTING.ASK);
+    const allowed = input.readings.filter((r) => r.exception?.setting === CONTENT_SETTING.ALLOW || r.exception?.setting === CONTENT_SETTING.SESSION_ONLY);
+    const denied = input.readings.filter((r) => r.exception?.setting === CONTENT_SETTING.BLOCK);
+    const none = input.readings.filter((r) => r.exception === undefined);
+    const networkAsk = ask.filter((r) => r.pref === 'loopback_network' || r.pref === 'local_network_access' || r.pref === 'local_network');
+    const networkAllowed = allowed.filter((r) => r.pref === 'loopback_network' || r.pref === 'local_network_access' || r.pref === 'local_network');
+    if (input.readings.length === 0 && input.requestedClass !== undefined) {
+        // 指定的类不在受关注清单里：把本机**真实存在**的类摊开（不猜枚举值）。
+        const rows = input.store.exceptions.get(input.requestedClass);
+        if (rows !== undefined) {
+            lines.push(`类 ${input.requestedClass} 在本机存在，该 origin 有记录：`);
+            for (const [pattern, entry] of rows)
+                lines.push(`- ${pattern} = ${entry.setting}`);
+        }
+        else if (input.store.classNames.includes(input.requestedClass)) {
+            lines.push(`类 ${input.requestedClass} 在本机存在，但该 origin 没有例外记录（走浏览器默认）。`);
+        }
+        else {
+            lines.push(`没有 ${input.requestedClass} 这个类。本机存在的类（前 24 个）：`);
+            lines.push(input.store.classNames.slice(0, 24).join(', '));
+        }
+        return lines.join('\n');
+    }
+    if (ask.length > 0) {
+        lines.push('');
+        lines.push(`会弹窗（**询问** = 气泡拦人，只有用户本人能点）：${ask.length} 类`);
+        for (const reading of ask)
+            lines.push(detail(reading));
+    }
+    if (allowed.length > 0) {
+        lines.push('');
+        lines.push(`已允许（含仅本次会话）：${allowed.length} 类`);
+        for (const reading of allowed)
+            lines.push(detail(reading));
+    }
+    if (denied.length > 0) {
+        lines.push('');
+        lines.push(`已拒绝：${denied.length} 类`);
+        for (const reading of denied)
+            lines.push(detail(reading));
+    }
+    if (none.length > 0) {
+        lines.push('');
+        const names = none.map((r) => r.pref);
+        lines.push(`无记录（走浏览器默认，默认多为"询问"）：${none.length} 类 —— ${names.slice(0, 12).join(', ')}${names.length > 12 ? ' …' : ''}`);
+    }
+    lines.push('');
+    if (input.pendingLocal.length > 0) {
+        const head = input.pendingLocal[0];
+        const age = head.ageSeconds === undefined ? '' : `（已等 ${head.ageSeconds}s）`;
+        lines.push(`挂起信号：${input.pendingLocal.length} 个指向本机/私网的请求仍在等响应 —— 例 ${head.url}${age}`);
+        if (networkAsk.length > 0) {
+            lines.push(`⇒ **大概率正等「本地网络访问」气泡**：该类在当前 origin 是"询问"，而请求已经发出去了。`);
+            lines.push('  扩展对这类 chrome 级气泡**不可见、也不代答** —— 需要用户在浏览器窗口里点「允许/拒绝」。');
+            lines.push('  绕开办法：页面侧别 await 本机地址（fire-and-forget 或改走不访问本机的通道）。');
+        }
+        else if (networkAllowed.length > 0) {
+            lines.push('⇒ 本地网络访问**已允许**，但仍挂起：更可能是对端没回（服务在不在？）或另有阻塞，不要当成权限问题。');
+        }
+        else {
+            lines.push('⇒ 该 origin 没有本地网络访问的例外记录；若浏览器默认是"询问"，屏幕上可能正有一个气泡。');
+        }
+    }
+    else if (ask.length > 0) {
+        lines.push('当前没有挂起的本机请求；但上面这些"询问"类**一旦被页面触发就会弹窗拦人** —— 事前提醒用户可省一次超时排查。');
+    }
+    else if (none.length > 0) {
+        // 别把"没有显式记录"说成"不会弹"：本机默认值表是空的，受关注类的浏览器默认**就是询问**。
+        lines.push(`当前没有挂起的本机请求，也没有**显式**的"询问"记录；但有 ${none.length} 类无记录 ⇒ `
+            + '浏览器默认多为"询问"，页面一触发这些 API 仍会弹窗拦人（**别把"没记录"当成"不会弹"**）。');
+    }
+    else {
+        lines.push('当前没有挂起的本机请求，受关注类也都有显式记录且无"询问"项。');
+    }
+    lines.push('本次为**只读**：我没有替你点任何气泡（也不会未经你配置就代答）。');
+    return lines.join('\n');
+}
+function applyBrowserTools(ctx, controller, getConfig) {
+    ctx.systemPrompt.section({
+        name: 'tool:browser',
+        order: 112,
+        text: 'The browser_* tools drive the user\'s real, logged-in browser through the DSH '
+            + 'Browser Control extension; they act on the active tab unless a tabId is passed. '
+            + 'Prefer browser_snapshot first on unfamiliar pages: it numbers interactive elements, '
+            + 'and browser_click/browser_type accept the returned ref instead of guessing CSS selectors. '
+            + 'browser_read extracts page text, browser_screenshot saves a PNG/JPEG and returns its file '
+            + 'path (view it with an image tool). Calls fail with actionable copy while the bridge is '
+            + 'disabled or no browser is connected. A navigation may be refused with WEB_* (blocked by '
+            + 'URL policy or a deny list; do not retry) or return NEED_AUTHORIZATION when the target '
+            + 'realm (internet/intranet) is in ask mode — request the user to approve that host (or add '
+            + 'it to allowHosts) instead of retrying the same target. browser_policy_status reports the '
+            + 'current mode, per-realm access, lists and session grants.',
+    });
+    ctx.tools.register(defineTool({
+        name: 'browser_policy_status',
+        description: "Read the browser bridge's URL and access policy: the switch, urlMode, the three realm settings (internet / LAN / loopback), temp grants, the allow and deny host lists, cloud-metadata blocking, and the grants already approved in this session. Read-only. Check it when a navigation was refused, or when you need to know whether a host still needs approval.",
+        parameters: {},
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    ok: { type: 'boolean', required: true },
+                    text: { type: 'string', required: true },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: value.text }],
+        },
+        isConcurrencySafe: () => true,
+        timeoutMs: 10_000,
+        async execute() {
+            const s = controller.describePolicy();
+            const firstN = (list, n = 6) => {
+                if (!Array.isArray(list))
+                    return '';
+                const head = list.slice(0, n).join(', ');
+                return head + (list.length > n ? ` …共 ${list.length} 条` : '');
+            };
+            const lines = [];
+            lines.push(`启用: ${s.enabled ? '是' : '否'}${s.enabled && !s.ready ? '（桥未就绪）' : ''}`);
+            if (s.enabled) {
+                const mode = s.urlMode ?? 'public';
+                const effRealm = (realm, raw) => {
+                    return raw ?? (mode === 'intranet' || realm === 'internet' ? 'allow' : 'deny');
+                };
+                const fmt = (label, realm, raw, temp) => {
+                    const eff = effRealm(realm, raw);
+                    return `${label}: ${eff}${raw ? '（显式）' : '（预设）'}${temp === false ? '，无临时授权' : ''}`;
+                };
+                lines.push(`网络预设: ${mode === 'intranet' ? '内网' : '公网'}${s.urlMode === undefined ? '（缺省公网）' : ''}`);
+                lines.push(`桥接端口: ${s.boundPort ?? '（未启动）'}${s.portNote ? ' — ' + s.portNote : (s.requestedPort !== undefined && s.boundPort !== s.requestedPort ? `（配置 ${s.requestedPort}）` : '')}`);
+                lines.push(`DSH 页面访问: ${s.dshAccessEnabled ? '开（' + (s.dshOrigins ?? []).join(', ') + '）' : '关'}`);
+                lines.push(fmt('外网', 'internet', s.internetAccess, s.internetTemp));
+                lines.push(fmt('局域网', 'lan', s.lanAccess, s.lanTemp));
+                lines.push(fmt('本机', 'local', s.localAccess, s.localTemp));
+                lines.push(`受限态 ask 策略: ${askModeZh(s.askMode)}`);
+                lines.push(`自动拉起: ${s.autoLaunchEnabled ? '开（断开容忍 ' + (s.autoLaunchIdleSeconds ?? 15) + 's' + (s.autoLaunchProfileDir ? '，profile=' + (s.autoLaunchProfileName || path.basename(s.autoLaunchProfileDir)) : '') + '）' : '关'}`);
+                lines.push(`浏览器配对: ${s.pairing !== undefined ? `${s.pairing.brandId} / ${s.pairing.profileDir}${s.pairing.profileName !== undefined ? `（${s.pairing.profileName}）` : ''} ← ${s.pairing.matchedBy} @ ${s.pairing.resolvedAt}` : '（还没有：需要装了扩展的浏览器先连上过一次）'}`);
+                if (s.extensionId !== undefined)
+                    lines.push(`扩展自报: id=${s.extensionId}；浏览器=${s.browserName ?? '—'}`);
+                if (s.holdMode !== undefined)
+                    lines.push(`浮层出现方式: ${s.holdMode === 'white' ? '白名单（只在调用时）' : '黑名单（操作时自动补）'}；${s.holdEnabled === false ? '已停用' : '已启用'}；推送=${s.holdSyncNote ?? '尚未推送'}`);
+                if (s.launchNote !== undefined)
+                    lines.push(`上次定位失败: ${s.launchNote}`);
+                lines.push(`allowHosts: ${firstN(s.allowHosts) || '（空）'}`);
+                lines.push(denyHostsStatusLine(firstN(s.denyHosts), s.denyHostsIgnored === true));
+                lines.push(`blockMetadata: ${s.blockMetadata === false ? '关' : '开'}；metadataHostnames: ${(s.metadataHostnames ?? []).length} 条；metadataIps: ${(s.metadataIps ?? []).length} 条`);
+                lines.push(`本会话已授权主机: ${s.tempGrants.length > 0 ? s.tempGrants.join(', ') : '（无）'}`);
+            }
+            return { ok: true, text: lines.join('\n') };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_launch',
+        description: "Wake the controlled browser. Two cases: (a) the extension is connected but there is no window (Edge keeps running after every window is closed, and every \"current tab\" command then fails) - ask the extension to open one; (b) the extension is not connected - start the configured browser (executable and profile). When a tool fails with \"no browser extension connected\", call this once, wait a few seconds, then retry that tool. Starts the browser only; no page is touched.",
+        parameters: {},
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    ok: { type: 'boolean', required: true },
+                    text: { type: 'string', required: true },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: value.text }],
+        },
+        isConcurrencySafe: () => true,
+        timeoutMs: 15_000,
+        async execute() {
+            const text = await controller.wakeBrowser();
+            return { ok: true, text };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_navigate',
+        description: "Navigate a tab to a URL and wait for the page load to settle (`waitUntil` defaults to \"load\", the same semantics as Playwright; pass \"domcontentloaded\" for pages whose DOM is usable before subresources arrive — faster, but elements may not be mounted yet, so follow with browser_wait; \"commit\" returns when the URL lands; \"none\" returns immediately). SPAs and micro-frontends often render after this call returns, so a title is not the same as content: if the text you read straight afterwards is empty or very short, read again with browser_read before drawing conclusions. To settle in one call, pass `waitSelector` / `waitText` / `waitFn`; the server then polls until the condition holds. A timeout does not fail the call - the result carries `waitTimedOut: true`.",
+        parameters: {
+            url: { type: 'string', required: true, description: 'Absolute URL to open in the tab.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            waitUntil: { type: 'string', description: '"load" (default) waits for the full load event; "domcontentloaded" returns as soon as the DOM is usable, which is faster but the elements you want may not be mounted yet — follow with browser_wait instead of retrying blind; "commit" returns when the URL lands (page still loading); "none" returns immediately.' },
+            timeoutMs: { type: 'number', description: 'Budget for the navigation wait: default 15000 with waitUntil "load", 4000 with "commit"/"domcontentloaded", ignored with "none". An explicit value always wins.' },
+            waitSelector: { type: 'string', description: 'After navigating, wait until this CSS selector exists (e.g. ".sku-plus, a[href*=goods]").' },
+            waitText: { type: 'string', description: 'After navigating, wait until document.body.innerText contains this text.' },
+            waitFn: { type: 'string', description: 'After navigating, wait until this JS predicate is truthy (function or bare boolean expression; e.g. "window.rawData !== null").' },
+            waitTimeoutMs: { type: 'number', description: 'Budget for the wait above (100–120000; defaults to 15000).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    url: { type: 'string' },
+                    title: { type: 'string' },
+                    siteUnreachable: { type: 'boolean' },
+                    pendingUrl: { type: 'string' },
+                    error: { type: 'string' },
+                    loadPending: { type: 'boolean' },
+                    waitedMs: { type: 'number' },
+                    /** 本次用的等待口径与落地时的 document.readyState（"interactive" 就够读了）。 */
+                    waitUntil: { type: 'string' },
+                    readyState: { type: 'string' },
+                    waitTimedOut: { type: 'boolean' },
+                    /** 用了 waitSelector/waitText/waitFn 且条件成立（避免与导航等待混用同一句话）。 */
+                    waitConditionMet: { type: 'boolean' },
+                    waitAborted: { type: 'boolean' },
+                    waitError: { type: 'string' },
+                },
+            },
+            render: (_args, value) => {
+                const label = [value.title, value.url].filter(part => typeof part === 'string' && part.length > 0).join(' — ');
+                const tail = value.siteUnreachable === true
+                    ? ` — target unreachable${value.error ? `: ${value.error}` : ''}`
+                    : '';
+                // 导航等待也要有读数：没有 waitUntil（旧扩展）时至少报耗时，别让"等了多久"凭空消失
+                const modeNote = typeof value.waitUntil === 'string' && value.waitUntil.length > 0
+                    ? `（等待口径 ${value.waitUntil}${typeof value.readyState === 'string' ? `, readyState=${value.readyState}` : ''}${typeof value.waitedMs === 'number' ? `, ${value.waitedMs}ms` : ''}）`
+                    : typeof value.waitedMs === 'number' ? `（导航等待 ${value.waitedMs}ms）` : '';
+                // 措辞按等待口径区分：选 commit/none 时"仍在加载"是**预期**，不能说成"没等到完成"（2026-10-23）
+                const pending = value.loadPending === true
+                    ? ` — 页面**仍在加载**${typeof value.pendingUrl === 'string' && value.pendingUrl.length > 0 ? ` ${value.pendingUrl}` : ''}`
+                        + (value.waitUntil === 'load'
+                            ? `（等待预算内没等到 load）：别单次采样就下结论，用 browser_wait 等条件或稍后复查`
+                            : `（已按 ${String(value.waitUntil ?? 'load')} 口径返回，DOM 还没到 complete）：要等具体内容用 browser_wait 的 selector/text/fn，或稍后 browser_read 复查`)
+                    : '';
+                // `waitedMs` 有两种来源：导航等待与 waitSelector/waitText/waitFn 的条件等待。
+                // 只有后者配得上"等待条件成立"——否则会把"导航等了 15s"说成"条件成立"（2026-10-23 真机踩到）。
+                const wait = value.waitTimedOut === true
+                    ? ` — 等待条件在 ${String(value.waitedMs ?? '')}ms 内**未成立**（不等于页面没有内容，可能只是慢；可加大 waitTimeoutMs 或换条件）`
+                    : value.waitAborted === true
+                        ? ` — 等待**已中止**（${value.siteUnreachable === true
+                            ? '页面不可达，原因见上'
+                            : String(value.waitError ?? '').slice(0, 160)}），不是"条件不成立"`
+                        : value.waitConditionMet === true
+                            ? ` — 等待条件成立（${String(value.waitedMs ?? '')}ms）`
+                            : '';
+                // 口径 none 表示**没有等待**：那一刻页面很可能还是旧页，说"now shows X"会被读成"已经切过去了"
+                // （2026-10-31 真机踩到：请求 zhihu、回执写"now shows 哔哩哔哩"）。
+                const headline = value.waitUntil === 'none'
+                    ? `Tab ${value.tabId} 已发出导航（口径 none，未等待；页面可能还没切过去）：当前仍显示 ${label.length > 0 ? label : '(untitled)'}`
+                    : `Tab ${value.tabId} now shows ${label.length > 0 ? label : '(untitled)'}`;
+                return [{ type: 'text', text: `${headline}${tail}${pending}${wait}${modeNote}` }];
+            },
+        },
+        isConcurrencySafe: () => false,
+        presentCall: args => ({ card: 'generic', title: `Open ${args.url}`, kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeNavigation(ctx, controller, args.url, exec, 'browser_navigate');
+            const params = { url: args.url };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (typeof args.waitUntil === 'string' && args.waitUntil.length > 0)
+                params.waitUntil = args.waitUntil;
+            if (typeof args.timeoutMs === 'number')
+                params.timeoutMs = Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs)));
+            const raw = await controller.execute('nav', params, exec.signal, navBridgeTimeout(args.waitUntil, args.timeoutMs));
+            const out = { tabId: raw.tabId };
+            if (typeof raw.url === 'string')
+                out.url = raw.url;
+            if (typeof raw.title === 'string')
+                out.title = raw.title;
+            if (raw.loadPending === true)
+                out.loadPending = true;
+            // 导航的等待口径/耗时/readyState：让模型判断"DOM 够读了"还是"还得等"
+            if (typeof raw.waitUntil === 'string' && raw.waitUntil.length > 0)
+                out.waitUntil = raw.waitUntil;
+            if (typeof raw.readyState === 'string' && raw.readyState.length > 0)
+                out.readyState = raw.readyState;
+            if (typeof raw.waitedMs === 'number')
+                out.waitedMs = raw.waitedMs;
+            if (typeof raw.pendingUrl === 'string' && raw.pendingUrl.length > 0)
+                out.pendingUrl = raw.pendingUrl;
+            // 形状容错（2026-10-10 实测缺陷）：扩展返回的是 `siteUnreachable: {reason}`，
+            // 而这里以前判 `=== true` ⇒ 对象被整个丢掉，"页面连不上"从来没送到模型眼前，
+            // 模型只看到一句"now shows <目标URL>"（于是以为成功）。
+            const unreachable = raw.siteUnreachable === true
+                || (typeof raw.siteUnreachable === 'object' && raw.siteUnreachable !== null);
+            if (unreachable) {
+                out.siteUnreachable = true;
+                const reason = typeof raw.siteUnreachable === 'object' && raw.siteUnreachable !== null
+                    ? raw.siteUnreachable.reason
+                    : undefined;
+                out.error = typeof raw.error === 'string' && raw.error.length > 0
+                    ? raw.error
+                    : reason === 'dns' ? 'DNS 解析失败' : '无法连接（浏览器错误页）';
+            }
+            // bi-015：SPA 就绪等待。导航本身已经成功，所以等待超时**不**让整次调用失败，
+            // 只在结果里标注 waitTimedOut —— 让模型能区分"慢"与"没有内容"。
+            const waitCondition = describeWaitCondition(args);
+            if (waitCondition !== undefined) {
+                const budget = Math.min(120_000, Math.max(100, Math.trunc(args.waitTimeoutMs ?? 15_000)));
+                const waitStartedAt = Date.now();
+                try {
+                    const waited = await controller.execute('wait', {
+                        ...waitCondition.params,
+                        timeoutMs: budget,
+                        tabId: raw.tabId,
+                    }, exec.signal, pageBridgeTimeout(budget));
+                    out.waitedMs = typeof waited?.waited === 'number' ? waited.waited : Date.now() - waitStartedAt;
+                    out.waitConditionMet = true;
+                }
+                catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    out.waitedMs = Date.now() - waitStartedAt;
+                    out.waitError = message;
+                    // 「等待超时」与「等待被中止」是两件事，不能都套超时话术：
+                    // 典型的中止是页面落到浏览器错误页（ERR_CONNECTION_TIMED_OUT）——
+                    // 那种情况还说"可能只是慢、加大预算"就是**误诊**（2026-10-10 真机实测）。
+                    if (/wait timeout after/i.test(message))
+                        out.waitTimedOut = true;
+                    else {
+                        out.waitAborted = true;
+                        if (typeof out.error !== 'string')
+                            out.error = message;
+                    }
+                }
+            }
+            return out;
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_wait',
+        description: "Wait server-side until the page satisfies a condition, instead of sleeping or sampling once. Pass one of `selector` (element exists, shadow roots included), `text` (body contains), `fn` (JS predicate truthy) or `stable` (body text stopped changing for N ms); returns how long it waited. Use it for SPA route changes, lazy lists, or waiting for a global. A timeout is reported as `wait timeout`: that only means the condition never held, not that the page is empty. browser_navigate only waits for the document, not for these.",
+        parameters: {
+            selector: { type: 'string', description: 'Wait until this CSS selector matches an element.' },
+            text: { type: 'string', description: 'Wait until document.body.innerText contains this text.' },
+            fn: { type: 'string', description: 'Wait until this JS predicate is truthy: a function ("() => x.ready") or a bare boolean expression ("document.querySelectorAll(\'a\').length > 5").' },
+            stable: { type: 'number', description: 'Wait until the body text has stopped changing for this many ms (e.g. 500). Use it on pages that keep re-rendering or fill in late, so a read taken now is the content, not a placeholder.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            timeoutMs: { type: 'number', description: 'Wait budget in ms (100–120000; defaults to 15000).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    waitedMs: { type: 'number', required: true },
+                    condition: { type: 'string', required: true },
+                },
+            },
+            render: (_args, value) => textBlock(`条件成立：${value.condition}（等了 ${value.waitedMs}ms，tab ${value.tabId}）`),
+        },
+        presentCall: () => ({ card: 'generic', title: 'Wait for page condition', kind: 'other' }),
+        isConcurrencySafe: () => false,
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const condition = describeWaitCondition(args);
+            if (condition === undefined) {
+                throw new Error('browser_wait 需要 selector / text / fn / stable 之一（一次只等一个条件）');
+            }
+            const budget = Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs ?? 15_000)));
+            try {
+                const waited = await controller.execute('wait', {
+                    ...condition.params,
+                    timeoutMs: budget,
+                    ...(args.tabId === undefined ? {} : { tabId: args.tabId }),
+                }, exec.signal, pageBridgeTimeout(budget));
+                return {
+                    tabId: typeof waited?.tabId === 'number' ? waited.tabId : (args.tabId ?? -1),
+                    waitedMs: typeof waited?.waited === 'number' ? waited.waited : budget,
+                    condition: condition.label,
+                };
+            }
+            catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                throw new Error(`等待「${condition.label}」失败：${detail}`
+                    + ' —— 这不等于"页面没有内容"：可能只是慢（加大 timeoutMs），也可能条件写错了（先用 browser_evaluate 验证该条件此刻的取值）。');
+            }
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_read',
+        description: "Read the current page: title, URL, readyState, and the body text (pass `mode:'html'` for the full HTML). The returned text is what you see - no separate fetch. For a long page, read a window at a time with `offset` / `limit`; the head line tells you the next `offset=`.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            mode: { type: 'string', description: '"text" (default) for visible text, "html" for the whole document.' },
+            offset: { type: 'number', description: 'Character index the window starts at; default 0. Use the "call again with offset=" value the previous result reported.' },
+            limit: { type: 'number', description: `Characters to return; default and cap ${READ_WINDOW_MAX_CHARS}.` },
+            frame: { type: 'string', description: 'Read one frame (name / #index / url substring). Omit to read the whole page; a <frameset> page is flattened automatically into per-frame sections.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    mode: { type: 'string', required: true },
+                    title: { type: 'string', required: true },
+                    url: { type: 'string', required: true },
+                    content: { type: 'string', required: true },
+                    truncated: { type: 'boolean', required: true },
+                    offset: { type: 'number', required: true },
+                    totalChars: { type: 'number', required: true },
+                    settled: { type: 'boolean' },
+                    changedSinceLastRead: { type: 'boolean' },
+                },
+            },
+            // 以前这里只回「标题 (URL) — N chars」，把 content 丢掉了 —— 模型因此**读不到页面正文**，
+            // 只能靠 browser_evaluate 硬抠。现在把正文交给模型，并按窗口取（头部说明这是哪一段、
+            // 下一段怎么取）—— 这样长页面可以连续读，而不是一次把 12 万字符倒进上下文。
+            render: (_args, value) => {
+                const end = value.offset + value.content.length;
+                const head = `${value.title} (${value.url}) [${value.mode}, chars ${value.offset}-${end} of ${value.totalChars}]`
+                    + (value.truncated ? `; call again with offset=${end} to continue` : '')
+                    + (value.changedSinceLastRead === true ? ' ｜注意：正文跟上次读取不一样了（页面还在变）' : '');
+                return [{ type: 'text', text: `${head}\n\n${value.content}` }];
+            },
+        },
+        presentCall: () => ({ card: 'generic', title: 'Read browser page', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const mode = args.mode === 'html' ? 'html' : 'text';
+            const params = { mode, flattenFrames: true };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.frame !== undefined)
+                params.frame = args.frame;
+            const raw = await controller.execute('content', params, exec.signal);
+            // 窗口式读取（上游 v1.0.12 的口径）：扩展给的正文是完整的，切窗口在插件侧做，
+            // 所以 totalChars 是**真实总长**，不是"桥截断后的长度"。
+            const full = raw.content ?? '';
+            const offset = Math.max(0, Math.floor(Number(args.offset ?? 0)) || 0);
+            const limit = Math.min(READ_WINDOW_MAX_CHARS, Math.max(1, Math.floor(Number(args.limit ?? READ_WINDOW_MAX_CHARS)) || READ_WINDOW_MAX_CHARS));
+            const content = full.slice(offset, offset + limit);
+            return {
+                tabId: raw.tabId,
+                mode,
+                title: raw.title ?? '',
+                url: raw.url ?? '',
+                content,
+                truncated: offset + content.length < full.length,
+                offset,
+                totalChars: full.length,
+                ...(raw.settled === undefined ? {} : { settled: raw.settled === true }),
+                ...(raw.changedSinceLastRead === undefined ? {} : { changedSinceLastRead: raw.changedSinceLastRead === true }),
+            };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_find',
+        description: "List elements matching a CSS selector: total count, tag/id/class/text/href and viewport rect. Read-only. Meant for looking before clicking: how many match, and which one is the target. Versus browser_snapshot: snapshot returns numbered interactive elements (to click), find returns the precise description of the selector you named (to check).",
+        parameters: {
+            selector: { type: 'string', required: true, description: 'CSS selector to query.' },
+            limit: { type: 'number', description: 'Maximum items to describe; defaults to 10, capped at 50 (count is always the full total).' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    selector: { type: 'string', required: true },
+                    count: { type: 'number', required: true },
+                    items: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                tag: { type: 'string', required: true },
+                                id: { type: 'string' },
+                                class: { type: 'string' },
+                                text: { type: 'string' },
+                                href: { type: 'string' },
+                                rect: { type: 'string', required: true },
+                            },
+                        },
+                    },
+                },
+            },
+            // 模型看到的是这一行行 —— 不是一段 JSON。上游同名工具只回 `JSON.stringify(value)`，
+            // 长列表会被宿主截断成半截 JSON（本项目的老毛病）。
+            render: (_args, value) => {
+                const head = `${value.count} 个匹配 \`${value.selector}\``
+                    + (value.items.length < value.count ? `（只描述前 ${value.items.length} 个）` : '');
+                const lines = value.items.map((item) => {
+                    const id = item.id ? `#${item.id}` : '';
+                    const cls = item.class ? `.${String(item.class).trim().split(/\s+/).slice(0, 2).join('.')}` : '';
+                    const text = item.text ? ` 「${item.text}」` : '';
+                    const href = item.href ? ` → ${item.href}` : '';
+                    return `${item.tag}${id}${cls} @${item.rect}${text}${href}`;
+                });
+                return [{ type: 'text', text: [head, ...lines].join('\n') }];
+            },
+        },
+        presentCall: args => ({ card: 'generic', title: `Find ${args.selector}`, kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = { selector: args.selector };
+            if (args.limit !== undefined)
+                params.limit = args.limit;
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            const raw = await controller.execute('find', params, exec.signal);
+            return {
+                tabId: raw.tabId,
+                selector: typeof raw.selector === 'string' ? raw.selector : String(args.selector),
+                count: typeof raw.count === 'number' ? raw.count : (raw.items?.length ?? 0),
+                items: (raw.items ?? []).map((item) => ({
+                    tag: item.tag,
+                    ...(item.id ? { id: item.id } : {}),
+                    ...(item.class ? { class: item.class } : {}),
+                    ...(item.text ? { text: item.text } : {}),
+                    ...(item.href ? { href: item.href } : {}),
+                    rect: item.rect ? `${item.rect.w}×${item.rect.h} @${item.rect.x},${item.rect.y}` : '?',
+                })),
+            };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_dialog',
+        description: "Read or set the answer for native alert / confirm / prompt: `accept` / `dismiss` / `manual`. Returns recent dialog records so you can prove one actually fired. Under `manual` the page blocks; the only way out then is `answer` for the dialog that is open right now - otherwise the tab has to be closed.",
+        parameters: {
+            policy: { type: 'string', description: 'Set this policy: accept | dismiss | manual. Omit to only read the current one.' },
+            persist: { type: 'boolean', description: 'With policy: also write it to storage as the user preference (default: this run only).' },
+            answer: { type: 'string', description: 'Answer the dialog that is open right now: accept | dismiss.' },
+            promptText: { type: 'string', description: 'Text to type into a prompt() when answering with accept.' },
+            tabId: { type: 'number', description: 'Tab for `answer` (defaults to the tab of the last dialog record).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    policy: { type: 'string', required: true },
+                    changed: { type: 'boolean', required: true },
+                    answered: { type: 'string' },
+                    recent: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                tabId: { type: 'number' },
+                                type: { type: 'string', required: true },
+                                message: { type: 'string' },
+                                answeredAs: { type: 'string' },
+                                at: { type: 'string', required: true },
+                            },
+                        },
+                    },
+                },
+            },
+            render: (_args, value) => {
+                const head = `对话框策略 = ${value.policy}`
+                    + (value.changed ? '（本次已改）' : '')
+                    + (value.answered ? `；刚刚回答了：${value.answered}` : '');
+                const log = value.recent.length === 0
+                    ? '最近没有对话框记录。'
+                    : `最近的对话框（${value.recent.length} 条）：\n` + value.recent.map((row) => `- [${row.type}] ${String(row.message ?? '').slice(0, 120)}${row.answeredAs ? ` → ${row.answeredAs}` : ''}${row.tabId === undefined ? '' : ` (tab ${row.tabId})`} @${row.at}`).join('\n');
+                return [{ type: 'text', text: `${head}\n${log}` }];
+            },
+        },
+        presentCall: args => ({ card: 'generic', title: args.policy ? `Dialog policy → ${args.policy}` : 'Read dialog policy', kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.policy !== undefined)
+                params.policy = args.policy;
+            if (args.persist === true)
+                params.persist = true;
+            if (args.answer !== undefined)
+                params.answer = args.answer;
+            if (args.promptText !== undefined)
+                params.promptText = args.promptText;
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            // `answer` 会真的动一个标签页（把它从对话框里放出来），而它默认作用于「最近一条对话框
+            // 记录」的标签页 —— 那个页面未必是当前激活页。判据必须落在**那个页面**上，
+            // 所以先读一条只读的 `dialog` 拿到 tabId 再授权；拿不到就拒（fail-closed），
+            // 别拿"当前激活页"顶包（2026-10-31 审计：browser_dialog 完全没过 authorizeExistingTab）。
+            // 纯读/改策略（没有 answer）不碰任何页面，不需要这一步。
+            if (args.answer !== undefined) {
+                const target = args.tabId ?? await controller.lastDialogTabId();
+                if (target === undefined) {
+                    throw new Error('不知道这个对话框在哪个标签页上：记录里没有可用的 tabId。请显式传 tabId 再试（避免答到别的页面上去）。');
+                }
+                await authorizeExistingTab(controller, target, exec.signal);
+            }
+            const raw = await controller.execute('dialog', params, exec.signal);
+            return {
+                policy: typeof raw.policy === 'string' ? raw.policy : 'manual',
+                changed: args.policy !== undefined,
+                ...(raw.answered === undefined ? {} : { answered: `${String(raw.answered.as ?? '')}（tab ${String(raw.answered.tabId ?? '?')}）` }),
+                recent: (raw.recent ?? []).map((row) => ({
+                    ...(typeof row.tabId === 'number' ? { tabId: row.tabId } : {}),
+                    type: typeof row.type === 'string' ? row.type : 'dialog',
+                    ...(typeof row.message === 'string' ? { message: row.message } : {}),
+                    ...(typeof row.answeredAs === 'string' ? { answeredAs: row.answeredAs } : {}),
+                    at: typeof row.t === 'number' ? new Date(row.t).toISOString().slice(11, 19) : '?',
+                })),
+            };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_info',
+        description: "Report which browser and which extension build are actually connected, and whether the bridge and the extension agree on the protocol. Run this first when behaviour looks wrong: a stale extension or a wrong profile explains most oddities. Read-only.",
+        parameters: {},
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    client: { type: 'string', required: true },
+                    extensionVersion: { type: 'string', required: true },
+                    browserName: { type: 'string', required: true },
+                    browserVersion: { type: 'string', required: true },
+                    userAgent: { type: 'string', required: true },
+                    bridgeProtocol: { type: 'number', required: true },
+                    extensionProtocol: { type: 'number', required: true },
+                    protocolCompatible: { type: 'boolean', required: true },
+                    protocolNote: { type: 'string' },
+                    port: { type: 'number' },
+                    urlMode: { type: 'string', required: true },
+                    /** 扩展侧的窗口/标签移除取证（2026-11-18：Edge 窗口自己没了却查不出来）。 */
+                    removalSummary: { type: 'string' },
+                },
+            },
+            render: (_args, value) => {
+                const lines = [
+                    `扩展 ${value.client} v${value.extensionVersion} · ${value.browserName} ${value.browserVersion}`
+                        + (value.port === undefined ? '' : ` · 桥端口 ${value.port}（urlMode=${value.urlMode}）`),
+                    `协议：桥 v${value.bridgeProtocol} / 扩展 v${value.extensionProtocol}`
+                        + (value.protocolCompatible ? '（对得上）' : ` ⚠️ ${String(value.protocolNote ?? '不匹配')}`),
+                    `UA: ${value.userAgent}`,
+                ];
+                if (typeof value.removalSummary === 'string' && value.removalSummary.length > 0) {
+                    lines.push(value.removalSummary);
+                }
+                return [{ type: 'text', text: lines.join('\n') }];
+            },
+        },
+        presentCall: () => ({ card: 'generic', title: 'Browser identity', kind: 'other' }),
+        async execute(_args, exec) {
+            const raw = await controller.execute('browser.info', {}, exec.signal);
+            const s = controller.describePolicy();
+            return {
+                client: typeof raw.client === 'string' ? raw.client : 'unknown',
+                extensionVersion: typeof raw.version === 'string' ? raw.version : 'unknown',
+                browserName: typeof raw.browser?.name === 'string' ? raw.browser.name : 'unknown',
+                browserVersion: typeof raw.browser?.version === 'string' ? raw.browser.version : 'unknown',
+                userAgent: typeof raw.browser?.ua === 'string' ? raw.browser.ua : '',
+                bridgeProtocol: typeof s.bridgeProtocol === 'number' ? s.bridgeProtocol : 1,
+                extensionProtocol: typeof s.extensionProtocol === 'number' ? s.extensionProtocol : 0,
+                protocolCompatible: s.protocolCompatible !== false,
+                ...(typeof s.protocolNote === 'string' && s.protocolNote.length > 0 ? { protocolNote: s.protocolNote } : {}),
+                ...(typeof s.boundPort === 'number' ? { port: s.boundPort } : {}),
+                urlMode: typeof s.urlMode === 'string' ? s.urlMode : 'public',
+                ...(typeof raw.removalSummary === 'string' && raw.removalSummary.length > 0
+                    ? { removalSummary: raw.removalSummary } : {}),
+            };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_snapshot',
+        description: "List the page's interactive elements with stable refs; pass a ref to browser_click / browser_type. The default DOM pass covers native controls, ARIA role/tabindex/onclick, and div/span elements that only have a click handler (detected by cursor style boundaries; those entries carry `why=cursor`). `mode:'ax'` uses the accessibility tree (role + accessible name) instead, which survives redesigns better; when the page exposes no a11y tree it falls back to DOM and says so. If the element you want is not listed: locate it with browser_evaluate, give it an id, then `browser_click selector=#id`.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            limit: { type: 'number', description: 'Max elements returned; defaults to 120, capped at 200.' },
+            mode: { type: 'string', description: '"dom" (default) for the selector list, "ax" for Chrome\'s accessibility tree (role + accessible name).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    title: { type: 'string', required: true },
+                    url: { type: 'string', required: true },
+                    mode: { type: 'string', required: true },
+                    items: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                ref: { type: 'string', required: true },
+                                tag: { type: 'string', required: true },
+                                name: { type: 'string' },
+                                href: { type: 'string' },
+                                why: { type: 'string' },
+                                role: { type: 'string' },
+                                value: { type: 'string' },
+                            },
+                        },
+                    },
+                    axFallback: { type: 'string' },
+                    /** AX 模式里被跳过的「扩展自己的接管浮层」节点数（不占 ref，单独回报）。 */
+                    ownOverlay: { type: 'number' },
+                },
+            },
+            render: (_args, value) => {
+                const lines = value.items.map((item) => {
+                    const name = typeof item.name === 'string' ? item.name.trim().replace(/\s+/g, ' ').slice(0, 140) : '';
+                    const href = typeof item.href === 'string' && item.href.length > 0 ? ` → ${item.href.slice(0, 140)}` : '';
+                    const role = typeof item.role === 'string' && item.role.length > 0 ? ` [${item.role}]` : '';
+                    const value_ = typeof item.value === 'string' && item.value.length > 0 ? ` =${item.value.slice(0, 60)}` : '';
+                    const why = typeof item.why === 'string' && item.why.length > 0 && item.why !== 'native' && item.why !== 'ax' ? ` (${item.why})` : '';
+                    return `${item.ref}\t<${item.tag}>${role}${name.length > 0 ? ' ' + name : ''}${value_}${href}${why}`;
+                });
+                const cursorCount = value.items.filter((item) => item.why === 'cursor').length;
+                const head = value.mode === 'ax'
+                    ? `a11y 树（role + 可访问名）`
+                    : `选择器判据`;
+                const ownOverlayNote = typeof value.ownOverlay === 'number' && value.ownOverlay > 0
+                    ? `（另有 ${value.ownOverlay} 个节点是插件自己的接管浮层，已跳过、不占 ref）`
+                    : '';
+                return textBlock(`${value.title} (${value.url})\n共 ${value.items.length} 个可交互元素（${head}）${ownOverlayNote}`
+                    + `${cursorCount > 0 ? `（其中 ${cursorCount} 个是"只有点击处理器的元素"，按 cursor:pointer 边界识别）` : ''}`
+                    + `${value.axFallback === undefined ? '' : `\n⚠️ 请求了 mode:"ax" 但落回了 dom：${value.axFallback}`}`
+                    + `（每行第一列就是 ref，可直接传给 browser_click / browser_type）：\n${lines.join('\n')}`);
+            },
+        },
+        presentCall: () => ({ card: 'generic', title: 'Snapshot browser page', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const limit = Math.min(200, Math.max(1, args.limit ?? 120));
+            const wantAx = args.mode === 'ax';
+            const params = { limit };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (wantAx)
+                params.mode = 'ax';
+            const raw = await controller.execute('snapshot', params, exec.signal);
+            const judged = snapshotModeOf(raw.mode, raw.axFallback, wantAx);
+            return {
+                tabId: raw.tabId,
+                title: raw.title ?? '',
+                url: raw.url ?? '',
+                mode: judged.mode,
+                ...(judged.axFallback === undefined ? {} : { axFallback: judged.axFallback }),
+                ...(typeof raw.ax?.ownOverlay === 'number' && raw.ax.ownOverlay > 0 ? { ownOverlay: raw.ax.ownOverlay } : {}),
+                items: (raw.items ?? []).map(item => ({
+                    ref: item.ref,
+                    tag: item.tag,
+                    ...(item.name === undefined ? {} : { name: item.name }),
+                    ...(item.href === undefined ? {} : { href: item.href }),
+                    ...(item.why === undefined ? {} : { why: item.why }),
+                    ...(item.role === undefined ? {} : { role: item.role }),
+                    ...(item.value === undefined ? {} : { value: item.value }),
+                })),
+            };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_click',
+        description: "Click an element with real mouse events; target it by a snapshot ref or a CSS selector. The target tab is brought to the front first (real events must land on a visible page), so background tabs work too. On logged-in pages and SPAs, JS `el.click()` often does not trigger navigation - this tool uses the real event path. If the window is minimized the viewport is 0x0 and input cannot be delivered: the call fails loudly instead of pretending.",
+        parameters: {
+            ref: { type: 'string', description: 'Element ref from browser_snapshot (e.g. "e3"); wins over selector.' },
+            selector: { type: 'string', description: 'CSS selector; ignored when ref is given.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            doubleClick: { type: 'boolean', description: 'Send a double click instead.' },
+        },
+        output: {
+            schema: { type: 'object', additionalProperties: true },
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
+        },
+        presentCall: args => ({ card: 'generic', title: `Click ${args.ref ?? args.selector ?? ''}`, kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = { selector: targetSelector(args) };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.doubleClick !== undefined)
+                params.doubleClick = args.doubleClick;
+            return await controller.execute('click', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_type',
+        description: "Fill an input / textarea / select / contentEditable, with React-compatible events. `submit:true` presses Enter once afterwards. Like browser_click, it brings the target tab to the front; with the window minimized, real input cannot be delivered and the call fails loudly.",
+        parameters: {
+            value: { type: 'string', required: true, description: 'Text to put into the element.' },
+            ref: { type: 'string', description: 'Element ref from browser_snapshot; wins over selector.' },
+            selector: { type: 'string', description: 'CSS selector; ignored when ref is given.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            submit: { type: 'boolean', description: 'Press Enter after filling.' },
+        },
+        output: {
+            schema: { type: 'object', additionalProperties: true },
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
+        },
+        presentCall: args => ({ card: 'generic', title: `Type into ${args.ref ?? args.selector ?? 'element'}`, kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = { selector: targetSelector(args), value: args.value };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            const filled = await controller.execute('input', params, exec.signal);
+            if (args.submit === true) {
+                await controller.execute('press', args.tabId === undefined ? { key: 'Enter' } : { key: 'Enter', tabId: args.tabId }, exec.signal);
+            }
+            return filled;
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_press',
+        description: "Send one real key event: Enter / Tab / Escape / arrows, or a single character. Combinations can be written as `key:'Ctrl+A'` or as `key:'a'` plus `modifiers:['ctrl']`. Unknown key names or modifiers fail loudly and list the valid values.",
+        parameters: {
+            key: { type: 'string', required: true, description: 'Named key (Enter, Escape, ArrowDown…) or a single character.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+        },
+        output: {
+            schema: { type: 'object', additionalProperties: true },
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
+        },
+        presentCall: args => ({ card: 'generic', title: `Press ${args.key}`, kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = { key: args.key };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            return await controller.execute('press', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_scroll',
+        description: "Scroll the page viewport by a pixel delta and return the resulting position.",
+        parameters: {
+            x: { type: 'number', description: 'Horizontal delta in pixels; defaults to 0.' },
+            y: { type: 'number', description: 'Vertical delta in pixels; positive scrolls down.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+        },
+        output: {
+            schema: { type: 'object', additionalProperties: true },
+            render: (_args, value) => [{ type: 'text', text: sliceWellFormed(JSON.stringify(value), 2000) }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Scroll browser page', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = { x: args.x ?? 0, y: args.y ?? 0 };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            return await controller.execute('scroll', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_tabs',
+        description: "List tabs, or open / close / activate / group / ungroup them; actions apply to real browser windows. Closing takes a batch: `tabIds` (array), `urlPattern` (substring or /regex/), or `others:true` (everything except `tabId`), one command for the whole batch, and every id is accounted for (closed / already gone / failed), so a retry is safe. Tabs the agent opened land in a blue `DSH` group in the current window (`group:false` opts out); `ungroup` only removes the grouping and never closes anything. `list` reports each tab's group; `groupTitle` narrows it to one group.",
+        parameters: {
+            action: { type: 'string', required: true, description: 'One of: list, open, close, activate, group, ungroup.' },
+            url: { type: 'string', description: 'URL for the open action.' },
+            tabId: { type: 'number', description: 'Target tab for close/activate/group; with others:true it is the one to KEEP.' },
+            tabIds: { type: 'array', items: { type: 'number' }, description: 'close: explicit list of tab ids to close.' },
+            urlPattern: { type: 'string', description: 'close: only tabs whose URL contains this substring, or a /regex/ form.' },
+            others: { type: 'boolean', description: 'close: close every tab except tabId (defaults the kept tab to the active one).' },
+            active: { type: 'boolean', description: 'Whether a newly opened tab becomes active; defaults to true.' },
+            group: { type: 'boolean', description: 'open: put the new tab in the DSH group (default true); pass false to keep it loose.' },
+            windowId: { type: 'number', description: 'ungroup: dissolve only that window\'s DSH group; omit to clear every window.' },
+            groupTitle: { type: 'string', description: 'list: only tabs whose tab-group title equals this value (e.g. "DSH").' },
+        },
+        output: {
+            schema: { type: 'object', additionalProperties: true },
+            render: (_args, value) => {
+                const tabs = Array.isArray(value?.tabs) ? value.tabs : [];
+                // 归组/拆组/开标签的结果也给人话，不落回 JSON（模型读 JSON 容易漏字段）。
+                // 分组归属直接标在每行开头：`[DSH]` —— 原来看不见组，只能靠人眼看浏览器窗口顶部。
+                if (value && typeof value.ungrouped === 'number') {
+                    return textBlock(`已解除 ${value.ungrouped} 个标签的归属（${value.groups ?? 0} 个 DSH 分组）`
+                        + `${value.reason === undefined ? '' : ` —— ${String(value.reason)}`}`
+                        + `。只解除归属，**没有关闭任何标签页**。`);
+                }
+                // 只在"纯归组动作"上走这条：open 的结果里也带 grouped，但它要连地址一起说（下面那条）。
+                if (value && value.grouped === true && value.url === undefined) {
+                    return textBlock(`tab ${value.tabId} 已归入 DSH 分组（groupId=${value.groupId}，${value.created === true ? '新建' : '复用已有的'}）`);
+                }
+                if (value && value.grouped === false && value.reason !== undefined && value.tabId !== undefined && value.url !== undefined) {
+                    return textBlock(`已打开 tab ${value.tabId}：${String(value.title ?? '')} — ${String(value.url)}`
+                        + `${value.pendingUrl === undefined ? '' : `（正在加载 ${String(value.pendingUrl)}）`}`
+                        + `；**没归组**：${String(value.reason)}`);
+                }
+                if (tabs.length === 0) {
+                    if (Array.isArray(value?.closedIds)) {
+                        const gone = Array.isArray(value.alreadyGone) && value.alreadyGone.length > 0 ? `；本来就不在了：${value.alreadyGone.join(', ')}` : '';
+                        const failed = Array.isArray(value.failedIds) && value.failedIds.length > 0
+                            ? `；失败：${value.failedIds.map((row) => row.id).join(', ')}`
+                            : '';
+                        return textBlock(`已关闭 ${value.closed ?? value.closedIds.length} 个标签页：${value.closedIds.join(', ')}${gone}${failed}`);
+                    }
+                    if (value && typeof value.tabId === 'number' && value.url !== undefined) {
+                        return textBlock(`已打开 tab ${value.tabId}：${String(value.title ?? '')} — ${String(value.url)}`
+                            + `${value.pendingUrl === undefined ? '' : `（正在加载 ${String(value.pendingUrl)}）`}`
+                            + `${value.grouped === true ? '；已归入 DSH 分组' : ''}`
+                            + `${value.loadPending === true ? '；⚠️ 还没等到落地，别当已就绪' : ''}`);
+                    }
+                    return textBlock(JSON.stringify(value));
+                }
+                const lines = tabs.map((tab) => {
+                    const badge = typeof tab.groupTitle === 'string' && tab.groupTitle.length > 0 ? `[${tab.groupTitle}] ` : '';
+                    return `${tab.id}\t${tab.active === true ? 'active' : '      '}\t${badge}${String(tab.title ?? '')} — ${String(tab.url ?? '')}`;
+                });
+                const groups = Array.isArray(value.groups) ? value.groups : [];
+                const groupLine = groups.length === 0
+                    ? ''
+                    : `\n分组：${groups.map((g) => `${String(g.title ?? '') || '(无标题)'}（${tabs.filter((t) => t.groupId === g.id).length} 个标签）`).join(' / ')}`;
+                const head = `窗口 ${value.windows ?? '?'} 个，标签页 ${value.count ?? tabs.length} 个`
+                    + `（activeTabId=${value.activeTabId ?? '?'}${value.noWindow === true ? '，当前没有任何窗口' : ''}）`;
+                return textBlock(`${head}${groupLine}\n${lines.join('\n')}`);
+            },
+        },
+        presentCall: args => ({ card: 'generic', title: `Browser tabs: ${args.action}`, kind: 'other' }),
+        async execute(args, exec) {
+            switch (args.action) {
+                case 'list': {
+                    const listed = await controller.execute('tabs.list', {}, exec.signal);
+                    const wantGroup = typeof args.groupTitle === 'string' && args.groupTitle.length > 0 ? args.groupTitle : undefined;
+                    if (wantGroup === undefined)
+                        return listed;
+                    const all = Array.isArray(listed.tabs) ? listed.tabs : [];
+                    const kept = all.filter((tab) => (tab.groupTitle ?? '') === wantGroup);
+                    return {
+                        ...listed,
+                        count: kept.length,
+                        tabs: kept,
+                        note: `只列分组「${wantGroup}」：匹配 ${kept.length} 个（全部 ${all.length} 个）`,
+                    };
+                }
+                case 'open': {
+                    if (typeof args.url !== 'string' || args.url.length === 0)
+                        throw new Error('open requires url');
+                    await authorizeNavigation(ctx, controller, args.url, exec, 'browser_tabs');
+                    const params = { url: args.url };
+                    if (args.active !== undefined)
+                        params.active = args.active;
+                    if (args.group === false)
+                        params.group = false;
+                    // 开标签页同样会等导航落地（扩展侧默认 load、15s）：把同样的预算 + 余量告诉桥，
+                    // 否则慢站返回的是桥超时而不是"页面还在加载"。
+                    return await controller.execute('tabs.open', params, exec.signal, navBridgeTimeout(undefined, undefined));
+                }
+                case 'close': {
+                    // 单页签：保持老语义（tabId）。
+                    const explicit = Array.isArray(args.tabIds) ? args.tabIds.filter((id) => typeof id === 'number') : [];
+                    const others = args.others === true;
+                    const pattern = typeof args.urlPattern === 'string' && args.urlPattern.length > 0 ? args.urlPattern : undefined;
+                    if (explicit.length === 0 && !others && pattern === undefined) {
+                        return await controller.execute('tabs.close', { tabId: requireTabId(args, 'close') }, exec.signal);
+                    }
+                    const listed = await controller.execute('tabs.list', {}, exec.signal);
+                    const tabs = Array.isArray(listed?.tabs) ? listed.tabs : [];
+                    const keep = typeof args.tabId === 'number'
+                        ? args.tabId
+                        : (typeof listed?.activeTabId === 'number' ? listed.activeTabId : tabs.find(tab => tab.active === true)?.id);
+                    const matcher = pattern === undefined ? undefined : compileUrlPattern(pattern);
+                    const wantClose = (tab) => {
+                        if (typeof tab.id !== 'number')
+                            return false;
+                        if (matcher !== undefined)
+                            return matcher(tab.url ?? '');
+                        if (explicit.length > 0)
+                            return explicit.includes(tab.id);
+                        if (others)
+                            return tab.id !== keep;
+                        return false;
+                    };
+                    const targets = tabs.filter(wantClose).map(tab => tab.id);
+                    if (targets.length === 0) {
+                        return { closed: 0, closedIds: [], note: `没有匹配的标签页（现有 ${tabs.length} 个；matcher=${pattern ?? (others ? `others(keep=${String(keep)})` : 'tabIds')}）` };
+                    }
+                    // 匹配逻辑在插件侧（我们的 tabIds/urlPattern/others 比上游丰富），**关闭本身**交给
+                    // 扩展的 `tabs.closeMany`：一条命令、一份超时预算，而且它逐 id 交代
+                    // （closed / alreadyGone / failed）—— 不必再"一个一个关、失败就停"。
+                    const result = await controller.execute('tabs.closeMany', { tabIds: targets }, exec.signal);
+                    const closedIds = Array.isArray(result?.closed) ? result.closed : [];
+                    const goneIds = Array.isArray(result?.alreadyGone) ? result.alreadyGone : [];
+                    const failedIds = (Array.isArray(result?.failed) ? result.failed : []).map(row => ({ id: row.tabId, error: String(row.error ?? '') }));
+                    return {
+                        closed: closedIds.length,
+                        closedIds,
+                        ...(goneIds.length === 0 ? {} : { alreadyGone: goneIds }),
+                        ...(failedIds.length === 0 ? {} : { failedIds }),
+                        ...(closedIds.length === 0 && failedIds.length === 0
+                            ? { note: `匹配到 ${targets.length} 个，但一个都没关掉（可能都已不存在）` }
+                            : {}),
+                    };
+                }
+                case 'activate':
+                    return await controller.execute('tabs.activate', { tabId: requireTabId(args, 'activate') }, exec.signal);
+                case 'group':
+                    return await controller.execute('tabs.group', { tabId: requireTabId(args, 'group') }, exec.signal);
+                case 'ungroup': {
+                    const params = {};
+                    if (typeof args.windowId === 'number')
+                        params.windowId = args.windowId;
+                    return await controller.execute('tabs.ungroup', params, exec.signal);
+                }
+                default:
+                    throw new Error(`unknown tabs action: ${String(args.action)} (use list|open|close|activate|group|ungroup)`);
+            }
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_hold',
+        description: "Put a cancellable take-over overlay on a tab so the user does not mis-click or mis-read while you work: the page dims and a card shows what you are doing. The card title is fixed by the extension (the model cannot change it); your arguments fill only the body text. The user takes the page back by double-clicking anywhere (two clicks within 600ms): the overlay disappears, the tab is theirs, and `status` reports `dismissedBy:'user'`. The card's Abort button needs a confirming second click; once the user presses it, your click / input / press / nav on that tab are refused until you call `action=off` (which counts as confirming you continue). Your own clicks still land. The overlay sits above the page and does not change page logic; navigation clears it, and `status` reports what is actually on screen instead of pretending. It does not steal focus or block keys by default; pass `blockKeys:true` to freeze input too. Keyboard equivalent of the double click: press Escape twice within 800ms, or hold it for 600ms.",
+        parameters: {
+            action: { type: 'string', required: true, description: 'One of: on, off, status.' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            text: { type: 'string', description: 'on: body text — say what you are doing (e.g. 正在把「局域网」档改成放行).' },
+            blockKeys: { type: 'boolean', description: 'on: also freeze keyboard input (default false = zero interference; page listeners stay untouched).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    action: { type: 'string', required: true },
+                    active: { type: 'boolean', required: true },
+                    dismissedBy: { type: 'string' },
+                    text: { type: 'string' },
+                    shownWho: { type: 'string' },
+                    aborted: { type: 'boolean' },
+                    /** 浮层是否真的盖在用户眼前（扩展现场量命中测试；全屏时会量出 false）。 */
+                    covered: { type: 'boolean' },
+                    /** covered:false 的原因（`fullscreen-behind-top-layer` / `fullscreen-iframe` / `hit-test-miss` / `not-in-dom`）。 */
+                    reason: { type: 'string' },
+                },
+            },
+            render: (_args, value) => {
+                if (value.action === 'status') {
+                    if (value.active === true && value.covered === false) {
+                        return textBlock(`tab ${value.tabId}：浮层还在 DOM 里，但**没盖在用户眼前**`
+                            + `（原因：${String(value.reason ?? 'unknown')}）——用户看不到提示，也点不到「中止操作」。`);
+                    }
+                    if (value.active === true)
+                        return textBlock(`tab ${value.tabId}：浮层仍在（用户还没接管）`);
+                    if (value.dismissedBy === 'abort')
+                        return textBlock(`tab ${value.tabId}：**用户按了「中止操作」** —— 你接下来的 click/input/press/nav 会被拒；先问用户，确认后调 browser_hold action=off 解除`);
+                    if (value.dismissedBy === 'user')
+                        return textBlock(`tab ${value.tabId}：**用户已双击接管**，浮层已撤 —— 继续驱动这个页面之前先跟用户确认`);
+                    return textBlock(`tab ${value.tabId}：当前没有浮层`);
+                }
+                if (value.action === 'off')
+                    return textBlock(`已解除 tab ${value.tabId} 的浮层`);
+                if (value.covered === false) {
+                    return textBlock(`已给 tab ${value.tabId} 挂上浮层，但它**没有盖在用户眼前**`
+                        + `（原因：${String(value.reason ?? 'unknown')}）。`
+                        + (value.reason === 'fullscreen-behind-top-layer' || value.reason === 'fullscreen-iframe'
+                            ? '页面正处在全屏：全屏元素位于浏览器的顶层，浮层被它压在下面；这种情况下用户看不到提示、也点不到「中止操作」，别把"已锁住"当作用户已知情。'
+                            : '用户可能看不到你在做什么；继续动手前先跟用户说一声。')
+                        + `${typeof value.text === 'string' && value.text.length > 0 ? `\n浮层正文：${value.text}` : ''}`);
+                }
+                return textBlock(`已锁住 tab ${value.tabId}：${String(value.text ?? '')}`
+                    + `${typeof value.shownWho === 'string' && value.shownWho.length > 0 ? `\n浮层底部已标明：${value.shownWho}` : ''}`
+                    + `\n用户双击任意处可接管；你的点击/输入照常可用。`);
+            },
+        },
+        presentCall: args => ({ card: 'generic', title: `Browser hold: ${args.action}`, kind: 'other' }),
+        timeoutMs: 15_000,
+        async execute(args, exec) {
+            const action = String(args.action);
+            if (action !== 'on' && action !== 'off' && action !== 'status')
+                throw new Error('hold action must be on|off|status');
+            // 设置项关掉后一律拒绝（含 off/status）：用户不想要这层浮层时，模型不该还能在页面上放东西。
+            if (getConfig().holdEnabled === false) {
+                throw new Error('browser_hold 已在此机器设置里关闭（「允许模型加防误触浮层」）。需要在页面上放浮层时，先让用户在插件设置里打开它。');
+            }
+            if (action !== 'status')
+                await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (action === 'on') {
+                if (typeof args.text === 'string')
+                    params.text = args.text;
+                if (args.blockKeys === true)
+                    params.blockKeys = true;
+                // 浮层上"是谁在操作"这一行**由插件从运行时上下文填**，模型只能填正文 text。
+                // 这样模型没法在浮层上伪造身份（标题也已被扩展写死）。
+                const agent = exec.agent;
+                const sessionId = typeof agent?.session?.id === 'string' ? agent.session.id : undefined;
+                const short = sessionId === undefined ? undefined : sessionId.replace(/^session-/, '').slice(0, 8);
+                // 主人 2026-10-17：底部**不要模型名，要会话标题**（更好辨认，也更难伪造）
+                const title = sessionId === undefined ? undefined : sessionTitleOf(sessionId);
+                const cwd = typeof agent?.session?.header?.cwd === 'string'
+                    ? agent.session.header.cwd
+                    : undefined;
+                const port = controller.describePolicy().boundPort;
+                params.meta = {
+                    ...(title !== undefined ? { session: title } : short === undefined ? {} : { session: short }),
+                    ...(cwd === undefined ? {} : { cwd: cwd.replace(/^\/home\/[^/]+/, '~') }),
+                    ...(typeof port === 'number' ? { port } : {}),
+                    at: Date.now(),
+                };
+            }
+            const shownWho = action === 'on' && typeof params.meta === 'object' && params.meta !== null
+                ? Object.entries(params.meta)
+                    .filter(([k, v]) => k !== 'at' && (typeof v === 'string' || typeof v === 'number') && String(v).length > 0)
+                    .map(([k, v]) => `${k === 'session' ? '会话' : k === 'model' ? '模型' : k === 'cwd' ? '目录' : k === 'port' ? '桥' : k}=${String(v)}`)
+                    .join(' · ')
+                : undefined;
+            const raw = await controller.execute(`hold.${action}`, params, exec.signal);
+            return {
+                tabId: typeof raw?.tabId === 'number' ? raw.tabId : (args.tabId ?? -1),
+                action,
+                active: raw?.active === true,
+                ...(typeof raw?.dismissedBy === 'string' && raw.dismissedBy.length > 0 ? { dismissedBy: raw.dismissedBy } : {}),
+                ...(raw?.aborted === true ? { aborted: true } : {}),
+                ...(typeof raw?.text === 'string' && raw.text.length > 0 ? { text: raw.text } : {}),
+                ...(shownWho === undefined ? {} : { shownWho }),
+                ...(typeof raw?.covered === 'boolean' ? { covered: raw.covered } : {}),
+                ...(typeof raw?.reason === 'string' && raw.reason.length > 0 ? { reason: raw.reason } : {}),
+            };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_evaluate',
+        description: "Run JavaScript in the page and get the JSON result back as a string; stay read-only if reading is enough. The expression runs as an async function body (top-level `await` works) and a returned promise is awaited up to `timeoutMs` (default 15s). Notes: (1) do not poll or sleep inside the expression - a timeout (`eval timeout after Nms`) looks exactly like \"no content\", so wait with browser_wait instead; (2) only serializable data comes back, so stringify DOM nodes or circular structures yourself; (3) `history.pushState` changes the URL only and does not re-render an SPA, so extracting after it reads the previous page - navigate with browser_navigate instead.",
+        parameters: {
+            expression: { type: 'string', required: true, description: 'JavaScript to run as an async function body (top-level await is fine).' },
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            timeoutMs: { type: 'number', description: 'Evaluation budget in ms (100–120000; defaults to 15000). Bump it for deliberately slow pages instead of guessing.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    json: { type: 'string', required: true },
+                },
+            },
+            render: (_args, value) => textBlock(String(value.json ?? '')),
+        },
+        presentCall: () => ({ card: 'generic', title: 'Evaluate in page', kind: 'other' }),
+        async execute(args, exec) {
+            const before = await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = { expression: args.expression };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            const evalBudget = args.timeoutMs === undefined ? 15_000 : Math.min(120_000, Math.max(100, Math.trunc(args.timeoutMs)));
+            if (args.timeoutMs !== undefined) {
+                params.timeoutMs = evalBudget;
+            }
+            // 桥自己的超时是 60s：页内预算更大时必须让桥等更久，否则先报的是"扩展超时未回应"。
+            const raw = await controller.execute('eval', params, exec.signal, pageBridgeTimeout(evalBudget));
+            // 越界导航检查（设置项，默认开）：分域只拦"导航命令"，脚本里 `location.href = …`
+            // 不经过任何策略。脚本本身拦不住（真发生也是页面自己发起的），这里做的只是
+            // **不让它静默通过**：地址变了且新地址在当前策略下不被允许，本次调用报错。
+            if (getConfig().evalNavGuard !== false && before !== undefined) {
+                const after = await currentTabUrl(controller, raw.tabId, exec.signal);
+                if (after !== undefined && after !== before) {
+                    const escaped = await controller.authorizeUrl(after);
+                    if (escaped.decision !== 'allow' && escaped.decision !== 'unavailable') {
+                        throw new Error(`脚本把标签页带到了未授权地址：${after}`
+                            + `（${escaped.code ?? 'NEED_AUTHORIZATION'}: ${escaped.reason}）。`
+                            + `脚本已执行、页面已经加载；该标签页后续命令会被拒。`
+                            + `要访问该地址请先批准它（或加入 allowHosts），否则把页面导航回授权地址后再继续。`);
+                    }
+                }
+            }
+            let json;
+            try {
+                json = JSON.stringify(raw.value) ?? String(raw.value);
+            }
+            catch {
+                json = String(raw.value);
+            }
+            return { tabId: raw.tabId, json };
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_screenshot',
+        description: "Capture the tab as PNG / JPEG into the configured shots directory and return the absolute path.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            fullPage: { type: 'boolean', description: 'Capture beyond the viewport.' },
+            format: { type: 'string', description: '"png" (default) or "jpeg".' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    file: { type: 'string', required: true },
+                    bytes: { type: 'number', required: true },
+                    tabId: { type: 'number', required: true },
+                    title: { type: 'string' },
+                    url: { type: 'string' },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: `Saved ${value.file} (${value.bytes} bytes)` }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Browser screenshot', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const format = args.format === 'jpeg' ? 'jpeg' : 'png';
+            const params = { format };
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.fullPage !== undefined)
+                params.fullPage = args.fullPage;
+            const payload = await controller.execute('screenshot', params, exec.signal);
+            return saveScreenshot(controller, payload);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_cleanup',
+        description: "Delete generated screenshots plus `__`-prefixed scratch scripts and artifacts from their top-level directories.",
+        parameters: {},
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    shotsRemoved: { type: 'number', required: true },
+                    scratchRemoved: { type: 'array', required: true, items: { type: 'string' } },
+                },
+            },
+            render: (_args, value) => [{
+                    type: 'text',
+                    text: `Cleaned ${value.shotsRemoved} screenshot(s) and ${value.scratchRemoved.length} scratch file(s)`,
+                }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Clean up browser artifacts', kind: 'other' }),
+        async execute() {
+            const result = await controller.cleanup();
+            return { shotsRemoved: result.shotsRemoved, scratchRemoved: Array.from(result.scratchRemoved) };
+        },
+    }));
+    // v1.0.7: console + network capture, PDF export, device emulation.
+    // Row schemas for the capture tools. `additionalProperties: false` with an
+    // empty `properties` map declares an object that has NO legal property, so
+    // every real row used to fail output validation and both tools always
+    // errored. Declare the fields the extension actually records, and keep the
+    // rows open (`additionalProperties: true`) so a future capture field can
+    // never silently break the whole tool again.
+    const consoleEntrySchema = {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+            tabId: { type: 'number', description: 'Tab the entry was captured in.' },
+            level: { type: 'string', description: 'Console level: log/info/warn/error/debug.' },
+            text: { type: 'string', description: 'Formatted argument text.' },
+            t: { type: 'number', description: 'Capture time (epoch ms).' },
+            location: { type: 'string', description: 'Source location "url:line" when the stack trace has one.' },
+        },
+    };
+    const networkRequestSchema = {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+            method: { type: 'string' },
+            url: { type: 'string' },
+            headers: { type: 'json', description: 'Request headers as sent.' },
+            resourceType: { type: 'string', description: 'CDP resource type (XHR/Fetch/Document/…).' },
+            postData: { type: 'string', description: 'Request body, capped at 64KB by the extension.' },
+            initiator: { type: 'string', description: 'Initiator URL when CDP reports one.' },
+            wallTime: { type: 'number', description: 'Request start time (CDP wall clock).' },
+            status: { type: 'number', description: 'Response status; absent while pending.' },
+            statusText: { type: 'string' },
+            mimeType: { type: 'string' },
+            responseHeaders: { type: 'json' },
+            encodedDataLength: { type: 'number', description: 'Transfer size; set once loading finishes.' },
+            finished: { type: 'boolean', description: 'True when Network.loadingFinished arrived.' },
+            failed: { type: 'boolean', description: 'True when Network.loadingFailed arrived.' },
+            errorText: { type: 'string', description: 'Failure reason when failed is true.' },
+            canceled: { type: 'boolean' },
+        },
+    };
+    ctx.tools.register(defineTool({
+        name: 'browser_console_log',
+        description: "Read the `console.log/info/warn/error` entries captured for a tab. `clear:true` empties the buffer too, so the next call shows only entries recorded after this one.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            levels: { type: 'array', items: { type: 'string' }, description: 'Filter to one or more of: log, info, warn, error, debug (`warn` and `warning` are the same level).' },
+            pattern: { type: 'string', description: 'Regex (case-insensitive) matched against the formatted text.' },
+            limit: { type: 'number', description: 'Maximum entries to return; default 100, capped at 500.' },
+            clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    count: { type: 'number', required: true },
+                    total: { type: 'number', required: true },
+                    /** 过滤之前的条数：用来区分「还没采到」与「都被筛掉了」。 */
+                    captured: { type: 'number' },
+                    entries: { type: 'array', required: true, items: consoleEntrySchema },
+                },
+            },
+            render: (_args, value) => {
+                const lines = (value.entries ?? []).map((entry) => {
+                    const time = typeof entry.t === 'number' ? new Date(entry.t).toLocaleTimeString() : '';
+                    const location = typeof entry.location === 'string' && entry.location.length > 0 ? `  @ ${entry.location}` : '';
+                    return `${time} [${entry.level ?? 'log'}] ${String(entry.text ?? '').slice(0, 500)}${location}`;
+                });
+                const captured = typeof value.captured === 'number' ? value.captured : undefined;
+                const head = value.count > 0
+                    ? `Tab ${value.tabId}: ${value.count} of ${value.total} console entries`
+                    : captured === 0
+                        ? `Tab ${value.tabId}: 还没有任何 console 记录（这个标签页还没被采集，或页面确实没打过日志）`
+                        : captured === undefined
+                            ? `Tab ${value.tabId}: 0 条命中`
+                            : `Tab ${value.tabId}: 采到了 ${captured} 条，但全被过滤条件（levels / pattern）排除了`;
+                return textBlock(`${head}\n${lines.join('\n')}`);
+            },
+        },
+        presentCall: () => ({ card: 'generic', title: 'Read browser console', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (Array.isArray(args.levels))
+                params.levels = args.levels;
+            if (typeof args.pattern === 'string')
+                params.pattern = args.pattern;
+            if (typeof args.limit === 'number')
+                params.limit = args.limit;
+            if (args.clear === true)
+                params.clear = true;
+            return await controller.execute('console.log', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_network_log',
+        description: "Read captured HTTP request/response pairs for a tab. Static resources are filtered out by default; `includeStatic:true` adds images, fonts, stylesheets and scripts. `methodPattern` / `urlPattern` / `status` filter server-side; `clear:true` empties the buffer.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            includeStatic: { type: 'boolean', description: 'Include images / fonts / stylesheets / scripts. Default false.' },
+            methodPattern: { type: 'string', description: 'Regex (case-insensitive) matched against the HTTP method.' },
+            urlPattern: { type: 'string', description: 'Regex (case-insensitive) matched against the URL.' },
+            status: { type: 'string', description: 'One of: 2xx, 3xx, 4xx, 5xx, failed, pending.' },
+            limit: { type: 'number', description: 'Maximum entries to return; default 200, capped at 1000.' },
+            clear: { type: 'boolean', description: 'Empty the buffer after reading.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    count: { type: 'number', required: true },
+                    total: { type: 'number', required: true },
+                    /** 过滤之前的条数：用来区分「还没采到」与「都被筛掉了」。 */
+                    captured: { type: 'number' },
+                    requests: { type: 'array', required: true, items: networkRequestSchema },
+                },
+            },
+            render: (_args, value) => {
+                const lines = (value.requests ?? []).map((request) => {
+                    const status = typeof request.status === 'number' ? String(request.status) : (request.failed === true ? 'FAILED' : 'pending');
+                    const size = typeof request.encodedDataLength === 'number' && request.encodedDataLength > 0 ? ` ${request.encodedDataLength}B` : '';
+                    const error = request.failed === true && typeof request.errorText === 'string' ? ` — ${request.errorText}` : '';
+                    const type = typeof request.resourceType === 'string' && request.resourceType.length > 0 ? ` [${request.resourceType}]` : '';
+                    return `${status}${size}${type}\t${request.method ?? 'GET'} ${String(request.url ?? '').slice(0, 300)}${error}`;
+                });
+                const captured = typeof value.captured === 'number' ? value.captured : undefined;
+                const head = value.count > 0
+                    ? `Tab ${value.tabId}: ${value.count} of ${value.total} network requests`
+                    : captured === 0
+                        ? `Tab ${value.tabId}: 还没有任何网络请求记录（这个标签页还没被采集，或页面还没发过请求）`
+                        : captured === undefined
+                            ? `Tab ${value.tabId}: 0 条命中`
+                            : `Tab ${value.tabId}: 采到了 ${captured} 条，但全被过滤条件（includeStatic / methodPattern / urlPattern / status）排除了`;
+                return textBlock(`${head}\n${lines.join('\n')}`);
+            },
+        },
+        presentCall: () => ({ card: 'generic', title: 'Read browser network log', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.includeStatic === true)
+                params.includeStatic = true;
+            if (typeof args.methodPattern === 'string')
+                params.methodPattern = args.methodPattern;
+            if (typeof args.urlPattern === 'string')
+                params.urlPattern = args.urlPattern;
+            if (typeof args.status === 'string')
+                params.status = args.status;
+            if (typeof args.limit === 'number')
+                params.limit = args.limit;
+            if (args.clear === true)
+                params.clear = true;
+            return await controller.execute('network.log', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_network_clear',
+        description: "Empty the per-tab network capture buffer without returning the rows.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    cleared: { type: 'boolean', required: true },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: `Tab ${value.tabId}: network log cleared` }],
+        },
+        presentCall: () => ({ card: 'generic', title: 'Clear browser network log', kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            return await controller.execute('network.clear', params, exec.signal);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_pdf',
+        description: "Export the current page to PDF: `path` saves to that absolute path, otherwise it lands in the configured directory. Returns the path and size; the PDF keeps selectable text and print styles.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            path: { type: 'string', description: 'Absolute path. Omit to save under the configured shotsDir with a timestamped name.' },
+            landscape: { type: 'boolean', description: 'Use landscape orientation.' },
+            printBackground: { type: 'boolean', description: 'Render CSS backgrounds. Default true.' },
+            paperWidth: { type: 'number', description: 'Paper width in inches.' },
+            paperHeight: { type: 'number', description: 'Paper height in inches.' },
+            scale: { type: 'number', description: 'Page scale (0.1–2.0).' },
+            pageRanges: { type: 'string', description: 'Sub-range, e.g. "1-3" or "1,4-6".' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    file: { type: 'string', required: true },
+                    bytes: { type: 'number', required: true },
+                    tabId: { type: 'number', required: true },
+                },
+            },
+            render: (_args, value) => [{
+                    type: 'text',
+                    text: `PDF written to ${value.file} (${(value.bytes / 1024).toFixed(1)} KB)`,
+                }],
+        },
+        presentCall: args => ({ card: 'generic', title: `Save PDF${args.path ? ' → ' + args.path : ''}`, kind: 'other' }),
+        async execute(args, exec) {
+            await authorizeExistingTab(controller, args.tabId, exec.signal);
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (args.landscape === true)
+                params.landscape = true;
+            if (args.printBackground === false)
+                params.printBackground = false;
+            if (typeof args.paperWidth === 'number')
+                params.paperWidth = args.paperWidth;
+            if (typeof args.paperHeight === 'number')
+                params.paperHeight = args.paperHeight;
+            if (typeof args.scale === 'number')
+                params.scale = args.scale;
+            if (typeof args.pageRanges === 'string')
+                params.pageRanges = args.pageRanges;
+            const payload = await controller.execute('pdf', params, exec.signal);
+            return await savePdf(controller, payload, typeof args.path === 'string' ? args.path : undefined);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_emulate',
+        description: "Switch the tab to a device viewport (mobile / tablet / desktop) for responsive testing; `device:'reset'` restores the user's real viewport. `width` / `height` / `deviceScaleFactor` / `isMobile` / `hasTouch` override any preset field.",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            device: { type: 'string', description: 'Preset: desktop | mobile-iphone-13 | mobile-pixel-7 | tablet-ipad | reset. Or pass custom width/height below.' },
+            width: { type: 'number', description: 'Custom viewport width in CSS px.' },
+            height: { type: 'number', description: 'Custom viewport height in CSS px.' },
+            deviceScaleFactor: { type: 'number', description: 'Custom DPR (1 = standard, 2 = retina, 3 = super-retina).' },
+            isMobile: { type: 'boolean', description: 'Pass as mobile to the page (affects responsive meta).' },
+            hasTouch: { type: 'boolean', description: 'Enable touch event dispatch.' },
+            userAgent: { type: 'string', description: 'Custom User-Agent string. Empty string clears.' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number', required: true },
+                    reset: { type: 'boolean' },
+                    width: { type: 'number' },
+                    height: { type: 'number' },
+                    deviceScaleFactor: { type: 'number' },
+                    isMobile: { type: 'boolean' },
+                    hasTouch: { type: 'boolean' },
+                    userAgent: { type: 'string' },
+                },
+            },
+            render: (_args, value) => {
+                if (value.reset)
+                    return [{ type: 'text', text: `Tab ${value.tabId}: emulation reset to default` }];
+                return [{
+                        type: 'text',
+                        text: `Tab ${value.tabId}: ${value.width || '?'}×${value.height || '?'} DPR=${value.deviceScaleFactor ?? '?'} mobile=${value.isMobile ?? false} touch=${value.hasTouch ?? false}`,
+                    }];
+            },
+        },
+        presentCall: args => ({ card: 'generic', title: `Emulate${args.device ? ' ' + args.device : ' device'}`, kind: 'other' }),
+        async execute(args, exec) {
+            const params = {};
+            if (args.tabId !== undefined)
+                params.tabId = args.tabId;
+            if (typeof args.device === 'string')
+                params.device = args.device;
+            if (typeof args.width === 'number')
+                params.width = args.width;
+            if (typeof args.height === 'number')
+                params.height = args.height;
+            if (typeof args.deviceScaleFactor === 'number')
+                params.deviceScaleFactor = args.deviceScaleFactor;
+            if (typeof args.isMobile === 'boolean')
+                params.isMobile = args.isMobile;
+            if (typeof args.hasTouch === 'boolean')
+                params.hasTouch = args.hasTouch;
+            if (typeof args.userAgent === 'string')
+                params.userAgent = args.userAgent;
+            const raw = await controller.execute('emulate', params, exec.signal);
+            return normalizeEmulateValue(raw);
+        },
+    }));
+    ctx.tools.register(defineTool({
+        name: 'browser_permissions',
+        description: "Read the browser-level permission state for the current origin (read-only): which permissions are set to \"ask\" (a bubble appears and waits for a human), which are allowed or denied, and whether a request is pending. Typical use: a call times out at `eval timeout` or an action hangs - check here first whether a browser-level bubble (\"local network access\", say) is waiting for a click. The extension cannot see or answer those bubbles, so do not assume the page is stuck. `className` narrows the report to one class (for example `loopback_network` / `automatic_downloads`).",
+        parameters: {
+            tabId: { type: 'number', description: 'Target tab; defaults to the active tab.' },
+            className: { type: 'string', description: '只看某一个权限类（本机真实键名，如 loopback_network）；省略=全部受关注类。' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    tabId: { type: 'number' },
+                    origin: { type: 'string', required: true },
+                    text: { type: 'string', required: true },
+                },
+            },
+            render: (_args, value) => textBlock(String(value.text ?? '')),
+        },
+        presentCall: () => ({ card: 'generic', title: 'Read browser permissions', kind: 'other' }),
+        async execute(args, exec) {
+            const config = getConfig();
+            const url = await currentTabUrl(controller, args.tabId, exec.signal);
+            if (typeof url !== 'string' || url.length === 0) {
+                throw new Error('拿不到该标签页的 URL（标签页可能已关闭）——换一个 tabId，或用 browser_tabs 看现有标签页');
+            }
+            // 挂起信号：扩展 network buffer 里"已发出、未结束"的请求。指向本机/私网的 pending 请求
+            // + 对应权限类是"询问" ⇒ 屏幕上大概率正挂着一个 LNA 气泡。CDP 对 chrome 自己的权限气泡
+            // **没有事件**，所以这是唯一可靠的推断路径（而不是猜"页面慢"）。
+            const pendingLocal = [];
+            try {
+                const payload = await controller.execute('network.log', {
+                    status: 'pending',
+                    limit: 50,
+                    ...(args.tabId === undefined ? {} : { tabId: args.tabId }),
+                }, exec.signal);
+                for (const request of payload?.requests ?? []) {
+                    const raw = typeof request?.url === 'string' ? request.url : '';
+                    if (raw.length === 0)
+                        continue;
+                    let host = '';
+                    try {
+                        host = new URL(raw).hostname;
+                    }
+                    catch {
+                        continue;
+                    }
+                    const realm = realmOf(host);
+                    if (realm !== 'local' && realm !== 'lan')
+                        continue;
+                    const wallTime = typeof request?.wallTime === 'number' ? request.wallTime : undefined;
+                    const ageSeconds = wallTime === undefined ? undefined : Math.max(0, Math.round(Date.now() / 1000 - wallTime));
+                    pendingLocal.push(ageSeconds === undefined ? { url: raw } : { url: raw, ageSeconds });
+                }
+            }
+            catch { /* 网络缓冲读不到不影响权限现状本身 */ }
+            // 修 bi-013：配置里存的可能是 Windows 形态路径（浏览器在 Windows 侧），而这个进程在 WSL 里；
+            // 直接把原值交给 path.join 会读不到**配置正确**的 profile。候选顺序：配置值 → 配对记录学到的位置。
+            // pairing.profileDir 只是裸目录名（"Profile 3"），单独把它交给 path.join 会拼出
+            // "Profile 3\Preferences" 这种相对路径 —— 必须和 userDataDir 拼成真实目录。
+            const pairing = controller.describePolicy().pairing;
+            const pairingDir = pairing === undefined ? undefined : path.join(pairing.userDataDir, pairing.profileDir);
+            const resolvedStore = readPermissionStoreTolerant([config.autoLaunchProfileDir, pairingDir]);
+            const store = resolvedStore.store;
+            const requested = args.className === undefined ? undefined : String(args.className);
+            const reading = readOriginPermissions(store, url, requested === undefined ? undefined : { pref: requested });
+            const text = permissionReport({
+                origin: reading.origin,
+                tabId: args.tabId,
+                store,
+                readings: reading.readings,
+                pendingLocal,
+                requestedClass: requested,
+                ...(resolvedStore.converted
+                    ? { storeNote: `profile 路径按形态转换后读取：配置 ${resolvedStore.configuredDir} → 实际 ${resolvedStore.usedDir}` }
+                    : {}),
+            });
+            return { ...(args.tabId === undefined ? {} : { tabId: args.tabId }), origin: reading.origin, text };
+        },
+    }));
+}
+/**
+ * 0.2.0 的 `.volatile()` 字段在组合结果里不是普通值，而是惰性访问器对象
+ * （官方读法是 `config.cwd.get()` / `config.timeoutMs.get()`）。本插件把 config
+ * 当普通对象用遍了整个 apply，这里统一解包一次，避免逐处 `.get()` 漏字段 ——
+ * 漏一处的后果就是该项设置静默失效（buddy 正是这么栽的，见其 schema 注释）。
+ */
+/**
+ * 取会话标题（给浮层底部那行"是谁在操作"用）。
+ *
+ * 标题不在会话日志里，而在 DSH 的投影缓存 `$DSH_HOME/storages/session_projcache/sessions/<id>.json`
+ * 的 `record.rows.title.val` 里。只读、best-effort、30 秒缓存；拿不到返回 undefined（调用方退回短 id）。
+ */
+const sessionTitleCache = new Map();
+/** 本机插件版本（同步读自身 package.json；桥状态是同步 getter，没法 await）。 */
+function pluginVersionSync() {
+    try {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const pkg = JSON.parse(readFileSync(path.join(here, '..', 'package.json'), 'utf8'));
+        return typeof pkg.version === 'string' ? pkg.version : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+export function sessionTitleOf(sessionId, now = Date.now()) {
+    const cached = sessionTitleCache.get(sessionId);
+    if (cached !== undefined && now - cached.at < 30_000)
+        return cached.title;
+    let title;
+    try {
+        const home = process.env.DSH_HOME ?? path.join(homedir(), '.dsh');
+        const file = path.join(home, 'storages', 'session_projcache', 'sessions', `${sessionId}.json`);
+        const doc = JSON.parse(readFileSync(file, 'utf8'));
+        const raw = doc?.record?.rows?.title?.val;
+        if (typeof raw === 'string' && raw.trim().length > 0)
+            title = raw.trim().slice(0, 60);
+    }
+    catch {
+        title = undefined;
+    }
+    sessionTitleCache.set(sessionId, { at: now, title });
+    return title;
+}
+function unwrapVolatile(config) {
+    const source = config;
+    const out = {};
+    for (const key of Object.keys(source)) {
+        const value = source[key];
+        const accessor = value;
+        out[key] = value !== null && typeof value === 'object' && typeof accessor?.get === 'function'
+            ? accessor.get()
+            : value;
+    }
+    return out;
+}
+/** Cordis plugin entry: wire the settings-driven lifecycle plus the model-facing tools. */
+export function apply(ctx, config) {
+    let resolved = unwrapVolatile(config);
+    /**
+     * 校验一份候选配置。抽出来是因为**运行中热更新走的是另一条入口**（见下面的
+     * `loader/volatile-update`），两处必须用同一套判据，否则"重启才拦得住、热更新能绕过"。
+     */
+    const validate = (candidate) => {
+        if (candidate.enabled && candidate.token.trim().length === 0) {
+            throw new Error('browser-bridge: token must be a non-empty string when enabled');
+        }
+        if (candidate.urlMode !== 'public' && candidate.urlMode !== 'intranet') {
+            throw new Error(`browser-bridge: invalid urlMode "${String(candidate.urlMode)}" (use public|intranet)`);
+        }
+        for (const [label, v] of [['internetAccess', candidate.internetAccess], ['lanAccess', candidate.lanAccess], ['localAccess', candidate.localAccess]]) {
+            if (v !== undefined && v !== 'allow' && v !== 'ask' && v !== 'deny') {
+                throw new Error(`browser-bridge: invalid ${label} "${String(v)}" (use allow|ask|deny)`);
+            }
+        }
+        if (candidate.askMode !== 'inherit' && candidate.askMode !== 'allow' && candidate.askMode !== 'deny') {
+            throw new Error(`browser-bridge: invalid askMode "${String(candidate.askMode)}" (use inherit|allow|deny)`);
+        }
+        assertOriginList(candidate.dshOrigins);
+        assertHostList('allowHosts', candidate.allowHosts);
+        assertHostList('denyHosts', candidate.denyHosts);
+        assertMetadataLists(candidate);
+    };
+    validate(resolved);
+    const controller = new BridgeController(line => ctx.logger.info(line));
+    /** buddy 的运行态句柄：热更新时要让它按新配置重建旋钮（它自己的 apply 不会重跑）。 */
+    let buddyHandle;
+    const current = () => resolved;
+    void controller.reconcile(current());
+    // ⚠️ **运行中改设置不会重跑本函数**。宿主（`@deepseek-ai/cordis-plugin-loader` 的
+    // `_commitVolatile()`）对"只动了 volatile 字段"的配置变更走**原地提交**：把新值写进运行中
+    // 那些 volatile 引用，然后 emit `loader/volatile-update`（带变更路径），**不 dispose、
+    // 不重新 apply**。这正是 `.volatile()` 的语义 ——「别重载我，我自己处理」。所以插件必须
+    // 自己订阅这个事件把新值接回来：否则设置页写着「保存即时生效」，实际却要等重启
+    // （2026-10-14 实测：把局域网/本机档改成放行后，桥侧读数仍是 deny，直到重启 —— bi-038）。
+    const onAny = ctx.on;
+    onAny('loader/volatile-update', () => {
+        try {
+            const next = unwrapVolatile(config);
+            validate(next);
+            resolved = next;
+            // buddy 那几个旋钮（工具面分层 / 已展开组 / 自动拉起 / 常驻白名单）也在配置里，
+            // 它自己那次 apply 同样不会重跑 —— 把**原始** config 递回去让它在原地重建。
+            buddyHandle?.refreshConfig?.(config);
+            void controller.reconcile(next).catch((error) => {
+                ctx.logger.warn(`browser-bridge: 设置热更新后重建失败 —— ${error instanceof Error ? error.message : String(error)}`);
+            });
+            ctx.logger.info('browser-bridge: 设置已热更新（无需重启）');
+        }
+        catch (error) {
+            ctx.logger.warn(`browser-bridge: 设置热更新被拒，继续用旧配置 —— ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+    // 「本 DSH 控制页」的本机地址由宿主自己推导：GUI 端口写在 `webServer` 服务里
+    // （配置 0 时是 OS 实际分配的端口），所以不需要用户去登记一个会过期的 origin ——
+    // 端口变了这里跟着变。手动列表仍然生效，作为额外地址（局域网 IP / 域名）。
+    // 缺这个服务时（非 web 部署）不做任何事，行为退回「只认用户登记的列表」。
+    const injectOptional = ctx.inject;
+    injectOptional(['webServer'], (scoped) => {
+        const port = scoped.webServer?.port;
+        if (typeof port !== 'number' || !Number.isInteger(port) || port <= 0 || port > 65_535)
+            return;
+        const origin = `http://127.0.0.1:${port}`;
+        controller.setControlOrigins([origin]);
+        ctx.logger.info(`browser-bridge: 本机 DSH 控制页地址 = ${origin}（推导自 webServer 服务，用于 DSH 页面红线）`);
+    });
+    // 激活期**不再** fail-loud：历史上这里把拒绝再抛出去，形成无人处理的 Promise 拒绝，
+    // DSH 的 fail-loud 处理器随即 `exit(1)`（端口被占即 DSH 起不来，见 P0-探针取证）。
+    // 现在启动失败只记录到 lastError（端口回退在 reconcileNow 内完成），由 browser_policy_status 暴露。
+    void controller.reconcile(resolved).catch((error) => {
+        ctx.logger.warn(`browser-bridge: 激活期收敛失败（已降级，不影响 DSH 启动）: ${errorMessage(error)}`);
+    });
+    // 对同进程的其它插件暴露最小面。
+    //
+    // 2026-10-10（de-036）：**同伴件 dsh-browser-buddy 已合并进本插件**，所以这个服务不再有
+    // 消费方；保留它只为两个目的：① 旧版 buddy 还在装着的过渡期不炸；② 第三方/调试脚本
+    // 仍可用它读桥状态（`browser_policy_status` 是给模型的那条路）。
+    const bridgeService = {
+        /** 生效配置（用户层 > 组合 base > schema 默认）。 */
+        config: () => current(),
+        /** 策略/链路快照：含 enabled / autoLaunch* / boundPort / portNote，状态面用。 */
+        describe: () => controller.describePolicy(),
+        /** 唤醒被控浏览器：已连接则让扩展开一个窗口，未连接才起进程（受 10s 冷却保护）。
+         *  `options.url`（可选）＝本次调用要去的网址，作为新窗口的落地页（仅策略直接放行的 http(s) 才用）。 */
+        wake: (options) => controller.wakeBrowser(options ?? {}),
+        /** 调用时问题登记簿（第二部分注册表）：据此在「本会话首次调用」时给出绕行摘要。 */
+        issues: () => loadIssues(resolved.registryDir),
+        /** 插件版本（摘要里标注 / 登记簿 fixedIn 默认值）。 */
+        version: () => currentPluginVersion(resolved.registryDir),
+    };
+    ctx.provide('browserBridge', bridgeService);
+    applyBrowserTools(ctx, controller, () => current());
+    // Unified self-update / design-registry tools (browser_check_update,
+    // browser_design_show, browser_design_edit). Read-only pair plus an
+    // approval-gated writer over the package registry copies.
+    applyUnifiedTools(ctx, resolved);
+    // 原 dsh-browser-buddy 的能力（工具面分层 / 状态注入 / 调用即唤醒 / 登记簿送达 +
+    // browser_tools / browser_frames / browser_frame_eval）。合并后它直接用 controller，
+    // frames/eval 不再走 HTTP 命令面，于是自动过 URL 策略与已开标签页红线。
+    buddyHandle = applyBuddyFeatures({
+        ctx,
+        controller,
+        bridge: bridgeService,
+        config: resolved,
+        authorizeTab: (tabId, signal) => authorizeExistingTab(controller, tabId, signal ?? new AbortController().signal),
+    });
+    ctx.effect(() => () => {
+        void controller.stop();
+    }, 'browser-bridge: server lifecycle');
+}

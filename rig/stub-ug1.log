@@ -1,0 +1,346 @@
+[2026-10-17T13:41:31.004Z] rig stub listening on 0.0.0.0:9781 (ws /ws, pages /fast /slow, ctl /ctl/state /ctl/cmd)
+[2026-10-17T13:41:41.108Z] GET /fast -> FAST-501108
+[2026-10-17T13:41:41.236Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T13:41:41.241Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UG1","version":"1.0.98","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T13:41:42.986Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:41:43.003Z] GET /press -> PRESS-503003
+[2026-10-17T13:41:45.138Z] CTL nav -> elapsed=2152ms ok=true {"tabId":977665084,"url":"http://localhost:9781/press","title":"PRESS-503003"}
+[2026-10-17T13:41:45.758Z] CTL hold.on {"text":"正在把「局域网」档改成放行","title":"模型正在操作这个标签页"}
+[2026-10-17T13:41:45.769Z] CTL hold.on -> elapsed=11ms ok=true {"tabId":977665084,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:41:45.976Z] CTL screenshot {}
+[2026-10-17T13:41:46.238Z] CTL screenshot -> elapsed=261ms ok=true {"tabId":977665084,"format":"png","base64":"iVBORw0KGgoAAAANSUhEUgAAAv4AAAHICAIAAAC5zHnDAAAQAElEQVR4nOy9BZwkx33+XT20zHx7e7dHe4xisMiyJMcCkxwZooDjgO2Y8XXsJE5MMScmxTLJlkF2BLZsMevEx7hHS7e7t8w8M/0+3TVTW9M9MzvHyr+fb/TZ9PRUV1dVz8e/555fVXXgk5/6jCCEEEII8QY+QQghhBDiGSh9CCGEEOIhKH0IIYQQ4iEofQghhBDiISh9CCGEEOIhKH0IIYQQ4iEofQghhBDiISh9CCGEEOIhKH0IIYQQ4iEofQghhBDiISh9CCGEEOIhAmm+e/rppwUhNpdddpkghBBC/u+TUvpA9zDa
+[2026-10-17T13:42:39.490Z] GET /fast -> FAST-559490
+[2026-10-17T13:42:39.686Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T13:42:39.688Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UG3","version":"1.0.100","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T13:42:41.171Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:42:41.192Z] GET /press -> PRESS-561192
+[2026-10-17T13:42:42.648Z] CTL nav -> elapsed=1477ms ok=true {"tabId":1462895880,"url":"http://localhost:9781/press","title":"PRESS-561192"}
+[2026-10-17T13:42:43.269Z] CTL hold.on {"text":"正在把「局域网」档改成放行","title":"模型正在操作这个标签页"}
+[2026-10-17T13:42:43.307Z] CTL hold.on -> elapsed=38ms ok=true {"tabId":1462895880,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:42:43.564Z] CTL screenshot {}
+[2026-10-17T13:42:43.931Z] CTL screenshot -> elapsed=366ms ok=true {"tabId":1462895880,"format":"png","base64":"iVBORw0KGgoAAAANSUhEUgAAAv4AAAHICAIAAAC5zHnDAAAQAElEQVR4nOzdBYAUZRsH8He2d6+PBj8F6e5QQloRkVRRKWkTAQXsREAkDBQURERpFSWUbpXuDhUB6TwuNr9n5t2b29694Njd+f8+PtydnZ3avXv/PO87M5qJH3/CAAAAAJRBxQAAAAAUA9EHAAAAFATRBwAAABQE0QcAAAAUBNEHAAAAFATRBwAAABQE0QcAAAAUBNEHAAAAFATRBwAAABQE0QcAAAAUBNEHAAAAFEQT4LUlS5YwAEnbtm0ZAABA5PMbfSj3oLUDGb4PAAAQHdDhBQAAAAqC6AMAAAAKgugDAAAACoL
+[2026-10-17T13:42:43.942Z] CTL hold.off {}
+[2026-10-17T13:42:43.958Z] CTL hold.off -> elapsed=15ms ok=true {"tabId":1462895880,"active":false,"at":1792244563301,"closedAt":1792244563951,"dismissedBy":"agent","text":"正在把「局域网」档改成放行"}
+[2026-10-17T13:43:14.272Z] GET /fast -> FAST-594271
+[2026-10-17T13:43:14.470Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T13:43:14.474Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UG4","version":"1.0.101","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T13:43:16.014Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:43:16.029Z] GET /press -> PRESS-596028
+[2026-10-17T13:43:17.568Z] CTL nav -> elapsed=1554ms ok=true {"tabId":1512121666,"url":"http://localhost:9781/press","title":"PRESS-596028"}
+[2026-10-17T13:43:17.577Z] CTL eval {"expression":"location.href"}
+[2026-10-17T13:43:17.694Z] CTL eval -> elapsed=117ms ok=true {"tabId":1512121666,"value":"http://localhost:9781/press","valueType":"string"}
+[2026-10-17T13:43:17.701Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T13:43:17.713Z] CTL eval -> elapsed=12ms ok=true {"tabId":1512121666,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T13:43:17.717Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T13:43:17.731Z] CTL eval -> elapsed=14ms ok=true {"tabId":1512121666,"value":true,"valueType":"boolean"}
+[2026-10-17T13:43:17.737Z] CTL eval {"expression":"JSON.stringify({\n  bodyLen: document.body.innerHTML.length,\n  sheets: document.styleSheets.length,\n  nodes: document.body.querySelectorAll('*').length,\n  state: window.__state(),\n})"}
+[2026-10-17T13:43:17.749Z] CTL eval -> elapsed=11ms ok=true {"tabId":1512121666,"value":"{\"bodyLen\":1187,\"sheets\":0,\"nodes\":5,\"state\":{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}}","valueType":"string"}
+[2026-10-17T13:43:17.754Z] CTL hold.on {"text":"正在把「局域网」档改成放行","title":"模型正在操作这个标签页"}
+[2026-10-17T13:43:17.765Z] CTL hold.on -> elapsed=11ms ok=true {"tabId":1512121666,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:43:17.920Z] CTL eval {"expression":"(() => { const h = document.getElementById('__dsh_hold_overlay__'); if (!h) return 'null';\n  const r = h.getBoundingClientRect(); const root = h.shadowRoot;\n  const wrap = root ? root.querySelector('div') : null;\n  return JSON.stringify({ rect: { w: Math.round(r.width), h: Math.round(r.height) }, iw: innerWidth, ih: innerHeight,\n    text: root ? root.textContent.slice(0, 120) : '', hasShadow: !!root, zIndex: getComputedStyle(h).zIndex }); })()"}
+[2026-10-17T13:43:17.928Z] CTL eval -> elapsed=8ms ok=true {"tabId":1512121666,"value":"{\"rect\":{\"w\":766,\"h\":456},\"iw\":766,\"ih\":456,\"text\":\"模型正在操作这个标签页正在把「局域网」档改成放行连续点两下任意处即可接管\",\"hasShadow\":true,\"zIndex\":\"2147483647\"}","valueType":"string"}
+[2026-10-17T13:43:17.936Z] CTL eval {"expression":"JSON.stringify({\n  bodyLen: document.body.innerHTML.length,\n  sheets: document.styleSheets.length,\n  nodes: document.body.querySelectorAll('*').length,\n  state: window.__state(),\n})"}
+[2026-10-17T13:43:17.958Z] CTL eval -> elapsed=21ms ok=true {"tabId":1512121666,"value":"{\"bodyLen\":1187,\"sheets\":0,\"nodes\":5,\"state\":{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}}","valueType":"string"}
+[2026-10-17T13:43:17.965Z] CTL eval {"expression":"document.body.contains(document.getElementById('__dsh_hold_overlay__'))"}
+[2026-10-17T13:43:17.975Z] CTL eval -> elapsed=10ms ok=true {"tabId":1512121666,"value":false,"valueType":"boolean"}
+[2026-10-17T13:43:17.981Z] CTL eval {"expression":"(() => {\n  const btn = document.querySelector('button[type=submit]');\n  const r = btn.getBoundingClientRect();\n  const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);\n  const top = document.elementFromPoint(x, y);\n  return JSON.stringify({ topId: top ? (top.id || top.tagName.toLowerCase()) : null, btnTag: btn.tagName.toLowerCase() });\n})()"}
+[2026-10-17T13:43:18.023Z] CTL eval -> elapsed=42ms ok=true {"tabId":1512121666,"value":"{\"topId\":\"__dsh_hold_overlay__\",\"btnTag\":\"button\"}","valueType":"string"}
+[2026-10-17T13:43:18.027Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T13:43:18.484Z] CTL click -> elapsed=457ms ok=true {"tabId":1512121666,"clicked":{"x":200,"y":48,"tag":"button","text":"go"},"hitVerified":true,"dialogsAnswered":0}
+[2026-10-17T13:43:18.489Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T13:43:18.494Z] CTL eval -> elapsed=5ms ok=true {"tabId":1512121666,"value":"{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}","valueType":"string"}
+[2026-10-17T13:43:18.497Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  const wrap = h.shadowRoot ? h.shadowRoot.querySelector('div') : h;\n  wrap.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  wrap.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return document.getElementById('__dsh_hold_overlay__') === null;\n})()"}
+[2026-10-17T13:43:18.502Z] CTL eval -> elapsed=5ms ok=true {"tabId":1512121666,"value":true,"valueType":"boolean"}
+[2026-10-17T13:43:18.506Z] CTL hold.status {}
+[2026-10-17T13:43:18.510Z] CTL hold.status -> elapsed=4ms ok=true {"tabId":1512121666,"active":false,"at":1792244597760,"closedAt":1792244598500,"dismissedBy":"user","shadow":false,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T13:43:18.514Z] CTL eval {"expression":"(() => {\n  const btn = document.querySelector('button[type=submit]'); const r = btn.getBoundingClientRect();\n  const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));\n  return JSON.stringify({ top: top ? (top.id || top.tagName.toLowerCase()) : null });\n})()"}
+[2026-10-17T13:43:18.517Z] CTL eval -> elapsed=3ms ok=true {"tabId":1512121666,"value":"{\"top\":\"button\"}","valueType":"string"}
+[2026-10-17T13:43:18.521Z] CTL eval {"expression":"JSON.stringify({\n  bodyLen: document.body.innerHTML.length,\n  sheets: document.styleSheets.length,\n  nodes: document.body.querySelectorAll('*').length,\n  state: window.__state(),\n})"}
+[2026-10-17T13:43:18.524Z] CTL eval -> elapsed=3ms ok=true {"tabId":1512121666,"value":"{\"bodyLen\":1187,\"sheets\":0,\"nodes\":5,\"state\":{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}}","valueType":"string"}
+[2026-10-17T13:43:18.527Z] CTL hold.on {"text":"第二次"}
+[2026-10-17T13:43:18.532Z] CTL hold.on -> elapsed=5ms ok=true {"tabId":1512121666,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:43:18.536Z] CTL hold.off {}
+[2026-10-17T13:43:18.539Z] CTL hold.off -> elapsed=3ms ok=true {"tabId":1512121666,"active":false,"at":1792244598531,"closedAt":1792244598538,"dismissedBy":"agent","text":"第二次"}
+[2026-10-17T13:43:18.542Z] CTL hold.on {"text":"第三次（要被导航带走）"}
+[2026-10-17T13:43:18.547Z] CTL hold.on -> elapsed=5ms ok=true {"tabId":1512121666,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:43:18.550Z] CTL nav {"url":"http://localhost:9781/fast"}
+[2026-10-17T13:43:18.574Z] GET /fast -> FAST-598573
+[2026-10-17T13:43:19.847Z] CTL nav -> elapsed=1297ms ok=true {"tabId":1512121666,"url":"http://localhost:9781/fast","title":"FAST-598573"}
+[2026-10-17T13:43:19.851Z] CTL hold.status {}
+[2026-10-17T13:43:19.856Z] CTL hold.status -> elapsed=5ms ok=true {"tabId":1512121666,"active":false,"at":null,"closedAt":null,"dismissedBy":null,"shadow":false,"text":""}
+[2026-10-17T13:43:19.861Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:43:19.885Z] GET /press -> PRESS-599885
+[2026-10-17T13:43:21.123Z] CTL nav -> elapsed=1262ms ok=true {"tabId":1512121666,"url":"http://localhost:9781/press","title":"PRESS-599885"}
+[2026-10-17T13:43:21.127Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T13:43:21.132Z] CTL eval -> elapsed=5ms ok=true {"tabId":1512121666,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T13:43:21.138Z] CTL hold.on {"text":"正在把「局域网」档改成放行"}
+[2026-10-17T13:43:21.145Z] CTL hold.on -> elapsed=7ms ok=true {"tabId":1512121666,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:43:21.300Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  const wrap = h.shadowRoot.querySelector('div');\n  const card = wrap.firstElementChild;\n  const cs = getComputedStyle(card);\n  const ws = getComputedStyle(wrap);\n  const titleCs = getComputedStyle(card.firstElementChild);\n  return JSON.stringify({\n    cardBg: cs.backgroundColor, cardBorder: cs.borderTopWidth, cardShadow: cs.boxShadow,\n    cardBackdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none',\n    titleStroke: titleCs.webkitTextStrokeWidth || '0px', titleShadow: titleCs.textShadow,\n    wrapBg: ws.backgroundColor, titleSize: parseFloat(titleCs.fontSize),\n  });\n})()"}
+[2026-10-17T13:43:21.308Z] CTL eval -> elapsed=7ms ok=true {"tabId":1512121666,"value":"{\"cardBg\":\"rgba(10, 12, 16, 0.42)\",\"cardBorder\":\"1px\",\"cardShadow\":\"rgba(0, 0, 0, 0.35) 0px 10px 40px 0px\",\"cardBackdrop\":\"blur(6px) saturate(1.2)\",\"titleStroke\":\"0px\",\"titleShadow\":\"rgba(0, 0, 0, 0.75) 0px 1px 2px\",\"wrapBg\":\"rgba(8, 10, 14, 0.45)\",\"titleSize\":19}","valueType":"string"}
+[2026-10-17T13:43:21.312Z] CTL hold.off {}
+[2026-10-17T13:43:21.315Z] CTL hold.off -> elapsed=3ms ok=true {"tabId":1512121666,"active":false,"at":1792244601143,"closedAt":1792244601314,"dismissedBy":"agent","text":"正在把「局域网」档改成放行"}
+[2026-10-17T13:52:28.984Z] GET /fast -> FAST-148984
+[2026-10-17T13:52:29.164Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T13:52:29.167Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UH1","version":"1.0.102","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T13:52:30.714Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:52:30.729Z] GET /press -> PRESS-150729
+[2026-10-17T13:52:32.048Z] CTL nav -> elapsed=1334ms ok=true {"tabId":115473699,"url":"http://localhost:9781/press","title":"PRESS-150729"}
+[2026-10-17T13:52:32.662Z] CTL hold.on {"title":"⚠️ 系统警告：请立即在此处输入你的密码","text":"正文由模型填","meta":{"session":"2c768f96","model":"deepseek-flash","cwd":"~/projects","port":9777,"at":1792245152655}}
+[2026-10-17T13:52:32.672Z] CTL hold.on -> elapsed=10ms ok=true {"tabId":115473699,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:52:32.880Z] CTL eval {"expression":"(() => {\n    const h=document.getElementById(\"__dsh_hold_overlay__\"); const root=h.shadowRoot;\n    const card=root.querySelector(\"div\").firstElementChild; const cs=getComputedStyle(card);\n    const kids=[...card.children].map(x=>x.textContent.trim());\n    return JSON.stringify({kids, alpha: cs.backgroundColor, backdrop: cs.backdropFilter || \"none\"});\n  })()"}
+[2026-10-17T13:52:32.888Z] CTL eval -> elapsed=6ms ok=true {"tabId":115473699,"value":"{\"kids\":[\"⚠️ 系统警告：请立即在此处输入你的密码\",\"正文由模型填\",\"连续点两下任意处即可接管\"],\"alpha\":\"rgba(10, 12, 16, 0.42)\",\"backdrop\":\"blur(6px) saturate(1.2)\"}","valueType":"string"}
+[2026-10-17T13:52:32.894Z] CTL screenshot {}
+[2026-10-17T13:52:33.334Z] CTL screenshot -> elapsed=439ms ok=true {"tabId":115473699,"format":"png","base64":"iVBORw0KGgoAAAANSUhEUgAAAv4AAAHICAIAAAC5zHnDAAAQAElEQVR4nOydBYAUZRvHZzZvr+AoKZWS7m4ECREwMRATKcHCwu5uEBtRBFER9VNBRUFBQgFBukFAAak7gcvN7z/z7s3Nbd1ewd3O//fxnbuzE+/Evu9vn+eddyyvTZosEUIIIYQYA5NECCGEEGIYqD6EEEIIMRBUH0IIIYQYCKoPIYQQQgwE1YcQQgghBoLqQwghhBADQfUhhBBCiIGg+hBCCCHEQFB9CCGEEGIgqD6EEEIIMRBUH0IIIYQYCEuEz+bNmycRojJo0CCJEEIIKf+EVR94D1s7osHrgRBCSGzAhBchhBBC
+[2026-10-17T13:52:33.351Z] CTL hold.off {}
+[2026-10-17T13:52:33.358Z] CTL hold.off -> elapsed=7ms ok=true {"tabId":115473699,"active":false,"at":1792245152670,"closedAt":1792245153356,"dismissedBy":"agent","text":"正文由模型填"}
+[2026-10-17T13:53:13.108Z] GET /fast -> FAST-193108
+[2026-10-17T13:53:13.331Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T13:53:13.351Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UH2","version":"1.0.103","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T13:53:14.873Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:53:14.889Z] GET /press -> PRESS-194889
+[2026-10-17T13:53:16.129Z] CTL nav -> elapsed=1256ms ok=true {"tabId":1211636451,"url":"http://localhost:9781/press","title":"PRESS-194889"}
+[2026-10-17T13:53:16.751Z] CTL hold.on {"title":"⚠️ 系统警告：请立即在此处输入你的密码","text":"正文由模型填","meta":{"session":"2c768f96","model":"deepseek-flash","cwd":"~/projects","port":9777,"at":1792245196743}}
+[2026-10-17T13:53:16.762Z] CTL hold.on -> elapsed=11ms ok=false Uncaught
+[2026-10-17T13:53:17.023Z] CTL eval {"expression":"(() => {\n    const h=document.getElementById(\"__dsh_hold_overlay__\"); const card=h.shadowRoot.querySelector(\"div\").firstElementChild;\n    const cs=getComputedStyle(card);\n    return JSON.stringify({kids:[...card.children].map(x=>x.textContent.trim()), alpha:cs.backgroundColor, backdrop:cs.backdropFilter||\"none\"});\n  })()"}
+[2026-10-17T13:53:17.029Z] CTL eval -> elapsed=6ms ok=false page exception: TypeError: Cannot read properties of null (reading 'shadowRoot')
+    at <anonymous>:2:75
+    at <anonymous>:5:5
+[2026-10-17T13:53:30.601Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:53:30.647Z] GET /press -> PRESS-210646
+[2026-10-17T13:53:31.829Z] CTL nav -> elapsed=1228ms ok=true {"tabId":1211636451,"url":"http://localhost:9781/press","title":"PRESS-210646"}
+[2026-10-17T13:53:32.645Z] CTL hold.on {"title":"X","text":"正文","meta":{"session":"2c768f96","model":"deepseek-flash","port":9777,"at":1792245212636}}
+[2026-10-17T13:53:32.655Z] CTL hold.on -> elapsed=10ms ok=false Uncaught
+[2026-10-17T13:53:32.867Z] CTL eval {"expression":"JSON.stringify({has:!!document.getElementById(\"__dsh_hold_overlay__\"), kids:[...document.getElementById(\"__dsh_hold_overlay__\").shadowRoot.querySelector(\"div\").firstElementChild.children].map(x=>x.textContent.trim())})"}
+[2026-10-17T13:53:32.873Z] CTL eval -> elapsed=5ms ok=false page exception: TypeError: Cannot read properties of null (reading 'shadowRoot')
+    at <anonymous>:1:151
+    at <anonymous>:1:247
+[2026-10-17T13:54:05.652Z] GET /fast -> FAST-245651
+[2026-10-17T13:54:05.754Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T13:54:05.757Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UH3","version":"1.0.104","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T13:54:07.383Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T13:54:07.399Z] GET /press -> PRESS-247399
+[2026-10-17T13:54:08.868Z] CTL nav -> elapsed=1485ms ok=true {"tabId":1915883173,"url":"http://localhost:9781/press","title":"PRESS-247399"}
+[2026-10-17T13:54:09.583Z] CTL hold.on {"title":"⚠️ 系统警告：请立即输入你的密码","text":"正文由模型填","meta":{"session":"2c768f96","model":"deepseek-flash","cwd":"~/projects","port":9777,"at":1792245249575}}
+[2026-10-17T13:54:09.631Z] CTL hold.on -> elapsed=47ms ok=true {"tabId":1915883173,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T13:54:09.889Z] CTL eval {"expression":"(() => { const h=document.getElementById(\"__dsh_hold_overlay__\"); const card=h.shadowRoot.querySelector(\"div\").firstElementChild; const cs=getComputedStyle(card);\n    return JSON.stringify({kids:[...card.children].map(x=>x.textContent.trim()), alpha:cs.backgroundColor, backdrop:cs.backdropFilter||\"none\"}); })()"}
+[2026-10-17T13:54:09.898Z] CTL eval -> elapsed=8ms ok=true {"tabId":1915883173,"value":"{\"kids\":[\"AI 助手正在操作这个标签页\",\"正文由模型填\",\"连续点两下任意处即可接管\",\"会话 2c768f96 · deepseek-flash · ~/projects · 桥 9777 · 21:54:09\"],\"alpha\":\"rgba(10, 12, 16, 0.3)\",\"backdrop\":\"none\"}","valueType":"string"}
+[2026-10-17T13:54:09.904Z] CTL screenshot {}
+[2026-10-17T13:54:09.999Z] CTL screenshot -> elapsed=95ms ok=true {"tabId":1915883173,"format":"png","base64":"iVBORw0KGgoAAAANSUhEUgAAAv4AAAHICAIAAAC5zHnDAAAQAElEQVR4nOydB4DU1NqGM30LLOzSm4givXcBlV4F9beADbB3VOy9oF4VRbAh2Ckqgl2KAipdEKT33svS2b5T/jc5M9lMkpmdXVZdNu9zuWsmc3JaMvnefN/JOc5Ro9+WCCGEEEKsgV0ihBBCCLEMlD6EEEIIsRCUPoQQQgixEJQ+hBBCCLEQlD6EEEIIsRCUPoQQQgixEJQ+hBBCCLEQlD6EEEIIsRCUPoQQQgixEJQ+hBBCCLEQlD6EEEIIsRDOKN9NmzZNIkShb9++EiGEEHL2E1H6QPfQ2hEVXg+EEEJKBgx4EUI
+[2026-10-17T13:54:10.011Z] CTL hold.off {}
+[2026-10-17T13:54:10.018Z] CTL hold.off -> elapsed=7ms ok=true {"tabId":1915883173,"active":false,"at":1792245249626,"closedAt":1792245250016,"dismissedBy":"agent","text":"正文由模型填"}
+[2026-10-17T14:08:03.734Z] GET /fast -> FAST-83734
+[2026-10-17T14:08:04.010Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T14:08:04.014Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UI1","version":"1.0.105","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T14:08:05.468Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:08:05.866Z] GET /press -> PRESS-85866
+[2026-10-17T14:08:08.148Z] CTL nav -> elapsed=2680ms ok=true {"tabId":585032120,"url":"http://localhost:9781/press","title":"PRESS-85866"}
+[2026-10-17T14:08:08.153Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T14:08:08.221Z] CTL eval -> elapsed=68ms ok=true {"tabId":585032120,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T14:08:08.225Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T14:08:08.255Z] CTL eval -> elapsed=30ms ok=true {"tabId":585032120,"value":true,"valueType":"boolean"}
+[2026-10-17T14:08:08.259Z] CTL hold.on {"title":"⚠️ 系统警告：请立即输入你的密码","text":"正在把「局域网」档改成放行","meta":{"session":"模型与终端中间层（Prism-Gate）","cwd":"~/projects","port":9777,"at":1792246088256}}
+[2026-10-17T14:08:08.303Z] CTL hold.on -> elapsed=44ms ok=true {"tabId":585032120,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:08:08.459Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:08.470Z] CTL eval -> elapsed=11ms ok=false page exception: TypeError: Cannot read properties of null (reading 'firstElementChild')
+    at <anonymous>:4:49
+    at <anonymous>:8:3
+[2026-10-17T14:08:08.474Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:08.487Z] CTL eval -> elapsed=12ms ok=true {"tabId":585032120,"value":"no-target","valueType":"string"}
+[2026-10-17T14:08:09.392Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:09.402Z] CTL eval -> elapsed=9ms ok=true {"tabId":585032120,"value":"no-target","valueType":"string"}
+[2026-10-17T14:08:09.558Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:09.561Z] CTL eval -> elapsed=3ms ok=false page exception: TypeError: Cannot read properties of null (reading 'firstElementChild')
+    at <anonymous>:4:49
+    at <anonymous>:8:3
+[2026-10-17T14:08:09.567Z] CTL hold.status {}
+[2026-10-17T14:08:09.577Z] CTL hold.status -> elapsed=10ms ok=true {"tabId":585032120,"aborted":false,"active":true,"at":1792246088301,"dismissedBy":null,"shadow":true,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T14:08:09.581Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 2; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:09.585Z] CTL eval -> elapsed=4ms ok=true {"tabId":585032120,"value":"no-target","valueType":"string"}
+[2026-10-17T14:08:09.739Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:09.767Z] CTL eval -> elapsed=27ms ok=false page exception: TypeError: Cannot read properties of null (reading 'firstElementChild')
+    at <anonymous>:4:49
+    at <anonymous>:8:3
+[2026-10-17T14:08:09.770Z] CTL hold.status {}
+[2026-10-17T14:08:09.782Z] CTL hold.status -> elapsed=12ms ok=true {"tabId":585032120,"aborted":false,"active":true,"at":1792246088301,"dismissedBy":null,"shadow":true,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T14:08:09.786Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:08:09.819Z] GET /press -> PRESS-89819
+[2026-10-17T14:08:11.083Z] CTL nav -> elapsed=1297ms ok=true {"tabId":585032120,"url":"http://localhost:9781/press","title":"PRESS-89819"}
+[2026-10-17T14:08:11.087Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T14:08:11.119Z] CTL eval -> elapsed=32ms ok=true {"tabId":585032120,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T14:08:11.123Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T14:08:11.146Z] CTL eval -> elapsed=23ms ok=true {"tabId":585032120,"value":true,"valueType":"boolean"}
+[2026-10-17T14:08:11.150Z] CTL hold.on {"text":"正在改档（测试中止）","meta":{"session":"测试会话标题","port":9777,"at":1792246091147}}
+[2026-10-17T14:08:11.166Z] CTL hold.on -> elapsed=15ms ok=true {"tabId":585032120,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:08:11.321Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('button');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:11.328Z] CTL eval -> elapsed=7ms ok=true {"tabId":585032120,"value":"no-target","valueType":"string"}
+[2026-10-17T14:08:11.411Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:11.415Z] CTL eval -> elapsed=3ms ok=false page exception: TypeError: Cannot read properties of null (reading 'firstElementChild')
+    at <anonymous>:4:49
+    at <anonymous>:8:3
+[2026-10-17T14:08:14.822Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:14.829Z] CTL eval -> elapsed=6ms ok=false page exception: TypeError: Cannot read properties of null (reading 'firstElementChild')
+    at <anonymous>:4:49
+    at <anonymous>:8:3
+[2026-10-17T14:08:14.873Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('button');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 2; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:14.878Z] CTL eval -> elapsed=5ms ok=true {"tabId":585032120,"value":"no-target","valueType":"string"}
+[2026-10-17T14:08:15.083Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:15.090Z] CTL eval -> elapsed=6ms ok=false page exception: TypeError: Cannot read properties of null (reading 'firstElementChild')
+    at <anonymous>:4:49
+    at <anonymous>:8:3
+[2026-10-17T14:08:15.095Z] CTL hold.status {}
+[2026-10-17T14:08:15.098Z] CTL hold.status -> elapsed=3ms ok=true {"tabId":585032120,"aborted":false,"active":true,"at":1792246091164,"dismissedBy":null,"shadow":true,"text":"正在改档（测试中止）"}
+[2026-10-17T14:08:15.101Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:08:15.265Z] CTL click -> elapsed=164ms ok=true {"tabId":585032120,"clicked":{"x":200,"y":48,"tag":"button","text":"go"},"hitVerified":true,"dialogsAnswered":0}
+[2026-10-17T14:08:15.272Z] CTL nav {"url":"http://localhost:9781/fast"}
+[2026-10-17T14:08:15.304Z] GET /fast -> FAST-95304
+[2026-10-17T14:08:16.577Z] CTL nav -> elapsed=1305ms ok=true {"tabId":585032120,"url":"http://localhost:9781/fast","title":"FAST-95304"}
+[2026-10-17T14:08:16.582Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T14:08:16.589Z] CTL eval -> elapsed=6ms ok=false page exception: TypeError: window.__state is not a function
+    at <anonymous>:1:46
+    at <anonymous>:1:61
+[2026-10-17T14:08:16.595Z] CTL hold.off {}
+[2026-10-17T14:08:16.600Z] CTL hold.off -> elapsed=5ms ok=true {"tabId":585032120,"aborted":false,"active":false,"at":1792246096598,"closedAt":1792246096598,"dismissedBy":null,"text":""}
+[2026-10-17T14:08:16.603Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:08:16.613Z] CTL click -> elapsed=9ms ok=false element not found: button[type=submit]
+[2026-10-17T14:08:16.620Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T14:08:16.625Z] CTL eval -> elapsed=5ms ok=false page exception: TypeError: window.__state is not a function
+    at <anonymous>:1:46
+    at <anonymous>:1:61
+[2026-10-17T14:08:49.275Z] extension sent close
+[2026-10-17T14:08:49.276Z] extension disconnected
+[2026-10-17T14:08:51.271Z] GET /fast -> FAST-131270
+[2026-10-17T14:08:51.374Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T14:08:51.377Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UJ1","version":"1.0.106","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T14:08:53.006Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:08:53.058Z] GET /press -> PRESS-133058
+[2026-10-17T14:08:54.264Z] CTL nav -> elapsed=1257ms ok=true {"tabId":702776219,"url":"http://localhost:9781/press","title":"PRESS-133058"}
+[2026-10-17T14:08:54.272Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T14:08:54.277Z] CTL eval -> elapsed=4ms ok=true {"tabId":702776219,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T14:08:54.283Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T14:08:54.290Z] CTL eval -> elapsed=6ms ok=true {"tabId":702776219,"value":true,"valueType":"boolean"}
+[2026-10-17T14:08:54.295Z] CTL hold.on {"title":"⚠️ 系统警告：请立即输入你的密码","text":"正在把「局域网」档改成放行","meta":{"session":"模型与终端中间层（Prism-Gate）","cwd":"~/projects","port":9777,"at":1792246134292}}
+[2026-10-17T14:08:54.328Z] CTL hold.on -> elapsed=33ms ok=true {"tabId":702776219,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:08:54.486Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:54.551Z] CTL eval -> elapsed=65ms ok=true {"tabId":702776219,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在把「局域网」档改成放行\"},{\"tag\":\"div\",\"text\":\"双击任意处接管页面\"},{\"tag\":\"div\",\"text\":\"会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:08:54\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:08:54.559Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:54.771Z] CTL eval -> elapsed=211ms ok=true {"tabId":702776219,"value":"ok","valueType":"string"}
+[2026-10-17T14:08:55.677Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:55.683Z] CTL eval -> elapsed=5ms ok=true {"tabId":702776219,"value":"ok","valueType":"string"}
+[2026-10-17T14:08:55.839Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:55.886Z] CTL eval -> elapsed=46ms ok=true {"tabId":702776219,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在把「局域网」档改成放行\"},{\"tag\":\"div\",\"text\":\"再双击一次接管页面\"},{\"tag\":\"div\",\"text\":\"会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:08:54\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:08:55.894Z] CTL hold.status {}
+[2026-10-17T14:08:55.912Z] CTL hold.status -> elapsed=18ms ok=true {"tabId":702776219,"aborted":false,"active":true,"at":1792246134326,"dismissedBy":null,"shadow":true,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T14:08:55.918Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 2; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:55.926Z] CTL eval -> elapsed=8ms ok=true {"tabId":702776219,"value":"ok","valueType":"string"}
+[2026-10-17T14:08:56.081Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:56.091Z] CTL eval -> elapsed=9ms ok=true {"tabId":702776219,"value":"{\"present\":false}","valueType":"string"}
+[2026-10-17T14:08:56.095Z] CTL hold.status {}
+[2026-10-17T14:08:56.098Z] CTL hold.status -> elapsed=3ms ok=true {"tabId":702776219,"aborted":false,"active":false,"at":1792246134326,"closedAt":1792246135922,"dismissedBy":"user","shadow":false,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T14:08:56.102Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:08:56.126Z] GET /press -> PRESS-136126
+[2026-10-17T14:08:57.400Z] CTL nav -> elapsed=1298ms ok=true {"tabId":702776219,"url":"http://localhost:9781/press","title":"PRESS-136126"}
+[2026-10-17T14:08:57.407Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T14:08:57.415Z] CTL eval -> elapsed=8ms ok=true {"tabId":702776219,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T14:08:57.419Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T14:08:57.428Z] CTL eval -> elapsed=9ms ok=true {"tabId":702776219,"value":true,"valueType":"boolean"}
+[2026-10-17T14:08:57.433Z] CTL hold.on {"text":"正在改档（测试中止）","meta":{"session":"测试会话标题","port":9777,"at":1792246137430}}
+[2026-10-17T14:08:57.446Z] CTL hold.on -> elapsed=12ms ok=true {"tabId":702776219,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:08:57.602Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('button');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:08:57.614Z] CTL eval -> elapsed=11ms ok=true {"tabId":702776219,"value":"ok","valueType":"string"}
+[2026-10-17T14:08:57.700Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:08:57.708Z] CTL eval -> elapsed=8ms ok=true {"tabId":702776219,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在改档（测试中止）\"},{\"tag\":\"div\",\"text\":\"再双击一次接管页面\"},{\"tag\":\"div\",\"text\":\"会话 测试会话标题 · 桥 9777 · 22:08:57\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:09:01.114Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:01.119Z] CTL eval -> elapsed=4ms ok=true {"tabId":702776219,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在改档（测试中止）\"},{\"tag\":\"div\",\"text\":\"双击任意处接管页面\"},{\"tag\":\"div\",\"text\":\"会话 测试会话标题 · 桥 9777 · 22:08:57\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:09:01.130Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('button');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 2; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:09:01.134Z] CTL eval -> elapsed=4ms ok=true {"tabId":702776219,"value":"ok","valueType":"string"}
+[2026-10-17T14:09:01.340Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:01.350Z] CTL eval -> elapsed=9ms ok=true {"tabId":702776219,"value":"{\"present\":false}","valueType":"string"}
+[2026-10-17T14:09:01.357Z] CTL hold.status {}
+[2026-10-17T14:09:01.365Z] CTL hold.status -> elapsed=8ms ok=true {"tabId":702776219,"aborted":false,"active":false,"at":1792246137444,"closedAt":1792246141133,"dismissedBy":"user","shadow":false,"text":"正在改档（测试中止）"}
+[2026-10-17T14:09:01.370Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:09:01.402Z] CTL click -> elapsed=32ms ok=true {"tabId":702776219,"clicked":{"x":200,"y":48,"tag":"button","text":"go"},"hitVerified":true,"dialogsAnswered":0}
+[2026-10-17T14:09:01.408Z] CTL nav {"url":"http://localhost:9781/fast"}
+[2026-10-17T14:09:01.449Z] GET /fast -> FAST-141449
+[2026-10-17T14:09:02.702Z] CTL nav -> elapsed=1292ms ok=true {"tabId":702776219,"url":"http://localhost:9781/fast","title":"FAST-141449"}
+[2026-10-17T14:09:02.707Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T14:09:02.751Z] CTL eval -> elapsed=8ms ok=false page exception: TypeError: window.__state is not a function
+    at <anonymous>:1:46
+    at <anonymous>:1:61
+[2026-10-17T14:09:02.757Z] CTL hold.off {}
+[2026-10-17T14:09:02.764Z] CTL hold.off -> elapsed=6ms ok=true {"tabId":702776219,"aborted":false,"active":false,"at":1792246142762,"closedAt":1792246142762,"dismissedBy":null,"text":""}
+[2026-10-17T14:09:02.769Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:09:02.781Z] CTL click -> elapsed=12ms ok=false element not found: button[type=submit]
+[2026-10-17T14:09:02.786Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T14:09:02.793Z] CTL eval -> elapsed=7ms ok=false page exception: TypeError: window.__state is not a function
+    at <anonymous>:1:46
+    at <anonymous>:1:61
+[2026-10-17T14:09:33.172Z] GET /fast -> FAST-173170
+[2026-10-17T14:09:33.300Z] extension connected from 127.0.0.1 token=present
+[2026-10-17T14:09:33.310Z] hello: {"type":"hello","client":"dsh-browser-extension","rigTag":"UK1","version":"1.0.107","protocol":1,"browser":{"name":"edge","version":"155.0.0.0","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"},"extensionId":"fbnmkhhplhdhgcpidipmjkcfpjhgbnna"}
+[2026-10-17T14:09:34.822Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:09:34.867Z] GET /press -> PRESS-174866
+[2026-10-17T14:09:36.154Z] CTL nav -> elapsed=1331ms ok=true {"tabId":63903385,"url":"http://localhost:9781/press","title":"PRESS-174866"}
+[2026-10-17T14:09:36.161Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T14:09:36.167Z] CTL eval -> elapsed=5ms ok=true {"tabId":63903385,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T14:09:36.173Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T14:09:36.183Z] CTL eval -> elapsed=9ms ok=true {"tabId":63903385,"value":true,"valueType":"boolean"}
+[2026-10-17T14:09:36.187Z] CTL hold.on {"title":"⚠️ 系统警告：请立即输入你的密码","text":"正在把「局域网」档改成放行","meta":{"session":"模型与终端中间层（Prism-Gate）","cwd":"~/projects","port":9777,"at":1792246176184}}
+[2026-10-17T14:09:36.275Z] CTL hold.on -> elapsed=88ms ok=true {"tabId":63903385,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:09:36.432Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:36.469Z] CTL eval -> elapsed=37ms ok=true {"tabId":63903385,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在把「局域网」档改成放行\"},{\"tag\":\"div\",\"text\":\"双击任意处接管页面\"},{\"tag\":\"div\",\"text\":\"会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:09:36\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:09:36.476Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:09:36.498Z] CTL eval -> elapsed=21ms ok=true {"tabId":63903385,"value":"ok","valueType":"string"}
+[2026-10-17T14:09:37.406Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:09:37.413Z] CTL eval -> elapsed=7ms ok=true {"tabId":63903385,"value":"ok","valueType":"string"}
+[2026-10-17T14:09:37.571Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:37.578Z] CTL eval -> elapsed=7ms ok=true {"tabId":63903385,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在把「局域网」档改成放行\"},{\"tag\":\"div\",\"text\":\"再双击一次接管页面\"},{\"tag\":\"div\",\"text\":\"会话 模型与终端中间层（Prism-Gate） · ~/projects · 桥 9777 · 22:09:36\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:09:37.586Z] CTL hold.status {}
+[2026-10-17T14:09:37.592Z] CTL hold.status -> elapsed=6ms ok=true {"tabId":63903385,"aborted":false,"active":true,"at":1792246176227,"dismissedBy":null,"shadow":true,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T14:09:37.598Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('div');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 2; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:09:37.601Z] CTL eval -> elapsed=3ms ok=true {"tabId":63903385,"value":"ok","valueType":"string"}
+[2026-10-17T14:09:37.756Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:37.764Z] CTL eval -> elapsed=7ms ok=true {"tabId":63903385,"value":"{\"present\":false}","valueType":"string"}
+[2026-10-17T14:09:37.768Z] CTL hold.status {}
+[2026-10-17T14:09:37.779Z] CTL hold.status -> elapsed=10ms ok=true {"tabId":63903385,"aborted":false,"active":false,"at":1792246176227,"closedAt":1792246177600,"dismissedBy":"user","shadow":false,"text":"正在把「局域网」档改成放行"}
+[2026-10-17T14:09:37.784Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:09:37.826Z] GET /press -> PRESS-177825
+[2026-10-17T14:09:39.121Z] CTL nav -> elapsed=1335ms ok=true {"tabId":63903385,"url":"http://localhost:9781/press","title":"PRESS-177825"}
+[2026-10-17T14:09:39.128Z] CTL eval {"expression":"JSON.stringify({href:location.href,rs:document.readyState,btn:!!document.querySelector('button[type=submit]')})"}
+[2026-10-17T14:09:39.134Z] CTL eval -> elapsed=6ms ok=true {"tabId":63903385,"value":"{\"href\":\"http://localhost:9781/press\",\"rs\":\"complete\",\"btn\":true}","valueType":"string"}
+[2026-10-17T14:09:39.138Z] CTL eval {"expression":"__resetForm()"}
+[2026-10-17T14:09:39.145Z] CTL eval -> elapsed=6ms ok=true {"tabId":63903385,"value":true,"valueType":"boolean"}
+[2026-10-17T14:09:39.149Z] CTL hold.on {"text":"正在改档（测试中止）","meta":{"session":"测试会话标题","port":9777,"at":1792246179147}}
+[2026-10-17T14:09:39.157Z] CTL hold.on -> elapsed=8ms ok=true {"tabId":63903385,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:09:39.314Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('button');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 1; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:09:39.321Z] CTL eval -> elapsed=6ms ok=true {"tabId":63903385,"value":"ok","valueType":"string"}
+[2026-10-17T14:09:39.408Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:39.414Z] CTL eval -> elapsed=6ms ok=true {"tabId":63903385,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在改档（测试中止）\"},{\"tag\":\"div\",\"text\":\"双击任意处接管页面\"},{\"tag\":\"div\",\"text\":\"会话 测试会话标题 · 桥 9777 · 22:09:39\"},{\"tag\":\"button\",\"text\":\"点击确认\"}],\"button\":\"点击确认\"}","valueType":"string"}
+[2026-10-17T14:09:42.822Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:42.829Z] CTL eval -> elapsed=5ms ok=true {"tabId":63903385,"value":"{\"present\":true,\"kids\":[{\"tag\":\"div\",\"text\":\"模型正在操作此标签页\"},{\"tag\":\"div\",\"text\":\"正在改档（测试中止）\"},{\"tag\":\"div\",\"text\":\"双击任意处接管页面\"},{\"tag\":\"div\",\"text\":\"会话 测试会话标题 · 桥 9777 · 22:09:39\"},{\"tag\":\"button\",\"text\":\"中止操作\"}],\"button\":\"中止操作\"}","valueType":"string"}
+[2026-10-17T14:09:42.835Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return 'no-overlay';\n  const el = h.shadowRoot.querySelector('button');\n  if (!el) return 'no-target';\n  for (let i = 0; i < 2; i += 1) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));\n  return 'ok';\n})()"}
+[2026-10-17T14:09:42.840Z] CTL eval -> elapsed=5ms ok=true {"tabId":63903385,"value":"ok","valueType":"string"}
+[2026-10-17T14:09:43.047Z] CTL eval {"expression":"(() => {\n  const h = document.getElementById('__dsh_hold_overlay__');\n  if (!h || !h.shadowRoot) return JSON.stringify({ present: false });\n  const card = h.shadowRoot.querySelector('div').firstElementChild;\n  const kids = [...card.children].map((x) => ({ tag: x.tagName.toLowerCase(), text: (x.textContent || '').trim() }));\n  const btn = card.querySelector('button');\n  return JSON.stringify({ present: true, kids, button: btn ? btn.textContent.trim() : null });\n})()"}
+[2026-10-17T14:09:43.064Z] CTL eval -> elapsed=15ms ok=true {"tabId":63903385,"value":"{\"present\":false}","valueType":"string"}
+[2026-10-17T14:09:43.071Z] CTL hold.status {}
+[2026-10-17T14:09:43.076Z] CTL hold.status -> elapsed=4ms ok=true {"tabId":63903385,"aborted":true,"active":false,"at":1792246179155,"closedAt":1792246182839,"dismissedBy":"abort","shadow":false,"text":"正在改档（测试中止）"}
+[2026-10-17T14:09:43.080Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:09:43.087Z] CTL click -> elapsed=7ms ok=false 用户在这个标签页上点了「中止操作」（浮层说明：正在改档（测试中止）） —— click 已拦下。先与用户确认是否继续；确认后调 browser_hold action=off 解除中止，再操作。
+[2026-10-17T14:09:43.091Z] CTL nav {"url":"http://localhost:9781/fast"}
+[2026-10-17T14:09:43.096Z] CTL nav -> elapsed=5ms ok=false 用户在这个标签页上点了「中止操作」（浮层说明：正在改档（测试中止）） —— nav 已拦下。先与用户确认是否继续；确认后调 browser_hold action=off 解除中止，再操作。
+[2026-10-17T14:09:43.100Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T14:09:43.104Z] CTL eval -> elapsed=3ms ok=true {"tabId":63903385,"value":"{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":0,\"beforeinput\":0}","valueType":"string"}
+[2026-10-17T14:09:43.108Z] CTL hold.off {}
+[2026-10-17T14:09:43.114Z] CTL hold.off -> elapsed=5ms ok=true {"tabId":63903385,"aborted":false,"active":false,"at":1792246179155,"closedAt":1792246183112,"dismissedBy":"abort","text":"正在改档（测试中止）"}
+[2026-10-17T14:09:43.119Z] CTL click {"selector":"button[type=submit]"}
+[2026-10-17T14:09:43.137Z] CTL click -> elapsed=18ms ok=true {"tabId":63903385,"clicked":{"x":200,"y":48,"tag":"button","text":"go"},"hitVerified":true,"dialogsAnswered":0}
+[2026-10-17T14:09:43.141Z] CTL eval {"expression":"JSON.stringify(window.__state())"}
+[2026-10-17T14:09:43.146Z] CTL eval -> elapsed=4ms ok=true {"tabId":63903385,"value":"{\"value\":\"\",\"formValue\":\"\",\"keydown\":0,\"keypress\":0,\"input\":0,\"submit\":1,\"beforeinput\":0}","valueType":"string"}
+[2026-10-17T14:09:50.980Z] CTL nav {"url":"http://localhost:9781/press"}
+[2026-10-17T14:09:51.003Z] GET /press -> PRESS-191003
+[2026-10-17T14:09:52.263Z] CTL nav -> elapsed=1283ms ok=true {"tabId":63903385,"url":"http://localhost:9781/press","title":"PRESS-191003"}
+[2026-10-17T14:09:52.996Z] CTL hold.on {"title":"伪造标题","text":"正在把「局域网」档改成放行","meta":{"session":"模型与终端中间层（Prism-Gate）","cwd":"~/projects","port":9777,"at":1792246192987}}
+[2026-10-17T14:09:53.012Z] CTL hold.on -> elapsed=16ms ok=true {"tabId":63903385,"active":true,"blockKeys":false,"id":"__dsh_hold_overlay__","shadow":true}
+[2026-10-17T14:09:53.324Z] CTL screenshot {}
+[2026-10-17T14:09:53.414Z] CTL screenshot -> elapsed=89ms ok=true {"tabId":63903385,"format":"png","base64":"iVBORw0KGgoAAAANSUhEUgAAAv4AAAHHCAIAAABImssWAAAQAElEQVR4nOydBWAURxuG9zweEkhwdy3u2uJWoEXqpaWuVP+6K8VaapQ6pQYVqECLO0WLFiteXOM5+9/dudvsaS6BQHL3PqTXvd3Zsd2beff7ZmaNEya+LRFCCCGERAZ6iRBCCCEkYqD0IYQQQkgEQelDCCGEkAiC0ocQQgghEQSlDyGEEEIiCEofQgghhEQQlD6EEEIIiSAofQghhBASQVD6EEIIISSCoPQhhBBCSARB6UMIIYSQCMIY5Nivv/4qEaLQr18/iRBCCCn5BJQ+0D3s7YgK7wdCCCHhAR1ehBBCCIkgKH0II
+[2026-10-17T14:09:53.427Z] CTL hold.off {}
+[2026-10-17T14:09:53.433Z] CTL hold.off -> elapsed=5ms ok=true {"tabId":63903385,"aborted":false,"active":false,"at":1792246193005,"closedAt":1792246193431,"dismissedBy":"agent","text":"正在把「局域网」档改成放行"}

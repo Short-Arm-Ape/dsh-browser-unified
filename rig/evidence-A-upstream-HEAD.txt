@@ -1,0 +1,17 @@
+=== scenario A-upstream-HEAD @ 2026-10-10T22:46:10+08:00 ===
+--- 0. baseline: land the active tab on /fast
+{"type":"result","id":"rig-1","ok":true,"result":{"tabId":1266284018,"url":"http://localhost:9781/fast","title":"FAST-571528"},"elapsedMs":1324}
+--- 1. GROUND TRUTH before: tabs.list
+{"type":"result","id":"rig-2","ok":true,"result":{"count":1,"activeTabId":1266284018,"tabs":[{"id":1266284018,"url":"http://localhost:9781/fast","title":"FAST-571528","active":true}]},"elapsedMs":2}
+--- 2. nav -> /slow?ms=3000 (a page whose load takes 3 s)
+{"type":"result","id":"rig-3","ok":true,"result":{"tabId":1266284018,"url":"http://localhost:9781/slow?ms=3000","title":"SLOW-573369"},"elapsedMs":3062}
+--- 3. GROUND TRUTH 4 s later: where did the tab really land?
+{"type":"result","id":"rig-4","ok":true,"result":{"count":1,"activeTabId":1266284018,"tabs":[{"id":1266284018,"url":"http://localhost:9781/slow?ms=3000","title":"SLOW-573369","active":true}]},"elapsedMs":4}
+--- 4. tabs.open -> /slow?ms=3000
+{"type":"result","id":"rig-5","ok":true,"result":{"tabId":1266284019,"url":"http://localhost:9781/slow?ms=3000","title":"SLOW-580514"},"elapsedMs":3102}
+--- 5. GROUND TRUTH 4 s later: tabs.list
+{"type":"result","id":"rig-6","ok":true,"result":{"count":2,"activeTabId":1266284019,"tabs":[{"id":1266284018,"url":"http://localhost:9781/slow?ms=3000","title":"SLOW-573369","active":false},{"id":1266284019,"url":"http://localhost:9781/slow?ms=3000","title":"SLOW-580514","active":true}]},"elapsedMs":2}
+--- 6. cleanup: close every tab except the first
+closing tabIds=[1266284019]
+{"type":"result","id":"rig-8","ok":true,"result":{"closed":1266284019},"elapsedMs":35}
+=== end A-upstream-HEAD ===
